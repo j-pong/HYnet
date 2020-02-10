@@ -49,14 +49,13 @@ class Pikachu(data.Dataset):
         if self.transform is not None:
             feature = self.transform(feature)
 
-        feature_t = feature[:, :-1]
-        feature = feature[:, 1:]
+        sample = {'input': feature[:, 1:], 'target': feature[:, :-1]}
 
-        return feature, feature_t
+        return sample
 
     def __len__(self):
         return self.num_samples
 
     def __dims__(self):
-        features, _ = self.__getitem__(0)
-        return np.shape(features)[0], np.shape(features)[0]
+        samples = self.__getitem__(0)
+        return np.shape(samples['input'])[0], np.shape(samples['target'])[0]

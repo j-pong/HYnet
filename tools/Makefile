@@ -36,5 +36,5 @@ venv: miniconda.sh
 	. venv/bin/activate && conda info -a
 
 	. venv/bin/activate && conda install pytorch torchvision -c pytorch
-	. venv/bin/activate && pip install scikit-learn matplotlib seaborn librosa soundfile configargparse
+	. venv/bin/activate && pip install scikit-learn matplotlib seaborn librosa soundfile configargparse tqdm
 	. venv/bin/activate && pip install -e ..

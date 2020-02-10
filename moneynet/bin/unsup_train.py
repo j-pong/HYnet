@@ -17,7 +17,7 @@ def get_parser():
         formatter_class=configargparse.ArgumentDefaultsHelpFormatter)
 
     # general configuration
-    parser.add_argument('--ngpu', default=0, type=int,
+    parser.add_argument('--ngpu', default=1, type=int,
                         help='Number of GPUs. If not given, use all visible devices')
     parser.add_argument('--indir', type=str, required=True,
                         help='Input directory')
@@ -27,7 +27,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=2, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=1, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--tensorboard-dir', default=None, type=str, nargs='?',
                         help="Tensorboard log directory path")
@@ -97,7 +97,7 @@ def main(cmd_args):
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    from moneynet.unsup.ar import train
+    from moneynet.unsup.unsup_ar import train
     train(args)
 
 

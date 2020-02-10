@@ -1,8 +1,5 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Net(nn.Module):
@@ -10,18 +7,6 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(idim, 50)
         self.fc2 = nn.Linear(50, odim)
-
-    # Spatial transformer network forward function
-    def stn(self, x):
-        # xs = self.localization(x)
-        # xs = xs.view(-1, 10 * 3 * 3)
-        # theta = self.fc_loc(xs)
-        # theta = theta.view(-1, 2, 3)
-        #
-        # grid = F.affine_grid(theta, x.size())
-        # x = F.grid_sample(x, grid)
-
-        return x
 
     def forward(self, x, y):
         # transform the input

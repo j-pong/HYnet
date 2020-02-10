@@ -8,7 +8,7 @@ import torch
 
 from tqdm import tqdm
 
-from moneynet.nets.stn_ar import Net
+from moneynet.nets.simnn import Net
 from moneynet.utils.pikachu_dataset import Pikachu
 
 
@@ -61,14 +61,20 @@ def train(args):
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+
     # Training dataset
-    if args.online_learning:
-        model.train()
-        # ToDo(j-pong): shuffle with range class
-        epoch_lens = dataset.__len__()
-        for batch_idx in tqdm(range(args.epochs * epoch_lens)):
-            idx = int(batch_idx/epoch_lens)
-            data, target = dataset.__getitem__(idx)
+    model.train()
+
+    def train_th():
+        for batch_idx, samples in tqdm(train_loader):
+            data = samples['input'].to(device)
+            target = samples['target'].to(device)
+
+            print(data.size())
+            print(data.size())
+
+            exit()
 
             data = np.expand_dims(data.T, axis=0)
             target = np.expand_dims(target.T, axis=0)
@@ -82,21 +88,9 @@ def train(args):
 
             if batch_idx % 500 == 0:
                 print(float(loss))
-    else:
-        train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-        # Model training loop
-        model.train()
-        for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(device), target.to(device)
 
-            optimizer.zero_grad()
-            loss = model(data)
-            loss.backward()
-            optimizer.step()
-            if batch_idx % 500 == 0:
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    args.epochs, batch_idx * len(data), len(train_loader.dataset),
-                                 100. * batch_idx / len(train_loader), loss.item()))
+    for i in range(args.epochs):
+        train_th()
 
 # @torch.no_grad()
 # def test(args):
