@@ -19,6 +19,9 @@ def get_parser():
     # general configuration
     parser.add_argument('--ngpu', default=1, type=int,
                         help='Number of GPUs. If not given, use all visible devices')
+    parser.add_argument('--train-dtype', default="float32",
+                        choices=["float16", "float32", "float64", "O0", "O1", "O2", "O3"],
+                        help='Data type for training')
     parser.add_argument('--indir', type=str, required=True,
                         help='Input directory')
     parser.add_argument('--outdir', type=str, required=True,
@@ -44,8 +47,10 @@ def get_parser():
                         help='Optimizer')
     parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
-    parser.add_argument('--lr', default=1e-3, type=float,
+    parser.add_argument('--lr', default=1e-3, type=float, choices=['adam', 'sgd'],
                         help='Learning rate for optimizer')
+    parser.add_argument('--momentum', default=0.9, type=float,
+                        help='Momentum for SGD optimizer')
     parser.add_argument('--eps', default=1e-6, type=float,
                         help='Epsilon for optimizer')
     parser.add_argument('--weight-decay', default=1e-6, type=float,
@@ -59,9 +64,6 @@ def get_parser():
     parser.add_argument('--grad-clip', default=1, type=float,
                         help='Gradient norm threshold to clip')
 
-    # task related
-    parser.add_argument('--online-learning', default=1, type=int,
-                        help='Online learning')
     return parser
 
 

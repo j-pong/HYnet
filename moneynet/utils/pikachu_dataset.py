@@ -43,13 +43,13 @@ class Pikachu(data.Dataset):
 
         self.n_mfcc = 40
 
-    def __getitem__(self, index):
-        feature, raw = make_mfcc(self.filelist[index], feat_type=self.feat_type, n_mfcc=self.n_mfcc)
+    def __getitem__(self, idx):
+        feature, raw = make_mfcc(self.filelist[idx], feat_type=self.feat_type, n_mfcc=self.n_mfcc)
 
         if self.transform is not None:
             feature = self.transform(feature)
 
-        sample = {'input': feature[:, 1:], 'target': feature[:, :-1]}
+        sample = {'input': feature[:, 1:].T, 'target': feature[:, :-1].T}
 
         return sample
 
@@ -58,4 +58,4 @@ class Pikachu(data.Dataset):
 
     def __dims__(self):
         samples = self.__getitem__(0)
-        return np.shape(samples['input'])[0], np.shape(samples['target'])[0]
+        return np.shape(samples['input'])[-1], np.shape(samples['target'])[-1]
