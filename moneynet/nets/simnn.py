@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import torch
 import torch.nn.functional as F
 
@@ -25,8 +28,8 @@ def initialize(model, init_type="xavier_uniform"):
 class Net(torch.nn.Module):
     def __init__(self, idim, odim):
         super(Net, self).__init__()
-        self.fc1 = torch.nn.Linear(idim, 32)
-        self.fc2 = torch.nn.Linear(32, odim)
+        self.fc1 = torch.nn.Linear(idim, 1024)
+        self.fc2 = torch.nn.Linear(1024, odim)
 
         self.reset_parameters()
 
@@ -34,11 +37,15 @@ class Net(torch.nn.Module):
         initialize(self)
 
     def forward(self, x, y):
-        # simple neural network for inverse network
+        x = x.view(-1, x.size(-1))
+        y = y.view(-1, y.size(-1))
+
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
 
-        # calculate loss with mse
-        loss = F.mse_loss(input=x, target=y, reduction='mean')
+        loss = F.mse_loss(input=x, target=y, reduction='none')
+        mask = y == -1
+        denom = (~mask).float().sum()
+        loss = loss.masked_fill(mask, 0).sum() / denom
 
         return loss

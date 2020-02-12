@@ -1,61 +1,67 @@
-import os
-import librosa
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-import soundfile as sf
+import torch
+from tqdm import tqdm
 import numpy as np
 
-import torch.utils.data as data
+from moneynet.utils.io import load_file_list
 
 
-def load_file_list(datadir):
-    f = []
-    for (dirpath, dirnames, filenames) in os.walk(datadir):
-        for filename in filenames:
-            f.append(os.path.join(dirpath, filename))
+def pad_list(xs, pad_value):
+    n_batch = len(xs)
+    max_len = max(x.size(0) for x in xs)
+    pad = xs[0].new(n_batch, max_len, *xs[0].size()[1:]).fill_(pad_value)
 
-    return f
+    for i in range(n_batch):
+        pad[i, :xs[i].size(0)] = xs[i]
 
-
-def make_mfcc(filename, feat_type='mfcc', raw_recon=False, n_mfcc=40):
-    raw, samplerate = sf.read(filename)
-
-    if feat_type == 'stft':
-        feats = librosa.stft(raw, n_fft=64)
-        raw_ = librosa.istft(feats)
-        feats = librosa.amplitude_to_db(abs(feats))
-    elif feat_type == 'mfcc':
-        feats = librosa.feature.mfcc(y=raw, sr=samplerate, n_mfcc=n_mfcc)
-        raw_ = librosa.feature.inverse.mfcc_to_audio(mfcc=feats)
-
-    if raw_recon:
-        sf.write(filename + 'temp.wav', raw, samplerate)
-        sf.write(filename + 'temp_recon.wav', raw_, samplerate)
-
-    return feats, raw
+    return pad
 
 
-class Pikachu(data.Dataset):
-    def __init__(self, root, transform=None, feat_type='mfcc'):
-        self.filelist = load_file_list(root)
+class Pikachu(torch.utils.data.Dataset):
+    def __init__(self, args, transform=None, ram_memory=True):
+        # load file with pikachuSFX
+        self.filelist = load_file_list(args.indir)
+
         self.num_samples = len(self.filelist)
-        self.feat_type = feat_type
         self.transform = transform
+        self.ram_memory = ram_memory
 
-        self.n_mfcc = 40
+        self.feat_type = args.feat_type
+        self.feat_dim = args.feat_dim
 
-    def __getitem__(self, idx):
-        feature, raw = make_mfcc(self.filelist[idx], feat_type=self.feat_type, n_mfcc=self.n_mfcc)
+        self.batch_size = args.batch_size
+        # ram_memory is waring to small ram case
+        if ram_memory:
+            print("Start buffering for ram_memory mode")
+            self.buffer = {}
+            for idx in tqdm(range(0, self.num_samples)):
+                feat = np.load(self.filelist[idx], allow_pickle=True)
+                self.buffer[idx] = feat  # numpy array attach to key that sample number
 
-        if self.transform is not None:
-            feature = self.transform(feature)
+    def _batch_with_padding(self, idx):
+        # sampling indexs that independent to dataloader (pytorch) idx
+        index_queue = np.random.randint(0, self.num_samples, size=self.batch_size)
+        # batch sampling
+        batch = []
+        for idx in index_queue:
+            if self.ram_memory:
+                feat = torch.from_numpy(self.buffer[idx].T)
+            else:
+                feat = torch.from_numpy(np.load(self.filelist[idx], allow_pickle=True).T)
+            batch.append(feat)
 
-        sample = {'input': feature[:, 1:].T, 'target': feature[:, :-1].T}
-
-        return sample
+        return pad_list(batch, -1)
 
     def __len__(self):
-        return self.num_samples
+        return int(self.num_samples / self.batch_size)
 
     def __dims__(self):
-        samples = self.__getitem__(0)
-        return np.shape(samples['input'])[-1], np.shape(samples['target'])[-1]
+        sample = self.__getitem__(0)
+        return np.shape(sample['input'])[-1], np.shape(sample['target'])[-1]
+
+    def __getitem__(self, idx):
+        feats = self._batch_with_padding(idx)
+        sample = {'input': feats[:, :-1], 'target': feats[:, 1:]}
+        return sample

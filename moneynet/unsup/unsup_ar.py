@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import logging
 import json
@@ -27,7 +30,8 @@ def train(args):
     if not torch.cuda.is_available():
         logging.warning('cuda is not available')
 
-    dataset = Pikachu(root=args.indir)
+    # get dataset
+    dataset = Pikachu(args=args)
 
     # reverse input and output dimension
     idim, odim = map(int, dataset.__dims__())
@@ -64,7 +68,6 @@ def train(args):
     else:
         dtype = torch.float32
     model = model.to(device=device, dtype=dtype)
-    model = model.to(device)
 
     # Setup an optimizer
     if args.opt == 'adam':
@@ -76,7 +79,7 @@ def train(args):
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=1)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
 
     # Training dataset
     model.train()

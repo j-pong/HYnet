@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import logging
 import os
 import random
@@ -22,6 +25,8 @@ def get_parser():
     parser.add_argument('--train-dtype', default="float32",
                         choices=["float16", "float32", "float64", "O0", "O1", "O2", "O3"],
                         help='Data type for training')
+    parser.add_argument('--datadir', type=str, default='./data',
+                        help='Raw data directory')
     parser.add_argument('--indir', type=str, required=True,
                         help='Input directory')
     parser.add_argument('--outdir', type=str, required=True,
@@ -30,7 +35,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=1, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=8, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--tensorboard-dir', default=None, type=str, nargs='?',
                         help="Tensorboard log directory path")
@@ -47,7 +52,7 @@ def get_parser():
                         help='Optimizer')
     parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
-    parser.add_argument('--lr', default=1e-3, type=float, choices=['adam', 'sgd'],
+    parser.add_argument('--lr', default=1e-3, type=float,
                         help='Learning rate for optimizer')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='Momentum for SGD optimizer')
@@ -63,6 +68,13 @@ def get_parser():
                         help="Number of epochs to wait without improvement before stopping the training")
     parser.add_argument('--grad-clip', default=1, type=float,
                         help='Gradient norm threshold to clip')
+
+    # task related
+    parser.add_argument('--feat-type', default='mfcc', type=str,
+                        choices=['stft', 'mfcc'],
+                        help='Feature type for audio')
+    parser.add_argument('--feat-dim', default=40, type=int,
+                        help='Feature dimension')
 
     return parser
 
