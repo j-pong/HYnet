@@ -46,4 +46,4 @@ if __name__ == '__main__':
                                   feat_dim=args.feat_dim)
 
         file_name = os.path.basename(filelist[idx]).split('.')[0]
-        np.save('{}/{}.npy'.format(args.indir, file_name), feat)
+        np.save('{}/{}.npy'.format(args.indir, file_name), feat.astype(np.float32))

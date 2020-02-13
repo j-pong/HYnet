@@ -9,20 +9,63 @@ import torch
 
 from tqdm import tqdm
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 from moneynet.nets.simnn import Net
 from moneynet.utils.pikachu_dataset import Pikachu
 
 
-def train_core(train_loader, optimizer, device, model):
-    for samples in tqdm(train_loader):
-        data = samples['input'].to(device)
-        target = samples['target'].to(device)
+class Reporter(object):
+    def __init__(self, args):
+        self.outdir = args.outdir
+        self.report_dict = {}
+
+    def report_image(self, keys, epoch):
+        # parsing images
+        images = []
+        for key in keys:
+            image = self.report_dict[key]
+            assert len(np.shape(image)) == 2, 'reported image should has dim == 2'
+            images.append(image.T)
+        num_image = len(images)
+
+        fig = plt.Figure()
+        fig.suptitle('{}'.format(self.report_dict['loss']))
+        for i, image in enumerate(images):
+            # one column setting
+            ax = fig.add_subplot(num_image, 1, i + 1)
+            ax.imshow(image, aspect='auto')
+
+        sav_dir = os.path.join(self.outdir, 'images')
+        if not os.path.exists(sav_dir):
+            os.makedirs(sav_dir)
+        filename = 'epoch{}.png'.format(epoch)
+        fig.savefig(os.path.join(sav_dir, filename))
+
+    def report_plot(self):
+        pass
+
+    def add_report_attribute(self, attribute):
+        for key in attribute.keys():
+            self.report_dict[key] = attribute[key]
+
+
+def train_core(train_loader, optimizer, device, model, reporter):
+    for samples in train_loader:
+        data = samples['input'][0].to(device)
+        target = samples['target'][0].to(device)
 
         optimizer.zero_grad()
-        loss = model(data, target)
+        loss, pred = model(data, target)
         loss.backward()
         optimizer.step()
-    return float(loss)
+
+    # ToDo(j-pong): Add reporter attribute but just epoch mode
+    reporter.report_dict['loss'] = float(loss)
+    reporter.report_dict['pred'] = pred.view(-1, data.size(1), data.size(2))[0].detach().cpu().numpy()
+    reporter.report_dict['target'] = target[0].detach().cpu().numpy()
+    reporter.report_dict['fname'] = samples['fname'][0]
 
 
 def train(args):
@@ -50,6 +93,7 @@ def train(args):
         logging.info('ARGS: ' + key + ': ' + str(vars(args)[key]))
 
     # specify model architecture
+    reporter = Reporter(args)
     model = Net(idim, odim)
     logging.info(model)
 
@@ -83,6 +127,7 @@ def train(args):
 
     # Training dataset
     model.train()
-    for i in range(args.epochs):
-        loss = train_core(train_loader, optimizer, device, model)
-        print("{} epoch is end and loss is {}".format(i, loss))
+    for epoch in tqdm(range(args.epochs)):
+        train_core(train_loader, optimizer, device, model, reporter)
+        if epoch + 1 % 10 == 0:
+            reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)

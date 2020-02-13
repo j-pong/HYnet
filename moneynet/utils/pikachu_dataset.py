@@ -28,9 +28,6 @@ class Pikachu(torch.utils.data.Dataset):
         self.transform = transform
         self.ram_memory = ram_memory
 
-        self.feat_type = args.feat_type
-        self.feat_dim = args.feat_dim
-
         self.batch_size = args.batch_size
         # ram_memory is waring to small ram case
         if ram_memory:
@@ -44,15 +41,17 @@ class Pikachu(torch.utils.data.Dataset):
         # sampling indexs that independent to dataloader (pytorch) idx
         index_queue = np.random.randint(0, self.num_samples, size=self.batch_size)
         # batch sampling
-        batch = []
+        batch_feat = []
+        batch_fname = []
         for idx in index_queue:
             if self.ram_memory:
                 feat = torch.from_numpy(self.buffer[idx].T)
             else:
                 feat = torch.from_numpy(np.load(self.filelist[idx], allow_pickle=True).T)
-            batch.append(feat)
+            batch_feat.append(feat)
+            batch_fname.append(self.filelist[idx])
 
-        return pad_list(batch, -1)
+        return pad_list(batch_feat, -1), batch_fname
 
     def __len__(self):
         return int(self.num_samples / self.batch_size)
@@ -62,6 +61,6 @@ class Pikachu(torch.utils.data.Dataset):
         return np.shape(sample['input'])[-1], np.shape(sample['target'])[-1]
 
     def __getitem__(self, idx):
-        feats = self._batch_with_padding(idx)
-        sample = {'input': feats[:, :-1], 'target': feats[:, 1:]}
+        feats, fnames = self._batch_with_padding(idx)
+        sample = {'input': feats[:, :-1], 'target': feats[:, 1:], 'fname': fnames}
         return sample

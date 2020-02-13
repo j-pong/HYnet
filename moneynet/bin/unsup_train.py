@@ -52,7 +52,7 @@ def get_parser():
                         help='Optimizer')
     parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
-    parser.add_argument('--lr', default=1e-3, type=float,
+    parser.add_argument('--lr', default=1e-5, type=float,
                         help='Learning rate for optimizer')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='Momentum for SGD optimizer')
@@ -60,7 +60,7 @@ def get_parser():
                         help='Epsilon for optimizer')
     parser.add_argument('--weight-decay', default=1e-6, type=float,
                         help='Weight decay coefficient for optimizer')
-    parser.add_argument('--epochs', '-e', default=30, type=int,
+    parser.add_argument('--epochs', '-e', default=30000, type=int,
                         help='Number of maximum epochs')
     parser.add_argument('--early-stop-criterion', default='validation/main/loss', type=str, nargs='?',
                         help="Value to monitor to trigger an early stopping of the training")

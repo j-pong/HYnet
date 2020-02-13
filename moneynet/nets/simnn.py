@@ -37,8 +37,11 @@ class Net(torch.nn.Module):
         initialize(self)
 
     def forward(self, x, y):
-        x = x.view(-1, x.size(-1))
-        y = y.view(-1, y.size(-1))
+        x_size = x.size()
+        y_size = y.size()
+
+        x = x.view(-1, x_size[-1])
+        y = y.view(-1, y_size[-1])
 
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
@@ -48,4 +51,4 @@ class Net(torch.nn.Module):
         denom = (~mask).float().sum()
         loss = loss.masked_fill(mask, 0).sum() / denom
 
-        return loss
+        return loss, x
