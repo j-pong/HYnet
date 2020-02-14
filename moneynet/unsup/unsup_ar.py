@@ -94,7 +94,7 @@ def train(args):
 
     # specify model architecture
     reporter = Reporter(args)
-    model = Net(idim, odim)
+    model = Net(idim, odim, args, reporter)
     logging.info(model)
 
     # check the use of multi-gpu
@@ -129,5 +129,5 @@ def train(args):
     model.train()
     for epoch in tqdm(range(args.epochs)):
         train_core(train_loader, optimizer, device, model, reporter)
-        if epoch + 1 % 10 == 0:
+        if (epoch + 1) % 100 == 0:
             reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)

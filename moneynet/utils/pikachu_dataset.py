@@ -21,14 +21,16 @@ def pad_list(xs, pad_value):
 
 class Pikachu(torch.utils.data.Dataset):
     def __init__(self, args, transform=None, ram_memory=True):
-        # load file with pikachuSFX
+        # load and set the ram mode
         self.filelist = load_file_list(args.indir)
-
-        self.num_samples = len(self.filelist)
-        self.transform = transform
         self.ram_memory = ram_memory
 
+        # task related
+        self.num_samples = len(self.filelist)
+        self.transform = transform
         self.batch_size = args.batch_size
+        self.ignore_val = args.ignore_val
+
         # ram_memory is waring to small ram case
         if ram_memory:
             print("Start buffering for ram_memory mode")
@@ -51,7 +53,7 @@ class Pikachu(torch.utils.data.Dataset):
             batch_feat.append(feat)
             batch_fname.append(self.filelist[idx])
 
-        return pad_list(batch_feat, -1), batch_fname
+        return pad_list(batch_feat, self.ignore_val), batch_fname
 
     def __len__(self):
         return int(self.num_samples / self.batch_size)

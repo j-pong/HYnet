@@ -35,7 +35,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=8, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=97, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--tensorboard-dir', default=None, type=str, nargs='?',
                         help="Tensorboard log directory path")
@@ -52,7 +52,7 @@ def get_parser():
                         help='Optimizer')
     parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
-    parser.add_argument('--lr', default=1e-5, type=float,
+    parser.add_argument('--lr', default=2e-5, type=float,
                         help='Learning rate for optimizer')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='Momentum for SGD optimizer')
@@ -75,6 +75,12 @@ def get_parser():
                         help='Feature type for audio')
     parser.add_argument('--feat-dim', default=40, type=int,
                         help='Feature dimension')
+
+    parser.add_argument('--hdim', default=1024, type=int,
+                        help='Hidden layer dimension')
+
+    parser.add_argument('--ignore_val', default=-float('inf'), type=int,
+                        help='Hidden layer dimension')
 
     return parser
 
