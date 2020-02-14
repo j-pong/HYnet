@@ -54,7 +54,7 @@ class Pikachu(torch.utils.data.Dataset):
             batch_feat.append(feat)
             batch_fname.append(self.filelist[idx])
 
-        return pad_list(batch_feat[:-1], self.ignore_in), pad_list(batch_feat[1:], self.ignore_out), batch_fname
+        return pad_list(batch_feat, self.ignore_in), pad_list(batch_feat, self.ignore_out), batch_fname
 
     def __len__(self):
         return int(self.num_samples / self.batch_size)
@@ -64,6 +64,6 @@ class Pikachu(torch.utils.data.Dataset):
         return np.shape(sample['input'])[-1], np.shape(sample['target'])[-1]
 
     def __getitem__(self, idx):
-        in_feats, out_feats, fnames = self._batch_with_padding(idx)
-        sample = {'input': in_feats, 'target': out_feats, 'fname': fnames}
+        in_feats, out_feats, fnames = self._batch_with_padding(idx)  # [B, T, C], [B, T, C], [B]
+        sample = {'input': in_feats[:, :-1], 'target': out_feats[:, 1:], 'fname': fnames}
         return sample

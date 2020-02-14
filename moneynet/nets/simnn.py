@@ -34,7 +34,11 @@ class NetLoss(nn.Module):
         self.pad_val = pad_val
 
     def forward(self, x, y):
-        mask = y == self.pad_val
+        if np.isnan(self.pad_val):
+            mask = torch.isnan(y)
+            y = y.masked_fill(mask, 0)
+        else:
+            mask = y == self.pad_val
         denom = (~mask).float().sum()
         loss = self.criterion(input=x, target=y)
         return loss.masked_fill(mask, 0).sum() / denom
