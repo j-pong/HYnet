@@ -21,6 +21,8 @@ class Reporter(object):
         self.outdir = args.outdir
         self.report_dict = {}
 
+        self.report_buffer = {}
+
     def report_image(self, keys, epoch):
         # parsing images
         images = []
@@ -43,8 +45,23 @@ class Reporter(object):
         filename = 'epoch{}.png'.format(epoch)
         fig.savefig(os.path.join(sav_dir, filename))
 
-    def report_plot(self):
-        pass
+    def report_plot(self, keys, epoch):
+        for key in keys:
+            scalar = self.report_dict[key]
+            try:
+                self.report_buffer[key].append(scalar)
+            except:
+                self.report_buffer[key] = [scalar]
+
+        for key in keys:
+            fig = plt.Figure()
+            ax = fig.add_subplot(1, 1, 1)
+            fig.suptitle('epoch : {}'.format(epoch))
+            ax.plot(self.report_buffer[key], marker='o')
+            ax.grid()
+
+            filename = '{}.png'.format(key)
+            fig.savefig(os.path.join(self.outdir, filename))
 
     def add_report_attribute(self, attribute):
         for key in attribute.keys():
@@ -131,3 +148,6 @@ def train(args):
         train_core(train_loader, optimizer, device, model, reporter)
         if (epoch + 1) % 100 == 0:
             reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)
+        if (epoch + 1) % 10 == 0:
+            reporter.report_plot(keys=['loss'], epoch=epoch + 1)
+

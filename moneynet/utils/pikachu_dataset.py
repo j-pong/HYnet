@@ -44,17 +44,19 @@ class Pikachu(torch.utils.data.Dataset):
         # sampling indexs that independent to dataloader (pytorch) idx
         index_queue = np.random.randint(0, self.num_samples, size=self.batch_size)
         # batch sampling
-        batch_feat = []
+        batch_in_feat = []
+        batch_out_feat = []
         batch_fname = []
         for idx in index_queue:
             if self.ram_memory:
                 feat = torch.from_numpy(self.buffer[idx].T)
             else:
                 feat = torch.from_numpy(np.load(self.filelist[idx], allow_pickle=True).T)
-            batch_feat.append(feat)
+            batch_in_feat.append(feat[:-1])
+            batch_out_feat.append(feat[1:])
             batch_fname.append(self.filelist[idx])
 
-        return pad_list(batch_feat, self.ignore_in), pad_list(batch_feat, self.ignore_out), batch_fname
+        return pad_list(batch_in_feat, self.ignore_in), pad_list(batch_out_feat, self.ignore_out), batch_fname
 
     def __len__(self):
         return int(self.num_samples / self.batch_size)
@@ -65,5 +67,5 @@ class Pikachu(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         in_feats, out_feats, fnames = self._batch_with_padding(idx)  # [B, T, C], [B, T, C], [B]
-        sample = {'input': in_feats[:, :-1], 'target': out_feats[:, 1:], 'fname': fnames}
+        sample = {'input': in_feats, 'target': out_feats, 'fname': fnames}
         return sample

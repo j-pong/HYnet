@@ -28,17 +28,18 @@ def initialize(model, init_type="xavier_uniform"):
 
 
 class NetLoss(nn.Module):
-    def __init__(self, pad_val, criterion=nn.MSELoss(reduce=None)):
+    def __init__(self, ignore_in, ignore_out, criterion=nn.MSELoss(reduce=None)):
         super(NetLoss, self).__init__()
         self.criterion = criterion
-        self.pad_val = pad_val
+        self.ignore_in = ignore_in
+        self.ignore_out = ignore_out
 
     def forward(self, x, y):
-        if np.isnan(self.pad_val):
+        if np.isnan(self.ignore_out):
             mask = torch.isnan(y)
-            y = y.masked_fill(mask, 0)
+            y = y.masked_fill(mask, self.ignore_in)
         else:
-            mask = y == self.pad_val
+            mask = y == self.ignore_out
         denom = (~mask).float().sum()
         loss = self.criterion(input=x, target=y)
         return loss.masked_fill(mask, 0).sum() / denom
@@ -65,7 +66,7 @@ class Net(nn.Module):
         self.fc2 = nn.Linear(self.hdim, odim)
 
         # network training related
-        self.criterion = NetLoss(pad_val=self.ignore_out)
+        self.criterion = NetLoss(ignore_in=self.ignore_in, ignore_out=self.ignore_out)
 
         # initialize parameter
         self.reset_parameters()
@@ -80,7 +81,7 @@ class Net(nn.Module):
 
     def _lin_kernel(self, x):
         # ToDo(j-pong): inverse linear space base for kernel
-        y = x
+        y = np.flip(x)
         y = y / np.max(y)  # normalizing with max so that first elements of hidden units is always fire
         y = np.expand_dims(y, axis=0)  # for binomial distribution
 
