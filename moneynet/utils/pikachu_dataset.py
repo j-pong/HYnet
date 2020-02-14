@@ -29,7 +29,8 @@ class Pikachu(torch.utils.data.Dataset):
         self.num_samples = len(self.filelist)
         self.transform = transform
         self.batch_size = args.batch_size
-        self.ignore_val = args.ignore_val
+        self.ignore_in = args.ignore_in
+        self.ignore_out = args.ignore_out
 
         # ram_memory is waring to small ram case
         if ram_memory:
@@ -53,7 +54,7 @@ class Pikachu(torch.utils.data.Dataset):
             batch_feat.append(feat)
             batch_fname.append(self.filelist[idx])
 
-        return pad_list(batch_feat, self.ignore_val), batch_fname
+        return pad_list(batch_feat[:-1], self.ignore_in), pad_list(batch_feat[1:], self.ignore_out), batch_fname
 
     def __len__(self):
         return int(self.num_samples / self.batch_size)
@@ -63,6 +64,6 @@ class Pikachu(torch.utils.data.Dataset):
         return np.shape(sample['input'])[-1], np.shape(sample['target'])[-1]
 
     def __getitem__(self, idx):
-        feats, fnames = self._batch_with_padding(idx)
-        sample = {'input': feats[:, :-1], 'target': feats[:, 1:], 'fname': fnames}
+        in_feats, out_feats, fnames = self._batch_with_padding(idx)
+        sample = {'input': in_feats, 'target': out_feats, 'fname': fnames}
         return sample

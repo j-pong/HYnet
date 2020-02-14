@@ -28,13 +28,13 @@ def initialize(model, init_type="xavier_uniform"):
 
 
 class NetLoss(nn.Module):
-    def __init__(self, ignore_val, criterion=nn.MSELoss(reduce=None)):
+    def __init__(self, pad_val, criterion=nn.MSELoss(reduce=None)):
         super(NetLoss, self).__init__()
         self.criterion = criterion
-        self.ignore_val = ignore_val
+        self.pad_val = pad_val
 
     def forward(self, x, y):
-        mask = y == self.ignore_val
+        mask = y == self.pad_val
         denom = (~mask).float().sum()
         loss = self.criterion(input=x, target=y)
         return loss.masked_fill(mask, 0).sum() / denom
@@ -48,7 +48,8 @@ class Net(nn.Module):
 
         # network hyperparameter
         self.hdim = args.hdim
-        self.ignore_val = args.ignore_val
+        self.ignore_in = args.ignore_in
+        self.ignore_out = args.ignore_out
 
         # freq distribution design
         weight = self._hg_kernel(np.arange(0, self.hdim, dtype=np.float32), mu=0.0, sigma=430)
@@ -60,7 +61,7 @@ class Net(nn.Module):
         self.fc2 = nn.Linear(self.hdim, odim)
 
         # network training related
-        self.criterion = NetLoss(ignore_val=self.ignore_val)
+        self.criterion = NetLoss(pad_val=self.ignore_out)
 
         # initialize parameter
         self.reset_parameters()
@@ -69,15 +70,15 @@ class Net(nn.Module):
         denom = 1 / (sigma * np.sqrt(2 * np.pi))
         y = denom * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
         y = y / np.max(y)  # normalizing with max so that first elements of hidden units is always fire
-        y = np.expand_dims(y, axis=0)
+        y = np.expand_dims(y, axis=0)  # for binomial distribution
 
         return y
 
     def _lin_kernel(self, x):
         # ToDo(j-pong): inverse linear space base for kernel
         y = x
-        y = y / np.max(y)
-        y = np.expand_dims(y, axis=0)
+        y = y / np.max(y)  # normalizing with max so that first elements of hidden units is always fire
+        y = np.expand_dims(y, axis=0)  # for binomial distribution
 
         return y
 

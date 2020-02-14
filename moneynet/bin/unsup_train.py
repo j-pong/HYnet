@@ -79,7 +79,9 @@ def get_parser():
     parser.add_argument('--hdim', default=1024, type=int,
                         help='Hidden layer dimension')
 
-    parser.add_argument('--ignore_val', default=-float('inf'), type=int,
+    parser.add_argument('--ignore_in', default=0, type=float,
+                        help='Hidden layer dimension')
+    parser.add_argument('--ignore_out', default=float('NaN'), type=float,
                         help='Hidden layer dimension')
 
     return parser
