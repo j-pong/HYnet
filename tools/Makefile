@@ -37,4 +37,5 @@ venv: miniconda.sh
 
 	. venv/bin/activate && conda install pytorch torchvision -c pytorch
 	. venv/bin/activate && pip install scikit-learn matplotlib seaborn librosa soundfile configargparse tqdm
+	. venv/bin/activate && pip install requests BeautifulSoup4  # making dataset related
 	. venv/bin/activate && pip install -e ..

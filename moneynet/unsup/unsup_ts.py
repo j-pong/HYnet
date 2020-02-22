@@ -1,6 +1,6 @@
 import numpy as np
 
-from moneynet.utils.pikachu_dataset import Pikachu as Datasets
+from moneynet.utils.datasets.pikachu_dataset import Pikachu as Datasets
 
 
 def scale(x, n):

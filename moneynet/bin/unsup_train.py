@@ -60,7 +60,7 @@ def get_parser():
                         help='Epsilon for optimizer')
     parser.add_argument('--weight-decay', default=1e-6, type=float,
                         help='Weight decay coefficient for optimizer')
-    parser.add_argument('--epochs', '-e', default=30000, type=int,
+    parser.add_argument('--epochs', '-e', default=3000, type=int,
                         help='Number of maximum epochs')
     parser.add_argument('--early-stop-criterion', default='validation/main/loss', type=str, nargs='?',
                         help="Value to monitor to trigger an early stopping of the training")

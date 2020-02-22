@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from moneynet.nets.simnn import Net
-from moneynet.utils.pikachu_dataset import Pikachu
+from moneynet.utils.datasets.pikachu_dataset import Pikachu
 
 
 class Reporter(object):
