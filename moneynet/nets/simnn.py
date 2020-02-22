@@ -96,20 +96,28 @@ class Net(nn.Module):
 
         return x * mask
 
-    def pad_for_shift(self, key, query):
+    def _pad_for_shift(self, key, query):
+        """Padding to channel dim for convolution
+
+                :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
+                :param torch.Tensor query: batch of padded target sequences (B, Tmax, idim_q)
+
+                :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k + idim_q - 1, idim_k)
+                :rtype: torch.Tensor
+        """
         idim_k = key.size(-1)
         idim_q = query.size(-1)
-        assert idim_q >= idim_k
+
         pad = idim_q - 1
 
         key_pad_trunk = []
         key_pad = F.pad(key, pad=(pad, pad))  # (B, Tmax, idim_k + pad * 2)
         for i in six.moves.range(idim_k + idim_q - 1):
             key_pad_trunk.append(key_pad[:, :, i:i + idim_q].unsqueeze(-2))
-        key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_k + pad * 2)
+        key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         return key_pad_trunk
 
-    def simiality(self, key_pad_trunk, query, sim_type='cos'):
+    def _simiality(self, key_pad_trunk, query, type='cos'):
         """Measuring similarity of each other tensor
 
         :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, idim_k + idim_q - 1, idim_k)
@@ -121,13 +129,13 @@ class Net(nn.Module):
         :return: max similarity index of sequence  (B, Tmax)
         :rtype: torch.Tensor
         """
-        if sim_type == 'cos':
-            # ToDo: cos similarity is normalized from comparision scope
+        # ToDo: similarity is normalized from comparision scope
+        if type == 'cos':
             denom = torch.norm(query.unsqueeze(-2), dim=-1) * torch.norm(key_pad_trunk, dim=-1)
             sim = torch.sum(query.unsqueeze(-2) * key_pad_trunk, dim=-1) / denom  # (B, Tmax, idim_k + idim_q - 1)
             sim_max, sim_max_idx = torch.max(sim, dim=-1)  # (B, Tmax)
         else:
-            raise AttributeError('{} is not support yet'.format(sim_type))
+            raise AttributeError('{} is not support yet'.format(type))
 
         return sim_max, sim_max_idx
 
@@ -144,48 +152,43 @@ class Net(nn.Module):
         :return: value of augmentation parameter (B, Tmax)
         :rtype: torch.Tensor
         """
-        sim_max_global = torch.zeros(size=(x.size(0), x.size(1))).to(device=x.device)
         x_aug = None
         for theta in np.linspace(0.5, 1.5, 9):
             # scale
             x_s = F.interpolate(x, scale_factor=theta)
             # shift
-            # delta = y.size(-1) - x_s.size(-1)
-            # if delta >= 0:
-            #     x_s_pad_trunk = self.pad_for_shift(key=x_s, query=y)
-            #     sim_max, sim_max_idx = self.simiality(key_pad_trunk=x_s_pad_trunk, query=y)
-            # elif delta < 0:
-            #     y_pad_trunk = self.pad_for_shift(key=y, query=x_s)
-            #     sim_max, sim_max_idx = self.simiality(key_pad_trunk=y_pad_trunk, query=y)
-            x_s_pad_trunk = self.pad_for_shift(key=x_s, query=y)
-            sim_max, sim_max_idx = self.simiality(key_pad_trunk=x_s_pad_trunk, query=y)
-            # maximum scale select
-            mask = sim_max_global < sim_max
-            sim_max_global[mask] = sim_max[mask]
+            x_s_pad_trunk = self._pad_for_shift(key=x_s, query=y)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+            # similarity measuring
+            sim_max, sim_max_idx = self._simiality(key_pad_trunk=x_s_pad_trunk, query=y, type=sim_type)  # (B, Tmax)
+            # aug parameters
+            p_aug_shift = sim_max_idx.view(-1, 1).float()
+            p_aug_scale = torch.tensor([theta]).view(1, 1).repeat(repeats=p_aug_shift.size()).to(p_aug_shift.device)
+            p_augs = torch.cat([p_aug_shift, p_aug_scale], dim=-1)  # (B * Tmax, 2)
             # maximum shift select
-            kernel_size = kernel.size()
-            kernel = kernel.view(-1, kernel_size[-2], kernel_size[-1])
-            x_shifted = torch.cat([kernel[i, idxs] for i, idxs in enumerate(sim_max_idx.view(-1))], dim=0)
+            xspt_size = x_s_pad_trunk.size()
+            x_s_pad_trunk = x_s_pad_trunk.view(-1, xspt_size[-2],
+                                               xspt_size[-1])  # (B * Tmax, idim_k + idim_q - 1, idim_q)
+            x_s_opt = x_s_pad_trunk[torch.arange(x_s_pad_trunk.size(0)), sim_max_idx.view(-1)]  # (B * Tmax, idim_q)
             if x_aug is None:
-                x_aug = x_shifted
+                x_aug = x_s_opt
+                sim_max_global = sim_max
+                p_augs_global = p_augs
             else:
-                x_aug[mask.view(-1)] = x_shifted[mask.view(-1)]
+                mask = sim_max_global < sim_max
+                sim_max_global[mask] = sim_max[mask]
+                p_augs_global[mask.view(-1)] = p_augs[mask.view(-1)]
+                x_aug[mask.view(-1)] = x_s_opt[mask.view(-1)]
 
-        print(x_aug.size())
-        exit()
-
-        return x_aug, sim_max_global
+        return x_aug, sim_max_global, p_augs_global
 
     def reset_parameters(self):
         initialize(self)
 
     def forward(self, x, y):
-        x, _ = self.argaug(x, y)
+        x, sim_max_global, p_augs_global = self.argaug(x, y)
 
-        x_size = x.size()
-        y_size = y.size()
-        x = x.view(-1, x_size[-1])
-        y = y.view(-1, y_size[-1])
+        x = x.view(-1, x.size(-1))
+        y = y.view(-1, y.size(-1))
 
         x_ = self.freq_mask(self.fc1(x))
         x = self.fc2(x_) + x  # residual component add to end of network because the network just infer diff.
