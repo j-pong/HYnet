@@ -42,10 +42,35 @@ class Reporter(object):
         sav_dir = os.path.join(self.outdir, 'images')
         if not os.path.exists(sav_dir):
             os.makedirs(sav_dir)
-        filename = 'epoch{}.png'.format(epoch)
+        filename = 'epoch{}_images.png'.format(epoch)
         fig.savefig(os.path.join(sav_dir, filename))
 
     def report_plot(self, keys, epoch):
+        # parsing images
+        scalars = []
+        for key in keys:
+            scalar = self.report_dict[key]
+            if len(np.shape(scalar)) > 1:
+                for i in range(np.shape(scalar)[-1]):
+                    scalars.append(scalar[:, i])
+            else:
+                scalars.append(scalar)
+        num_scalar = len(scalars)
+
+        fig = plt.Figure()
+        for i, scalar in enumerate(scalars):
+            # one column setting
+            ax = fig.add_subplot(num_scalar, 1, i + 1)
+            ax.plot(range(len(scalar)), scalar)
+            ax.grid()
+
+        sav_dir = os.path.join(self.outdir, 'images')
+        if not os.path.exists(sav_dir):
+            os.makedirs(sav_dir)
+        filename = 'epoch{}_scalars.png'.format(epoch)
+        fig.savefig(os.path.join(sav_dir, filename))
+
+    def report_plot_buffer(self, keys, epoch):
         for key in keys:
             scalar = self.report_dict[key]
             try:
@@ -140,7 +165,7 @@ def train(args):
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=4)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=6)
 
     # Training dataset
     model.train()
@@ -148,6 +173,6 @@ def train(args):
         train_core(train_loader, optimizer, device, model, reporter)
         if (epoch + 1) % 100 == 0:
             reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)
+            reporter.report_plot(keys=['augs_p', 'augs_sim'], epoch=epoch + 1)
         if (epoch + 1) % 10 == 0:
-            reporter.report_plot(keys=['loss'], epoch=epoch + 1)
-
+            reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
