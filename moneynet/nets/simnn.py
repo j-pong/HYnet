@@ -75,6 +75,9 @@ class Net(nn.Module):
         # initialize parameter
         self.reset_parameters()
 
+    def reset_parameters(self):
+        initialize(self)
+
     def _hg_kernel(self, x, mu, sigma):
         denom = 1 / (sigma * np.sqrt(2 * np.pi))
         y = denom * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
@@ -89,12 +92,6 @@ class Net(nn.Module):
         y = np.expand_dims(y, axis=0)  # for binomial distribution
 
         return y
-
-    def freq_mask(self, x):
-        mask = torch.multinomial(self.freq, num_samples=x.size(0), replacement=True)  # [B * T, C]
-        mask = mask.to(x.device).T
-
-        return x * mask
 
     def _pad_for_shift(self, key, query):
         """Padding to channel dim for convolution
@@ -204,8 +201,25 @@ class Net(nn.Module):
         b_size, t_size, _ = x.size()
         return x_aug, sim_max_global, p_augs_global.view(b_size, t_size, p_augs_global.size(-1))
 
-    def reset_parameters(self):
-        initialize(self)
+    def freq_mask(self, x):
+        mask = torch.multinomial(self.freq, num_samples=x.size(0), replacement=True)  # [B * T, C]
+        mask = mask.to(x.device).T
+
+        return x * mask, mask
+
+    def disentangle(self, h):
+        """Disentangle representation
+
+        """
+        # make mask for figurig out each node output
+        m_h = torch.eye(self.hdim).to(h.device).unsqueeze(0).float()
+        h_ = m_h * h.unsqueeze(-1)  # (B * Tmax, hdim, hdim)
+        # decode each node
+        x_ = self.fc2(h_)  # (B * Tmax, hdim, odim)
+        x_norm = x_ / torch.norm(x_, dim=-1, keepdim=True)  # (B * Tmax, hdim, odim)
+        kernel = torch.matmul(x_norm, x_norm.transpose(-1, -2))  # (B * Tmax, hdim, hdim)
+
+        return kernel, x_
 
     def forward(self, x, y):
         x, sim_max_global, p_augs_global = self.argaug(x, y)
@@ -213,12 +227,14 @@ class Net(nn.Module):
         x = x.view(-1, x.size(-1))
         y = y.view(-1, y.size(-1))
 
-        x_ = self.freq_mask(self.fc1(x))
-        x = self.fc2(x_)  # residual component add to end of network because the network just infer diff.
+        h, m = self.freq_mask(self.fc1(x))
+        kernel, x_ = self.disentangle(h)
+        x = self.fc2(h)  # + x
 
         loss = self.criterion(x, y)
 
         self.reporter.report_dict['augs_p'] = p_augs_global[0].cpu().numpy()
         self.reporter.report_dict['augs_sim'] = sim_max_global[0].cpu().numpy()
+        self.reporter.report_dict['distang'] = kernel[20].detach().cpu().numpy()
 
         return loss, x

@@ -172,7 +172,7 @@ def train(args):
     for epoch in tqdm(range(args.epochs)):
         train_core(train_loader, optimizer, device, model, reporter)
         if (epoch + 1) % 100 == 0:
-            reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)
+            reporter.report_image(keys=['target', 'pred', 'distang'], epoch=epoch + 1)
             reporter.report_plot(keys=['augs_p', 'augs_sim'], epoch=epoch + 1)
         if (epoch + 1) % 10 == 0:
             reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
