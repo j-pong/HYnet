@@ -93,15 +93,22 @@ class Reporter(object):
             self.report_dict[key] = attribute[key]
 
 
-def train_core(train_loader, optimizer, device, model, reporter):
+def train_core(args, train_loader, optimizer, device, model, reporter):
     for samples in train_loader:
         data = samples['input'][0].to(device)
         target = samples['target'][0].to(device)
 
-        optimizer.zero_grad()
         loss, pred = model(data, target)
         loss.backward()
-        optimizer.step()
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), args.grad_clip)
+        logging.info('grad norm={}'.format(grad_norm))
+        if np.isnan(grad_norm):
+            logging.warning('grad norm is nan. Do not update model.')
+        else:
+            optimizer.step()
+        optimizer.zero_grad()
 
     # ToDo(j-pong): Add reporter attribute but just epoch mode
     reporter.report_dict['loss'] = float(loss)
@@ -161,17 +168,19 @@ def train(args):
             model.parameters(), args.lr, eps=args.eps,
             weight_decay=args.weight_decay)
     elif args.opt == 'sgd':
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=6)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=6, pin_memory=True)
 
     # Training dataset
     model.train()
     for epoch in tqdm(range(args.epochs)):
-        train_core(train_loader, optimizer, device, model, reporter)
-        if (epoch + 1) % 100 == 0:
+        train_core(args, train_loader, optimizer, device, model, reporter)
+        if (epoch + 1) % 10 == 0:
             reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)
             reporter.report_plot(keys=['augs_p', 'augs_sim'], epoch=epoch + 1)
         if (epoch + 1) % 10 == 0:

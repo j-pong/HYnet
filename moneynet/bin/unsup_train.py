@@ -35,10 +35,8 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=3, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=2, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
-    parser.add_argument('--tensorboard-dir', default=None, type=str, nargs='?',
-                        help="Tensorboard log directory path")
     parser.add_argument('--eval-interval-epochs', default=1, type=int,
                         help="Evaluation interval epochs")
     parser.add_argument('--save-interval-epochs', default=1, type=int,
@@ -52,7 +50,7 @@ def get_parser():
                         help='Optimizer')
     parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
-    parser.add_argument('--lr', default=2e-5, type=float,
+    parser.add_argument('--lr', default=1e-3, type=float,
                         help='Learning rate for optimizer')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='Momentum for SGD optimizer')
@@ -62,11 +60,7 @@ def get_parser():
                         help='Weight decay coefficient for optimizer')
     parser.add_argument('--epochs', '-e', default=3000, type=int,
                         help='Number of maximum epochs')
-    parser.add_argument('--early-stop-criterion', default='validation/main/loss', type=str, nargs='?',
-                        help="Value to monitor to trigger an early stopping of the training")
-    parser.add_argument('--patience', default=3, type=int, nargs='?',
-                        help="Number of epochs to wait without improvement before stopping the training")
-    parser.add_argument('--grad-clip', default=1, type=float,
+    parser.add_argument('--grad-clip', default=5, type=float,
                         help='Gradient norm threshold to clip')
 
     # task related

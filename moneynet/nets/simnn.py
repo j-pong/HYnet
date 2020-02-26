@@ -129,7 +129,7 @@ class Net(nn.Module):
         query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, hdim, idim_k + idim_q - 1, idim_q)
         return key_pad_trunk, query_mask
 
-    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos', normalize=False):
+    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos', normalize=True):
         """Measuring similarity of each other tensor
 
         :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, hdim, idim_k + idim_q - 1, idim_k)
@@ -146,10 +146,7 @@ class Net(nn.Module):
         if query_mask is not None:
             query = query * query_mask
         if measurement == 'cos':
-            if normalize:
-                denom = torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1)
-            else:
-                denom = 1.0
+            denom = torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1)
             sim = torch.sum(query * key_pad_trunk, dim=-1) / denom  # (B, Tmax, idim_k + idim_q - 1)
             # nan filtering
             mask = torch.isnan(sim)
@@ -222,7 +219,7 @@ class Net(nn.Module):
 
         return x * mask, mask
 
-    def disentangle(self, h, kernel_output=False):
+    def disentangle(self, h, kernel_output=False, normalize=False):
         """Disentangle representation
 
         """
@@ -232,8 +229,11 @@ class Net(nn.Module):
         # decode each node
         x_ = self.fc2(h_)  # (B, Tmax, hdim, odim)
         if kernel_output:
-            x_norm = x_ / torch.norm(x_, dim=-1, keepdim=True)  # (B, Tmax, hdim, odim)
-            kernel = torch.matmul(x_norm, x_norm.transpose(-1, -2))  # (B, Tmax, hdim, hdim)
+            if normalize:
+                denom = torch.norm(x_, dim=-1, keepdim=True)  # (B, Tmax, hdim, odim)
+            else:
+                denom = 1.0
+            kernel = torch.matmul(x_ / denom, (x_ / denom).transpose(-1, -2))  # (B, Tmax, hdim, hdim)
         else:
             kernel = None
 
@@ -248,7 +248,7 @@ class Net(nn.Module):
         h, m = self.freq_mask(self.fc1(x))
 
         # 2. disentangle by screening out hidden space without self-node
-        # ToDO: disentangled feature constrained needs
+        # ToDo: disentangled feature constrained needs
         kernel, x_dis = self.disentangle(h)
 
         # 3. each disentangled feature search location of optimal scale and shift arguments
