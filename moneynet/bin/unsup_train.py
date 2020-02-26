@@ -35,7 +35,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=48, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=3, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--tensorboard-dir', default=None, type=str, nargs='?',
                         help="Tensorboard log directory path")
