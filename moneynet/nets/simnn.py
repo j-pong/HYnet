@@ -55,6 +55,8 @@ class Net(nn.Module):
         self.reporter = reporter
 
         # network hyperparameter
+        self.idim = idim
+        self.odim = odim
         self.hdim = args.hdim
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
@@ -127,7 +129,7 @@ class Net(nn.Module):
         query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         return key_pad_trunk, query_mask
 
-    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos'):
+    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos', normalize=False):
         """Measuring similarity of each other tensor
 
         :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, idim_k + idim_q - 1, idim_k)
@@ -144,7 +146,10 @@ class Net(nn.Module):
         if query_mask is not None:
             query = query * query_mask
         if measurement == 'cos':
-            denom = torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1)
+            if normalize:
+                denom = torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1)
+            else:
+                denom = 1.0
             sim = torch.sum(query * key_pad_trunk, dim=-1) / denom  # (B, Tmax, idim_k + idim_q - 1)
             # nan filtering
             mask = torch.isnan(sim)
@@ -165,11 +170,12 @@ class Net(nn.Module):
 
         :return: augmented source sequences (B, Tmax, idim)
         :rtype: torch.Tensor
-        :return: value of augmentation parameter (B, Tmax, num_of_augs)
+        :return: value of augmentation parameter (B, Tmax, 2)
         :rtype: torch.Tensor
         :return: value of similarity (B, Tmax)
         :rtype: torch.Tensor
         """
+        batch_size, time_size, _ = x.size()
         x_aug = None
         for theta in np.linspace(0.8, 1.2, 5):
             # scale
@@ -198,8 +204,7 @@ class Net(nn.Module):
                 x_aug[mask.view(-1)] = x_s_opt[mask.view(-1)]
                 sim_max_global[mask] = sim_max[mask]
                 p_augs_global[mask.view(-1)] = p_augs[mask.view(-1)]
-        b_size, t_size, _ = x.size()
-        return x_aug, sim_max_global, p_augs_global.view(b_size, t_size, p_augs_global.size(-1))
+        return x_aug, sim_max_global, p_augs_global.view(batch_size, time_size, p_augs_global.size(-1))
 
     def freq_mask(self, x):
         mask = torch.multinomial(self.freq, num_samples=x.size(0), replacement=True)  # [B * T, C]
@@ -207,7 +212,7 @@ class Net(nn.Module):
 
         return x * mask, mask
 
-    def disentangle(self, h):
+    def disentangle(self, h, kernel=True):
         """Disentangle representation
 
         """
@@ -216,25 +221,45 @@ class Net(nn.Module):
         h_ = m_h * h.unsqueeze(-1)  # (B * Tmax, hdim, hdim)
         # decode each node
         x_ = self.fc2(h_)  # (B * Tmax, hdim, odim)
-        x_norm = x_ / torch.norm(x_, dim=-1, keepdim=True)  # (B * Tmax, hdim, odim)
-        kernel = torch.matmul(x_norm, x_norm.transpose(-1, -2))  # (B * Tmax, hdim, hdim)
+        if kernel:
+            x_norm = x_ / torch.norm(x_, dim=-1, keepdim=True)  # (B * Tmax, hdim, odim)
+            kernel = torch.matmul(x_norm, x_norm.transpose(-1, -2))  # (B * Tmax, hdim, hdim)
 
         return kernel, x_
 
     def forward(self, x, y):
-        x, sim_max_global, p_augs_global = self.argaug(x, y)
+        # 0. prepare data
+        batch_size = x.size(0)
+        time_size = x.size(1)
+        x = x.view(-1, x.size(-1))
 
+        # 1. hidden space control via freq mask with some distribution
+        h, m = self.freq_mask(self.fc1(x))
+
+        # 2. disentangle by screening out hidden space without self-node
+        kernel, x_dis = self.disentangle(h)
+        # ToDO: disentangled feature constrained needs
+
+        # 3. each disentangled feature search location of optimal scale and shift arguments
+        x_dis = x_dis.view(batch_size, time_size, self.hdim, self.odim)
+        xs = []
+        for i_h in six.moves.range(self.hdim):
+            x, sim_max_global, p_augs_global = self.argaug(x_dis[:, :, i_h, :], y)
+            xs.append(x.unsqueeze(-2))
+        xs = torch.cat(xs, dim=-2)
+
+        # 4. feed forward each disentangled feature for matching to target feature
+        h = self.fc1(xs)
+        x = torch.sum(self.fc2(h), dim=-2)
+
+        # 5. compute loss
         x = x.view(-1, x.size(-1))
         y = y.view(-1, y.size(-1))
-
-        h, m = self.freq_mask(self.fc1(x))
-        kernel, x_ = self.disentangle(h)
-        x = self.fc2(h)  # + x
-
         loss = self.criterion(x, y)
 
-        self.reporter.report_dict['augs_p'] = p_augs_global[0].cpu().numpy()
-        self.reporter.report_dict['augs_sim'] = sim_max_global[0].cpu().numpy()
+        # appendix. for reporting some value or tensor
+        self.reporter.report_dict['augs_p'] = p_augs_global[0].detach().cpu().numpy()
+        self.reporter.report_dict['augs_sim'] = sim_max_global[0].detach().cpu().numpy()
         self.reporter.report_dict['distang'] = kernel[20].detach().cpu().numpy()
 
         return loss, x
