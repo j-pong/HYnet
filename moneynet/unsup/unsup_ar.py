@@ -94,7 +94,7 @@ class Reporter(object):
 
 
 class Updater(object):
-    def __int__(self, args, train_loader, optimizer, device, model, reporter):
+    def __init__(self, args, train_loader, optimizer, device, model, reporter):
         self.train_loader = train_loader
         self.optimizer = optimizer
         self.model = model
@@ -117,7 +117,7 @@ class Updater(object):
 
             self.forward_count += 1
             if self.forward_count != self.accum_grad:
-                return
+                continue
             self.forward_count = 0
 
             grad_norm = torch.nn.utils.clip_grad_norm_(

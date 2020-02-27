@@ -48,7 +48,7 @@ def get_parser():
     parser.add_argument('--opt', default='sgd', type=str,
                         choices=['adam', 'sgd'],
                         help='Optimizer')
-    parser.add_argument('--accum-grad', default=10, type=int,
+    parser.add_argument('--accum-grad', default=40, type=int,
                         help='Number of gradient accumuration')
     parser.add_argument('--lr', default=1e-3, type=float,
                         help='Learning rate for optimizer')

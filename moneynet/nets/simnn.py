@@ -62,7 +62,7 @@ class Net(nn.Module):
         self.ignore_out = args.ignore_out
 
         # freq distribution design
-        weight = self._hg_kernel(np.arange(0, self.hdim, dtype=np.float32), mu=0.0, sigma=430)
+        weight = self._hg_kernel(np.arange(0, self.hdim, dtype=np.float32), mu=0.0, sigma=50)
         weight = np.concatenate([1.0 - weight, weight], axis=0).T  # binomial distribution needs for hidden mask
         self.freq = torch.from_numpy(weight)
 
@@ -158,12 +158,13 @@ class Net(nn.Module):
 
         return sim_max, sim_max_idx
 
-    def argaug(self, x, y, measurement='cos'):
+    def argaug(self, x, y, measurement='cos', scale=True):
         """Find augmentation parameter using grid search
 
         :param torch.Tensor x: batch of padded source sequences (B, Tmax, hdim, idim)
         :param torch.Tensor y: batch of padded target sequences (B, Tmax, hdim, idim)
         :param string measurement:
+        :param bool scale:
 
         :return: augmented source sequences (B, Tmax, hdim, idim)
         :rtype: torch.Tensor
@@ -176,9 +177,22 @@ class Net(nn.Module):
         time_size = x.size(1)
         hdim_size = x.size(2)
         x_aug = None
-        for theta in np.linspace(0.8, 1.2, 5):
-            # scale
-            x_s = F.interpolate(x, scale_factor=(1, theta))
+
+        if scale:
+            start = 0.8
+            end = 1.2
+            num = 5
+        else:
+            start = 1.0
+            end = 1.0
+            num = 1
+
+        for theta in np.linspace(start, end, num):
+            if scale:
+                # scale
+                x_s = F.interpolate(x, scale_factor=(1, theta))
+            else:
+                x_s = x
             # shift
             x_s_pad_trunk, _ = self._pad_for_shift(key=x_s, query=y)  # (B, Tmax, hdim ,idim_k + idim_q - 1, idim_q)
             # similarity measuring
@@ -211,6 +225,13 @@ class Net(nn.Module):
         return x_aug, sim_max_global, p_augs_global
 
     def freq_mask(self, x):
+        """Frequentest node selection via distribution that distribute along hidden space
+
+        :param torch.Tensor x: batch of padded source sequences (B, Tmax, idim)
+
+        :return: mask for screening out hidden space (B, Tmax, 1)
+        :rtype: torch.Tensor
+        """
         batch_size = x.size(0)
         time_size = x.size(1)
         mask = torch.multinomial(self.freq, num_samples=batch_size * time_size, replacement=True)  # [B * T, C]
@@ -223,7 +244,7 @@ class Net(nn.Module):
         """Disentangle representation
 
         """
-        # make mask for figurig out each node output
+        # make a mask for figuring out each node output
         m_h = torch.eye(self.hdim).to(h.device).unsqueeze(0).float()
         h_ = m_h * h.unsqueeze(-1)  # (B, Tmax, hdim, hdim)
         # decode each node
@@ -245,7 +266,7 @@ class Net(nn.Module):
         # time_size = x.size(1)
 
         # 1. hidden space control via freq mask with some distribution
-        h, m = self.freq_mask(self.fc1(x))
+        h = self.relu1(self.fc1(x))
 
         # 2. disentangle by screening out hidden space without self-node
         # ToDo: disentangled feature constrained needs
