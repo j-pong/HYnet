@@ -129,7 +129,7 @@ class Net(nn.Module):
         query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, hdim, idim_k + idim_q - 1, idim_q)
         return key_pad_trunk, query_mask
 
-    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos', normalize=True):
+    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos'):
         """Measuring similarity of each other tensor
 
         :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, hdim, idim_k + idim_q - 1, idim_k)
@@ -174,7 +174,7 @@ class Net(nn.Module):
         """
         batch_size = x.size(0)
         time_size = x.size(1)
-        c1_size = x.size(2)  # hdim
+        hdim_size = x.size(2)
         x_aug = None
         for theta in np.linspace(0.8, 1.2, 5):
             # scale
@@ -206,8 +206,8 @@ class Net(nn.Module):
                 sim_max_global[mask] = sim_max[mask]
                 p_augs_global[mask.view(-1)] = p_augs[mask.view(-1)]
         # recover shape
-        x_aug = x_aug.view(batch_size, time_size, c1_size, -1)
-        p_augs_global = p_augs_global.view(batch_size, time_size, c1_size, -1)
+        x_aug = x_aug.view(batch_size, time_size, hdim_size, -1)
+        p_augs_global = p_augs_global.view(batch_size, time_size, hdim_size, -1)
         return x_aug, sim_max_global, p_augs_global
 
     def freq_mask(self, x):
@@ -256,7 +256,8 @@ class Net(nn.Module):
 
         # 4. feed forward each disentangled feature for matching to target feature
         h = self.fc1(x_dis)
-        x = torch.sum(self.fc2(h), dim=-2)
+        x_dis = self.fc2(h)
+        x = torch.sum(x_dis, dim=-2)
 
         # 5. compute loss
         x = x.view(-1, x.size(-1))

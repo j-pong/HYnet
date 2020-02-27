@@ -93,28 +93,47 @@ class Reporter(object):
             self.report_dict[key] = attribute[key]
 
 
-def train_core(args, train_loader, optimizer, device, model, reporter):
-    for samples in train_loader:
-        data = samples['input'][0].to(device)
-        target = samples['target'][0].to(device)
+class Updater(object):
+    def __int__(self, args, train_loader, optimizer, device, model, reporter):
+        self.train_loader = train_loader
+        self.optimizer = optimizer
+        self.model = model
+        self.device = device
+        self.model = model
+        self.reporter = reporter
 
-        loss, pred = model(data, target)
-        loss.backward()
+        self.grad_clip = args.grad_clip
+        self.accum_grad = args.accum_grad
 
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(), args.grad_clip)
-        logging.info('grad norm={}'.format(grad_norm))
-        if np.isnan(grad_norm):
-            logging.warning('grad norm is nan. Do not update model.')
-        else:
-            optimizer.step()
-        optimizer.zero_grad()
+        self.forward_count = 0
 
-    # ToDo(j-pong): Add reporter attribute but just epoch mode
-    reporter.report_dict['loss'] = float(loss)
-    reporter.report_dict['pred'] = pred.view(-1, data.size(1), data.size(2))[0].detach().cpu().numpy()
-    reporter.report_dict['target'] = target[0].detach().cpu().numpy()
-    reporter.report_dict['fname'] = samples['fname'][0]
+    def train_core(self):
+        for samples in self.train_loader:
+            data = samples['input'][0].to(self.device)
+            target = samples['target'][0].to(self.device)
+
+            loss, pred = self.model(data, target)
+            loss.backward()
+
+            self.forward_count += 1
+            if self.forward_count != self.accum_grad:
+                return
+            self.forward_count = 0
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.grad_clip)
+            logging.info('grad norm={}'.format(grad_norm))
+            if np.isnan(grad_norm):
+                logging.warning('grad norm is nan. Do not update model.')
+            else:
+                self.optimizer.step()
+            self.optimizer.zero_grad()
+
+        # ToDo(j-pong): Add reporter attribute but just epoch mode
+        self.reporter.report_dict['loss'] = float(loss)
+        self.reporter.report_dict['pred'] = pred.view(-1, data.size(1), data.size(2))[0].detach().cpu().numpy()
+        self.reporter.report_dict['target'] = target[0].detach().cpu().numpy()
+        self.reporter.report_dict['fname'] = samples['fname'][0]
 
 
 def train(args):
@@ -176,12 +195,14 @@ def train(args):
 
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=6, pin_memory=True)
 
+    updater = Updater(args, train_loader, optimizer, device, model, reporter)
+
     # Training dataset
     model.train()
     for epoch in tqdm(range(args.epochs)):
-        train_core(args, train_loader, optimizer, device, model, reporter)
-        if (epoch + 1) % 10 == 0:
+        updater.train_core()
+        if (epoch + 1) % args.high_interval_epochs == 0:
             reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)
             reporter.report_plot(keys=['augs_p', 'augs_sim'], epoch=epoch + 1)
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
