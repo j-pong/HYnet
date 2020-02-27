@@ -267,6 +267,7 @@ class Net(nn.Module):
         # appendix. for reporting some value or tensor
         self.reporter.report_dict['augs_p'] = p_augs_global[0, :, 5].detach().cpu().numpy()
         self.reporter.report_dict['augs_sim'] = sim_max_global[0, :, 5].detach().cpu().numpy()
+        self.reporter.report_dict['pred_ele'] = x_dis[0, :, 5].detach().cpu().numpy()
         if kernel is not None:
             self.reporter.report_dict['distang'] = kernel[20].detach().cpu().numpy()
 

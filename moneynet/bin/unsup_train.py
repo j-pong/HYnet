@@ -39,7 +39,7 @@ def get_parser():
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--low-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
-    parser.add_argument('--high-interval-epochs', default=100, type=int,
+    parser.add_argument('--high-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
     parser.add_argument('--save-interval-epochs', default=1, type=int,
                         help="Save interval epochs")

@@ -202,7 +202,7 @@ def train(args):
     for epoch in tqdm(range(args.epochs)):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
-            reporter.report_image(keys=['target', 'pred'], epoch=epoch + 1)
+            reporter.report_image(keys=['target', 'pred', 'pred_ele'], epoch=epoch + 1)
             reporter.report_plot(keys=['augs_p', 'augs_sim'], epoch=epoch + 1)
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
