@@ -35,7 +35,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=2, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=97, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--low-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
@@ -48,7 +48,7 @@ def get_parser():
     parser.add_argument('--opt', default='sgd', type=str,
                         choices=['adam', 'sgd'],
                         help='Optimizer')
-    parser.add_argument('--accum-grad', default=40, type=int,
+    parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
     parser.add_argument('--lr', default=1e-3, type=float,
                         help='Learning rate for optimizer')
@@ -58,7 +58,7 @@ def get_parser():
                         help='Epsilon for optimizer')
     parser.add_argument('--weight-decay', default=0.0, type=float,
                         help='Weight decay coefficient for optimizer')
-    parser.add_argument('--epochs', '-e', default=3000, type=int,
+    parser.add_argument('--epochs', '-e', default=1000, type=int,
                         help='Number of maximum epochs')
     parser.add_argument('--grad-clip', default=5, type=float,
                         help='Gradient norm threshold to clip')
