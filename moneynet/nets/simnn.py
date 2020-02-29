@@ -98,6 +98,22 @@ class Net(nn.Module):
 
         return y
 
+    def freq_mask(self, x):
+        """Frequentest node selection via distribution that distribute along hidden space
+
+        :param torch.Tensor x: batch of padded source sequences (B, Tmax, idim)
+
+        :return: mask for screening out hidden space (B, Tmax, 1)
+        :rtype: torch.Tensor
+        """
+        batch_size = x.size(0)
+        time_size = x.size(1)
+        mask = torch.multinomial(self.freq, num_samples=batch_size * time_size, replacement=True)  # (B * Tmax, idim)
+        mask = mask.to(x.device).T
+        mask = mask.view(batch_size, time_size, -1)
+
+        return x * mask, mask
+
     def _pad_for_shift(self, key, query):
         """Padding to channel dim for convolution
 
@@ -131,6 +147,32 @@ class Net(nn.Module):
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         return key_pad_trunk, query_mask
+
+    def _reverse_aug(self, key, query, p_augs_global):
+        """
+
+        :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
+
+        :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k + idim_q - 1, idim_k)
+        :rtype: torch.Tensor
+        """
+        # ToDo: Don't use this function when scale to key yet
+
+        idim_k = key.size(-1)
+        idim_q = query.size(-1)
+        pad = idim_q - 1
+
+        key_pad = F.pad(key, pad=(pad, pad))  # (B, Tmax, idim_k + pad * 2)
+        p_aug = p_augs_global.long().view(-1, 2)[:, 0]
+        key_pad_trunk = []
+        for i in six.moves.range(idim_k + idim_q - 1):
+            kpt = key_pad[..., i:i + idim_q]
+            key_pad_trunk.append(kpt.unsqueeze(-2))
+        key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+        key_pad_trunk = key_pad_trunk.view(-1, idim_k + idim_q - 1, idim_q)
+        key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - p_aug]
+
+        return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
 
     def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos'):
         """Measuring similarity of each other tensor
@@ -226,54 +268,53 @@ class Net(nn.Module):
         p_augs_global = p_augs_global.view(batch_size, time_size, -1)
         return x_aug, sim_max_global, p_augs_global
 
-    def freq_mask(self, x):
-        """Frequentest node selection via distribution that distribute along hidden space
-
-        :param torch.Tensor x: batch of padded source sequences (B, Tmax, idim)
-
-        :return: mask for screening out hidden space (B, Tmax, 1)
-        :rtype: torch.Tensor
-        """
-        batch_size = x.size(0)
-        time_size = x.size(1)
-        mask = torch.multinomial(self.freq, num_samples=batch_size * time_size, replacement=True)  # [B * T, C]
-        mask = mask.to(x.device).T
-        mask = mask.view(batch_size, time_size, -1)
-
-        return x * mask, mask
-
     def forward(self, x, y):
         # # 0. prepare data
         # batch_size = x.size(0)
         # time_size = x.size(1)
 
+        # display buffer
+        y_dis = []
+        p_augs_s = []
+        sim_max_s = []
+        # loss buffer
+        loss_self = []
+        loss_src = []
         # iterative method for subtraction
         y_res = y.clone()
-        y_dis = []
-        losss = []
+        x_res = x.clone()
         for i in six.moves.range(self.cdim):
             # 1. augment and search optimal aug-parameter
             # (B, Tmax, idim) -> (B, Tmax, idim)
-            x_aug, sim_max_global, p_augs_global = self.argaug(x, y_res)
+            x_aug, sim_max_global, p_augs_global = self.argaug(x_res, y_res, scale=False)
+            p_augs_s.append(p_augs_global.unsqueeze(-1))
+            sim_max_s.append(sim_max_global.unsqueeze(-1))
+            x_ele = self._reverse_aug(x_aug, y_res, p_augs_global)
 
             # 2. subtract inference feature and residual re-match to new one (This function act like value scale)
             # (B, Tmax, idim) -> (B, Tmax, hdim) -> (B, Tmax, odim)
             h, m = self.freq_mask(self.fc1(x_aug))
             y_ele = self.fc2(h)
-
-            # 3. residual parts compute for find similarity
             y_dis.append(y_ele.unsqueeze(-1))
 
-            # 4. compute local loss
-            losss.append(self.criterion(y_ele.view(-1, self.odim), y_res.view(-1, self.odim)).unsqueeze(-1))
+            x_ele.view(-1, self.odim), x_res.view(-1, self.odim)
+
+            loss_self.append(self.criterion(x_ele.view(-1, self.odim), x_res.view(-1, self.odim)).unsqueeze(-1))
+            loss_src.append(self.criterion(y_ele.view(-1, self.odim), y_res.view(-1, self.odim)).unsqueeze(-1))
             y_res = y_res - y_ele
-        x_dis = torch.cat(y_dis, dim=-1)
-        loss = torch.cat(losss, dim=-1).mean()
+            x_res = x_res - x_ele
+        y_dis = torch.cat(y_dis, dim=-1)
+        p_augs_s = torch.cat(p_augs_s, dim=-1)
+        sim_max_s = torch.cat(sim_max_s, dim=-1)
+        loss = torch.cat(loss_self, dim=-1).mean() + torch.cat(loss_src, dim=-1).mean()
 
         # appendix. for reporting some value or tensor
-        self.reporter.report_dict['augs_p'] = p_augs_global[0].detach().cpu().numpy()
-        self.reporter.report_dict['augs_sim'] = sim_max_global[0].detach().cpu().numpy()
-        self.reporter.report_dict['disentangle'] = x_dis[0, :, :, -1].detach().cpu().numpy()
+        self.reporter.report_dict['augs_p'] = p_augs_s[0, :, :, 0].detach().cpu().numpy()
+        self.reporter.report_dict['augs_sim'] = sim_max_s[0, :, 0].detach().cpu().numpy()
+
+        self.reporter.report_dict['disentangle1'] = y_dis[0, :, :, 0].detach().cpu().numpy()
+        self.reporter.report_dict['disentangle2'] = y_dis[0, :, :, 1].detach().cpu().numpy()
+        self.reporter.report_dict['disentangle3'] = y_dis[0, :, :, self.cdim - 1].detach().cpu().numpy()
 
         return loss, x
 

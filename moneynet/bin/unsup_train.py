@@ -60,6 +60,8 @@ def get_parser():
                         help='Weight decay coefficient for optimizer')
     parser.add_argument('--epochs', '-e', default=1000, type=int,
                         help='Number of maximum epochs')
+    parser.add_argument('--pretrain_epochs', default=300, type=int,
+                        help='Number of maximum epochs')
     parser.add_argument('--grad-clip', default=5, type=float,
                         help='Gradient norm threshold to clip')
 
