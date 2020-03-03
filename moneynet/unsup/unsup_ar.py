@@ -8,7 +8,8 @@ import json
 import torch
 
 from tqdm import tqdm
-
+from matplotlib.collections import PolyCollection
+from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -22,51 +23,69 @@ class Reporter(object):
         self.report_dict = {}
         self.report_buffer = {}
 
-    def report_image(self, keys, epoch):
+    def report_image(self, keys, filename):
         # parsing images
-        images = []
-        for key in keys:
-            image = self.report_dict[key]
-            assert len(np.shape(image)) == 2, 'reported image should has dim == 2'
-            images.append(image.T)
-        num_image = len(images)
+        num_image = len(keys)
 
         fig = plt.Figure()
-        fig.suptitle('{}'.format(self.report_dict['loss']))
-        for i, image in enumerate(images):
+        for i, key in enumerate(keys):
             # one column setting
+            image = self.report_dict[key]
+            assert len(np.shape(image)) == 2, 'reported image should has dim == 2'
             ax = fig.add_subplot(num_image, 1, i + 1)
-            ax.imshow(image, aspect='auto')
+            ax.set_title(key)
+            ax.imshow(image.T, aspect='auto')
 
         sav_dir = os.path.join(self.outdir, 'images')
         if not os.path.exists(sav_dir):
             os.makedirs(sav_dir)
-        filename = 'epoch{}_images.png'.format(epoch)
         fig.savefig(os.path.join(sav_dir, filename))
 
-    def report_plot(self, keys, epoch):
+    def report_plot(self, keys, filename):
         # parsing images
-        scalars = []
-        for key in keys:
-            scalar = self.report_dict[key]
-            if len(np.shape(scalar)) > 1:
-                for i in range(np.shape(scalar)[-1]):
-                    scalars.append(scalar[:, i])
-            else:
-                scalars.append(scalar)
-        num_scalar = len(scalars)
+        num_scalar = len(keys)
 
         fig = plt.Figure()
-        for i, scalar in enumerate(scalars):
+        for i, key in enumerate(keys):
             # one column setting
+            scalar = self.report_dict[key]
             ax = fig.add_subplot(num_scalar, 1, i + 1)
-            ax.plot(range(len(scalar)), scalar)
+            ax.set_title(key)
+            ax.plot(scalar)
             ax.grid()
 
         sav_dir = os.path.join(self.outdir, 'images')
         if not os.path.exists(sav_dir):
             os.makedirs(sav_dir)
-        filename = 'epoch{}_scalars.png'.format(epoch)
+        fig.savefig(os.path.join(sav_dir, filename))
+
+    def report_3dplot(self, keys, filename):
+        # parsing images
+        num_scalar = len(keys)
+
+        fig = plt.Figure()
+        for i, key in enumerate(keys):
+            # one column setting
+            scalar = self.report_dict[key]
+            ax = fig.add_subplot(num_scalar, 1, i + 1, projection='3d')
+            ax.set_title(key)
+            verts = []
+            xs = np.arange(np.shape(scalar)[0])
+            zs = np.arange(np.shape(scalar)[-1])
+            for z in zs:
+                ys = scalar[..., z]
+                verts.append(list(zip(xs, ys)))
+            poly = PolyCollection(verts)
+            poly.set_alpha(0.7)
+            ax.add_collection3d(poly, zs=zs, zdir='y')
+
+            ax.set_xlim3d(0, np.shape(scalar)[0])
+            ax.set_ylim3d(-1, np.shape(scalar)[-1])
+            ax.set_zlim3d(0, np.max(scalar))
+
+        sav_dir = os.path.join(self.outdir, 'images')
+        if not os.path.exists(sav_dir):
+            os.makedirs(sav_dir)
         fig.savefig(os.path.join(sav_dir, filename))
 
     def report_plot_buffer(self, keys, epoch):
@@ -224,8 +243,13 @@ def train(args):
     for epoch in tqdm(range(args.epochs)):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
-            reporter.report_image(keys=['target', 'pred', 'disentangle'],
-                                  epoch=epoch + 1)
-            reporter.report_plot(keys=['augs_p', 'augs_sim'], epoch=epoch + 1)
+            filename = 'epoch{}_images.png'.format(epoch + 1)
+            reporter.report_image(keys=['target', 'pred_x', 'pred_y', 'disentangle_y'],
+                                  filename=filename)
+            filename = 'epoch{}_images_scalar.png'.format(epoch + 1)
+            reporter.report_image(keys=['augs_p', 'augs_sim'], filename=filename)
+            filename = 'epoch{}_images_attn.png'.format(epoch + 1)
+            reporter.report_image(keys=['attns'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
+            reporter.report_plot_buffer(keys=['loss_x'], epoch=epoch + 1)

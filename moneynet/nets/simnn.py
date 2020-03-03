@@ -62,7 +62,7 @@ class Net(nn.Module):
         # simple network add
         self.fc1 = nn.Linear(idim, self.hdim)
         self.fc2 = nn.Linear(self.hdim, odim)
-        self.q = nn.Linear(self.idim, self.odim, bias=False)
+        # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
         # network training related
         self.criterion = NetLoss(ignore_in=self.ignore_in, ignore_out=self.ignore_out)
@@ -240,14 +240,7 @@ class Net(nn.Module):
         else:
             seq_mask = y == self.ignore_out
 
-        # display buffer
-        y_dis = []
-        x_dis = []
-        p_augs_s = []
-        sim_max_s = []
-        # loss buffer
-        loss_self = []
-        loss_src = []
+        buffs = {'y_dis': [], 'x_dis': [], 'p_augs_s': [], 'sim_max_s': [], 'loss_src': [], 'attn': []}
 
         # iterative method for subtraction
         y_res = y.clone()
@@ -256,11 +249,14 @@ class Net(nn.Module):
             # 1. augment and search optimal aug-parameter
             # (B, Tmax, idim) -> (B, Tmax, idim)
             x_aug, sim_max_global, p_augs_global = self.argaug(x_res, y_res, scale=False)
-            p_augs_s.append(p_augs_global.unsqueeze(-1))
-            sim_max_s.append(sim_max_global.unsqueeze(-1))
+            buffs['p_augs_s'].append(p_augs_global.unsqueeze(-1))
+            buffs['sim_max_s'].append(sim_max_global.unsqueeze(-1))
 
             # 2. attention mask
-            attn = torch.softmax(x_aug * y_res, dim=-1).detach()
+            # denom = torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True)
+            score = x_aug * y_res
+            attn = torch.softmax(score, dim=-1).detach()
+            buffs['attn'].append(attn.unsqueeze(-1))
             attn[torch.isnan(attn)] = 0.0
             x_attn = x_aug * attn
             y_attn = y_res * attn
@@ -270,39 +266,43 @@ class Net(nn.Module):
 
             # 3. subtract inference feature and residual re-match to new one (This function act like value scale)
             h = self.fc1(x_attn)
-            # get mask
-            mask = torch.zeros_like(h)
-            mask[..., i * self.cdim:(i + 1) * self.cdim] = 1.0
-            mask = mask.to(h.device).float()
-            # apply mask
-            y_ele = self.fc2(h * mask)
+            y_ele = self.fc2(h)
 
             # 4. compute loss of residual feature
-            loss_src.append(self.criterion(y_ele.view(-1, self.odim),
-                                           y_res.view(-1, self.odim),
-                                           mask=seq_mask).unsqueeze(-1))
+            buffs['loss_src'].append(self.criterion(y_ele.view(-1, self.odim),
+                                                    y_attn.view(-1, self.odim),
+                                                    mask=seq_mask).unsqueeze(-1))
 
             # 5. compute residual feature
-            y_res = y_res - y_ele
-            x_res = x_res - x_ele
+            y_res = (y_res - y_ele).detach()
+            x_res = (x_res - x_ele).detach()
 
             # aux 2. inference result save as each nodes fire
-            y_dis.append(y_ele.unsqueeze(-1))
+            buffs['x_dis'].append(x_ele.unsqueeze(-1))
+            buffs['y_dis'].append(y_ele.unsqueeze(-1))
 
         # 6. total loss compute
-        loss = torch.cat(loss_src, dim=-1).mean()
+        loss = torch.cat(buffs['loss_src'], dim=-1).mean()
 
+        x_dis = torch.cat(buffs['x_dis'], dim=-1)
+        y_dis = torch.cat(buffs['y_dis'], dim=-1)
+
+        p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)
+        sim_max_s = torch.cat(buffs['sim_max_s'], dim=-1)
+        energy_y = y_dis.pow(2).sum(-2)
+        attns = torch.cat(buffs['attn'], dim=-1)
+
+        loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
         # appendix. for reporting some value or tensor
-        p_augs_s = torch.cat(p_augs_s, dim=-1)
-        sim_max_s = torch.cat(sim_max_s, dim=-1)
-        self.reporter.report_dict['augs_p'] = p_augs_s[0, :, :, 1].detach().cpu().numpy()
-        self.reporter.report_dict['augs_sim'] = sim_max_s[0, :, 1].detach().cpu().numpy()
-        y_dis = torch.cat(y_dis, dim=-1)
-        energy = y_dis.pow(2).sum(-2)
-        self.reporter.report_dict['disentangle'] = np.log(energy[0].detach().cpu().numpy() + 1e-6)
+        self.reporter.report_dict['augs_p'] = p_augs_s[0, :, 0, :].detach().cpu().numpy()
+        self.reporter.report_dict['augs_sim'] = sim_max_s[0, :, :].detach().cpu().numpy()
+        self.reporter.report_dict['disentangle_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
+        self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
+        self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
+        self.reporter.report_dict['attns'] = attns.sum(-1)[0].detach().cpu().numpy()
 
         self.reporter.report_dict['loss'] = float(loss)
-        self.reporter.report_dict['pred'] = y_dis.sum(-1)[0].detach().cpu().numpy()
+        self.reporter.report_dict['loss_x'] = float(loss_x)
 
         return loss
 
