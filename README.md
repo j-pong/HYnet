@@ -1,2 +1,3 @@
-# moneynet
-Things of whole world can be change to money.
+# Moneynet
+Fully Unsupervised Learning for Continual Sequence when High Local Correlation
+

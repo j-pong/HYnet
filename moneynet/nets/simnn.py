@@ -10,7 +10,7 @@ from torch import nn
 import numpy as np
 
 
-def initialize(model, init_type="identity"):
+def initialize(model, init_type="xavier_uniform"):
     # weight init
     for p in model.parameters():
         if p.dim() > 1:
@@ -39,14 +39,7 @@ class NetLoss(nn.Module):
         self.ignore_in = ignore_in
         self.ignore_out = ignore_out
 
-    def forward(self, x, y, mask=None):
-        if np.isnan(self.ignore_out):
-            if mask is None:
-                mask = torch.isnan(y)
-            y = y.masked_fill(mask, self.ignore_in)
-        else:
-            if mask is None:
-                mask = y == self.ignore_out
+    def forward(self, x, y, mask):
         denom = (~mask).float().sum()
         loss = self.criterion(input=x, target=y)
         return loss.masked_fill(mask, 0).sum() / denom
@@ -68,7 +61,6 @@ class Net(nn.Module):
 
         # simple network add
         self.fc1 = nn.Linear(idim, self.hdim)
-        self.relu1 = nn.ReLU()
         self.fc2 = nn.Linear(self.hdim, odim)
         self.q = nn.Linear(self.idim, self.odim, bias=False)
 
@@ -81,7 +73,8 @@ class Net(nn.Module):
     def reset_parameters(self):
         initialize(self)
 
-    def _pad_for_shift(self, key, query):
+    @staticmethod
+    def _pad_for_shift(key, query):
         """Padding to channel dim for convolution
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
@@ -96,7 +89,7 @@ class Net(nn.Module):
         idim_q = query.size(-1)
         pad = idim_q - 1
 
-        key_pad = F.pad(key, pad=(pad, pad))  # (B, Tmax, idim_k + pad * 2)
+        key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
         key_pad_trunk = []
         query_mask = []
         for i in six.moves.range(idim_k + idim_q - 1):
@@ -115,7 +108,35 @@ class Net(nn.Module):
         query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         return key_pad_trunk, query_mask
 
-    def _simiality(self, key_pad_trunk, query, query_mask=None, measurement='cos'):
+    @staticmethod
+    def _reverse_pad_for_shift(key, query, p_augs_global):
+        """
+
+        :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
+
+        :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k + idim_q - 1, idim_k)
+        :rtype: torch.Tensor
+        """
+        # ToDo: Don't use this function when scale to key yet
+
+        idim_k = key.size(-1)
+        idim_q = query.size(-1)
+        pad = idim_q - 1
+
+        key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
+        p_aug = p_augs_global.long().view(-1, 2)[:, 0]
+        key_pad_trunk = []
+        for i in six.moves.range(idim_k + idim_q - 1):
+            kpt = key_pad[..., i:i + idim_q]
+            key_pad_trunk.append(kpt.unsqueeze(-2))
+        key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+        key_pad_trunk = key_pad_trunk.view(-1, idim_k + idim_q - 1, idim_q)
+        key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - p_aug]
+
+        return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
+
+    @staticmethod
+    def _simiality(key_pad_trunk, query, query_mask=None, measurement='cos'):
         """Measuring similarity of each other tensor
 
         :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, idim_k + idim_q - 1, idim_k)
@@ -159,6 +180,7 @@ class Net(nn.Module):
         :return: value of similarity (B, Tmax)
         :rtype: torch.Tensor
         """
+        global sim_max_global, p_augs_global
         batch_size = x.size(0)
         time_size = x.size(1)
         x_aug = None
@@ -209,36 +231,14 @@ class Net(nn.Module):
         p_augs_global = p_augs_global.view(batch_size, time_size, -1)
         return x_aug, sim_max_global, p_augs_global
 
-    def aug_reverse(self, key, query, p_augs_global):
-        """
-
-        :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
-
-        :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k + idim_q - 1, idim_k)
-        :rtype: torch.Tensor
-        """
-        # ToDo: Don't use this function when scale to key yet
-
-        idim_k = key.size(-1)
-        idim_q = query.size(-1)
-        pad = idim_q - 1
-
-        key_pad = F.pad(key, pad=(pad, pad))  # (B, Tmax, idim_k + pad * 2)
-        p_aug = p_augs_global.long().view(-1, 2)[:, 0]
-        key_pad_trunk = []
-        for i in six.moves.range(idim_k + idim_q - 1):
-            kpt = key_pad[..., i:i + idim_q]
-            key_pad_trunk.append(kpt.unsqueeze(-2))
-        key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        key_pad_trunk = key_pad_trunk.view(-1, idim_k + idim_q - 1, idim_q)
-        key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - p_aug]
-
-        return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
-
     def forward(self, x, y):
-        # # 0. prepare data
-        # batch_size = x.size(0)
-        # time_size = x.size(1)
+        self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
+        # 0. prepare data
+        if np.isnan(self.ignore_out):
+            seq_mask = torch.isnan(y)
+            y = y.masked_fill(seq_mask, self.ignore_in)
+        else:
+            seq_mask = y == self.ignore_out
 
         # display buffer
         y_dis = []
@@ -248,6 +248,7 @@ class Net(nn.Module):
         # loss buffer
         loss_self = []
         loss_src = []
+
         # iterative method for subtraction
         y_res = y.clone()
         x_res = x.clone()
@@ -258,42 +259,52 @@ class Net(nn.Module):
             p_augs_s.append(p_augs_global.unsqueeze(-1))
             sim_max_s.append(sim_max_global.unsqueeze(-1))
 
-            # HaHaHa!!!!! enwenwenwenwenwewne brand new thign`~!~!~!
+            # 2. attention mask
             attn = torch.softmax(x_aug * y_res, dim=-1).detach()
             attn[torch.isnan(attn)] = 0.0
+            x_attn = x_aug * attn
+            y_attn = y_res * attn
 
-            # 1.1. reverse attention x_aug feature
-            x_ele = self.aug_reverse(x_aug * attn, y_res, p_augs_global)
+            # aux1. reverse attention x_aug feature
+            x_ele = self._reverse_pad_for_shift(x_attn, y_res, p_augs_global)
 
-            # 2. subtract inference feature and residual re-match to new one (This function act like value scale)
-            # (B, Tmax, idim) -> (B, Tmax, hdim) -> (B, Tmax, odim)
-            h = self.fc1(x_aug * attn)
+            # 3. subtract inference feature and residual re-match to new one (This function act like value scale)
+            h = self.fc1(x_attn)
+            # get mask
             mask = torch.zeros_like(h)
             mask[..., i * self.cdim:(i + 1) * self.cdim] = 1.0
             mask = mask.to(h.device).float()
+            # apply mask
             y_ele = self.fc2(h * mask)
-            y_dis.append(y_ele.unsqueeze(-1))
 
-            # loss_self.append(self.criterion(x_ele.view(-1, self.odim), x_res.view(-1, self.odim)).unsqueeze(-1))
-            loss_src.append(self.criterion(y_ele.view(-1, self.odim), (y_res * attn).view(-1, self.odim)).unsqueeze(-1))
+            # 4. compute loss of residual feature
+            loss_src.append(self.criterion(y_ele.view(-1, self.odim),
+                                           y_res.view(-1, self.odim),
+                                           mask=seq_mask).unsqueeze(-1))
+
+            # 5. compute residual feature
             y_res = y_res - y_ele
             x_res = x_res - x_ele
-        y_dis = torch.cat(y_dis, dim=-1)
-        p_augs_s = torch.cat(p_augs_s, dim=-1)
-        sim_max_s = torch.cat(sim_max_s, dim=-1)
 
-        energy = y_dis.pow(2).sum(-2).view(-1, int(self.hdim / self.cdim))  # (B * Tmax, hdim/cdim)
-        var = (energy - torch.max(energy, dim=-1, keepdim=True)[0].detach()).pow(2).sum(-1).mean()
+            # aux 2. inference result save as each nodes fire
+            y_dis.append(y_ele.unsqueeze(-1))
 
+        # 6. total loss compute
         loss = torch.cat(loss_src, dim=-1).mean()
 
         # appendix. for reporting some value or tensor
+        p_augs_s = torch.cat(p_augs_s, dim=-1)
+        sim_max_s = torch.cat(sim_max_s, dim=-1)
         self.reporter.report_dict['augs_p'] = p_augs_s[0, :, :, 1].detach().cpu().numpy()
         self.reporter.report_dict['augs_sim'] = sim_max_s[0, :, 1].detach().cpu().numpy()
+        y_dis = torch.cat(y_dis, dim=-1)
+        energy = y_dis.pow(2).sum(-2)
+        self.reporter.report_dict['disentangle'] = np.log(energy[0].detach().cpu().numpy() + 1e-6)
 
-        self.reporter.report_dict['disentangle'] = np.log(y_dis[0].pow(2).sum(-2).detach().cpu().numpy() + 1e-6)
+        self.reporter.report_dict['loss'] = float(loss)
+        self.reporter.report_dict['pred'] = y_dis.sum(-1)[0].detach().cpu().numpy()
 
-        return loss, x
+        return loss
 
     def pretrain_forward(self, x):
         h, m = self.freq_mask(self.fc1(x))

@@ -20,7 +20,6 @@ class Reporter(object):
     def __init__(self, args):
         self.outdir = args.outdir
         self.report_dict = {}
-
         self.report_buffer = {}
 
     def report_image(self, keys, epoch):
@@ -131,10 +130,11 @@ class Updater(object):
 
     def train_core(self):
         for samples in self.train_loader:
+            self.reporter.report_dict['fname'] = samples['fname'][0]
             data = samples['input'][0].to(self.device)
             target = samples['target'][0].to(self.device)
 
-            loss, pred = self.model(data, target)
+            loss = self.model(data, target)
             loss.backward()
 
             self.forward_count += 1
@@ -150,12 +150,6 @@ class Updater(object):
             else:
                 self.optimizer.step()
             self.optimizer.zero_grad()
-
-        # ToDo(j-pong): Add reporter attribute but just epoch mode
-        self.reporter.report_dict['loss'] = float(loss)
-        self.reporter.report_dict['pred'] = pred.view(-1, data.size(1), data.size(2))[0].detach().cpu().numpy()
-        self.reporter.report_dict['target'] = target[0].detach().cpu().numpy()
-        self.reporter.report_dict['fname'] = samples['fname'][0]
 
 
 def train(args):
