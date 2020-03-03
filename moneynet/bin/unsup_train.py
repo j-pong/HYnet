@@ -71,8 +71,10 @@ def get_parser():
                         help='Feature type for audio')
     parser.add_argument('--feat-dim', default=40, type=int,
                         help='Feature dimension')
-    parser.add_argument('--hdim', default=128, type=int,
+    parser.add_argument('--hdim', default=64, type=int,
                         help='Hidden layer dimension')
+    parser.add_argument('--cdim', default=4, type=int,
+                        help='')
     parser.add_argument('--ignore_in', default=0, type=float,
                         help='Hidden layer dimension')
     parser.add_argument('--ignore_out', default=float('NaN'), type=float,
