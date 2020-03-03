@@ -1,1 +1,1 @@
-python moneynet/bin/unsup_train.py --indir dump --outdir exp/yattn_hspacefree_scorenonnormal/
+python moneynet/bin/unsup_train.py --indir dump --outdir exp/yattn_hspacefree_scorenonnormal_tempsoftmax10/

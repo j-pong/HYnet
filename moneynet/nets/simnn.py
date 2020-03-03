@@ -62,7 +62,7 @@ class Net(nn.Module):
         # simple network add
         self.fc1 = nn.Linear(idim, self.hdim)
         self.fc2 = nn.Linear(self.hdim, odim)
-        # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
+        self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
         # network training related
         self.criterion = NetLoss(ignore_in=self.ignore_in, ignore_out=self.ignore_out)
@@ -72,6 +72,14 @@ class Net(nn.Module):
 
     def reset_parameters(self):
         initialize(self)
+
+    @staticmethod
+    def temp_softmax(x, T=10.0, dim=-1):
+        x = x / T
+        max_x = torch.max(x, dim=dim, keepdim=True)[0]
+        exp_x = torch.exp(x - max_x)
+        x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
+        return x
 
     @staticmethod
     def _pad_for_shift(key, query):
@@ -255,7 +263,8 @@ class Net(nn.Module):
             # 2. attention mask
             # denom = torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True)
             score = x_aug * y_res
-            attn = torch.softmax(score, dim=-1).detach()
+            attn = self.temp_softmax(score, T=10.0,
+                                     dim=-1).detach()  # temperature can be determined by similarity and p_aug
             buffs['attn'].append(attn.unsqueeze(-1))
             attn[torch.isnan(attn)] = 0.0
             x_attn = x_aug * attn
