@@ -1,5 +1,6 @@
 import os
 
+
 def load_file_list(datadir):
     f = []
     for (dirpath, dirnames, filenames) in os.walk(datadir):

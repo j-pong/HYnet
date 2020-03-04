@@ -244,12 +244,11 @@ def train(args):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
             filename = 'epoch{}_images.png'.format(epoch + 1)
-            reporter.report_image(keys=['target', 'pred_x', 'pred_y', 'disentangle_y'],
+            reporter.report_image(keys=['target', 'pred_x', 'pred_y'],
                                   filename=filename)
             filename = 'epoch{}_images_scalar.png'.format(epoch + 1)
             reporter.report_image(keys=['augs_p', 'augs_sim'], filename=filename)
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
-            reporter.report_image(keys=['attns'], filename=filename)
+            reporter.report_image(keys=['disentangle_y', 'attns'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
-            reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
-            reporter.report_plot_buffer(keys=['loss_x'], epoch=epoch + 1)
+            reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)

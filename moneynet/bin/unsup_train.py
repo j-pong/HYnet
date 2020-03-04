@@ -46,8 +46,7 @@ def get_parser():
 
     # optimization related
     parser.add_argument('--opt', default='sgd', type=str,
-                        choices=['adam', 'sgd'],
-                        help='Optimizer')
+                        choices=['adam', 'sgd'], help='Optimizer')
     parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
     parser.add_argument('--lr', default=1e-3, type=float,
@@ -71,14 +70,18 @@ def get_parser():
                         help='Feature type for audio')
     parser.add_argument('--feat-dim', default=40, type=int,
                         help='Feature dimension')
-    parser.add_argument('--hdim', default=256, type=int,
+    parser.add_argument('--hdim', default=1024, type=int,
                         help='Hidden layer dimension')
     parser.add_argument('--cdim', default=32, type=int,
                         help='')
     parser.add_argument('--ignore_in', default=0, type=float,
-                        help='Hidden layer dimension')
+                        help='')
     parser.add_argument('--ignore_out', default=float('NaN'), type=float,
                         help='Hidden layer dimension')
+    parser.add_argument('--similarity', default='cos', type=str,
+                        choices=['cos'], help='Similarity metric')
+    parser.add_argument('--temperature', default=30, type=float,
+                        help='')
 
     return parser
 

@@ -39,10 +39,16 @@ class NetLoss(nn.Module):
         self.ignore_in = ignore_in
         self.ignore_out = ignore_out
 
-    def forward(self, x, y, mask):
+    def forward(self, x, y, mask, reduce='mean'):
         denom = (~mask).float().sum()
         loss = self.criterion(input=x, target=y)
-        return loss.masked_fill(mask, 0).sum() / denom
+        loss = loss.masked_fill(mask, 0) / denom
+        if reduce == 'mean':
+            return loss.sum()
+        elif reduce is None:
+            return loss
+        else:
+            raise ValueError("{} type reduction is not defined".format(reduce))
 
 
 class Net(nn.Module):
@@ -59,8 +65,13 @@ class Net(nn.Module):
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
 
+        # training hyperparameter
+        self.measurement = args.similarity
+        self.temper = args.temperature
+
         # simple network add
         self.fc1 = nn.Linear(idim, self.hdim)
+        self.relu = nn.ReLU()
         self.fc2 = nn.Linear(self.hdim, odim)
         self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
@@ -72,14 +83,6 @@ class Net(nn.Module):
 
     def reset_parameters(self):
         initialize(self)
-
-    @staticmethod
-    def temp_softmax(x, T=10.0, dim=-1):
-        x = x / T
-        max_x = torch.max(x, dim=dim, keepdim=True)[0]
-        exp_x = torch.exp(x - max_x)
-        x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
-        return x
 
     @staticmethod
     def _pad_for_shift(key, query):
@@ -173,6 +176,14 @@ class Net(nn.Module):
 
         return sim_max, sim_max_idx
 
+    @staticmethod
+    def temp_softmax(x, T=10.0, dim=-1):
+        x = x / T
+        max_x = torch.max(x, dim=dim, keepdim=True)[0]
+        exp_x = torch.exp(x - max_x)
+        x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
+        return x
+
     def argaug(self, x, y, measurement='cos', scale=False):
         """Find augmentation parameter using grid search
 
@@ -248,7 +259,7 @@ class Net(nn.Module):
         else:
             seq_mask = y == self.ignore_out
 
-        buffs = {'y_dis': [], 'x_dis': [], 'p_augs_s': [], 'sim_max_s': [], 'loss_src': [], 'attn': []}
+        buffs = {'y_dis': [], 'x_dis': [], 'p_augs_s': [], 'sim_max_s': [], 'loss_src': [], 'attn': [], 'hs': []}
 
         # iterative method for subtraction
         y_res = y.clone()
@@ -256,31 +267,44 @@ class Net(nn.Module):
         for i in six.moves.range(int(self.hdim / self.cdim)):
             # 1. augment and search optimal aug-parameter
             # (B, Tmax, idim) -> (B, Tmax, idim)
-            x_aug, sim_max_global, p_augs_global = self.argaug(x_res, y_res, scale=False)
+            x_aug, sim_max_global, p_augs_global = self.argaug(x_res, y_res, scale=False, measurement=self.measurement)
             buffs['p_augs_s'].append(p_augs_global.unsqueeze(-1))
             buffs['sim_max_s'].append(sim_max_global.unsqueeze(-1))
 
             # 2. attention mask
             # denom = torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True)
             score = x_aug * y_res
-            attn = self.temp_softmax(score, T=10.0,
+            attn = self.temp_softmax(score, T=self.temper,
                                      dim=-1).detach()  # temperature can be determined by similarity and p_aug
-            buffs['attn'].append(attn.unsqueeze(-1))
             attn[torch.isnan(attn)] = 0.0
+            buffs['attn'].append(attn.unsqueeze(-1))
             x_attn = x_aug * attn
-            y_attn = y_res * attn
+            # y_attn = y_res * attn
 
             # aux1. reverse attention x_aug feature
             x_ele = self._reverse_pad_for_shift(x_attn, y_res, p_augs_global)
 
             # 3. subtract inference feature and residual re-match to new one (This function act like value scale)
             h = self.fc1(x_attn)
+            # previous fired hidden nodes should be suppressed
+            if i == 0:
+                indices_g = torch.topk(h, k=self.cdim, dim=-1)[1]  # (B, Tmax, cdim)
+            else:
+                indices_g = torch.cat([indices_g, torch.topk(h, k=self.cdim, dim=-1)[1]], dim=-1)  # (B, Tmax, cdim)
+                b_size = h.size(0)
+                t_size = h.size(1)
+                h = h.view(b_size * t_size, self.hdim)
+                h[torch.arange(h.size(0))[:, None], indices_g.view(b_size * t_size, -1)] = 0.0
+                h = h.view(b_size, t_size, self.hdim)
             y_ele = self.fc2(h)
 
             # 4. compute loss of residual feature
-            buffs['loss_src'].append(self.criterion(y_ele.view(-1, self.odim),
-                                                    y_attn.view(-1, self.odim),
-                                                    mask=seq_mask).unsqueeze(-1))
+            move_energy = torch.abs(p_augs_global[..., 0] - self.odim + 1).view(-1, 1) + 1.0
+            loss_local = self.criterion(y_ele.view(-1, self.odim),
+                                        y_res.view(-1, self.odim),
+                                        mask=seq_mask.view(-1, self.odim), reduce=None)
+            loss_local = loss_local / move_energy
+            buffs['loss_src'].append(loss_local.sum().unsqueeze(-1))
 
             # 5. compute residual feature
             y_res = (y_res - y_ele).detach()
@@ -302,6 +326,7 @@ class Net(nn.Module):
         attns = torch.cat(buffs['attn'], dim=-1)
 
         loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
+        loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim), y.view(-1, self.idim), mask=seq_mask)
         # appendix. for reporting some value or tensor
         self.reporter.report_dict['augs_p'] = p_augs_s[0, :, 0, :].detach().cpu().numpy()
         self.reporter.report_dict['augs_sim'] = sim_max_s[0, :, :].detach().cpu().numpy()
@@ -312,6 +337,7 @@ class Net(nn.Module):
 
         self.reporter.report_dict['loss'] = float(loss)
         self.reporter.report_dict['loss_x'] = float(loss_x)
+        self.reporter.report_dict['loss_y'] = float(loss_y)
 
         return loss
 
