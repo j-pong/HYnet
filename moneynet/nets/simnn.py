@@ -124,12 +124,12 @@ class Net(nn.Module):
         """
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
+        :param torch.Tensor query: batch of padded source sequences (B, Tmax, idim_k)
+        :param torch.Tensor p_augs_global: batch of padded source sequences (B, Tmax)
 
-        :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k + idim_q - 1, idim_k)
+        :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k)
         :rtype: torch.Tensor
         """
-        # ToDo: Don't use this function when scale to key yet
-
         idim_k = key.size(-1)
         idim_q = query.size(-1)
         pad = idim_q - 1
