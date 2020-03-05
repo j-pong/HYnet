@@ -172,6 +172,11 @@ class Updater(object):
 
 
 def train(args):
+    # set deterministic for pytorch
+    torch.manual_seed(args.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False  # https://github.com/pytorch/pytorch/issues/6351
+
     # check cuda availability
     if not torch.cuda.is_available():
         logging.warning('cuda is not available')
@@ -244,11 +249,10 @@ def train(args):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
             filename = 'epoch{}_images.png'.format(epoch + 1)
-            reporter.report_image(keys=['target', 'pred_x', 'pred_y'],
-                                  filename=filename)
-            filename = 'epoch{}_images_scalar.png'.format(epoch + 1)
-            reporter.report_image(keys=['augs_p', 'augs_sim'], filename=filename)
+            reporter.report_image(keys=['target', 'augs_p', 'augs_sim'], filename=filename)
+            filename = 'epoch{}_images_hs.png'.format(epoch + 1)
+            reporter.report_image(keys=['pred_y', 'hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
-            reporter.report_image(keys=['disentangle_y', 'attns'], filename=filename)
+            reporter.report_image(keys=['pred_x', 'attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)

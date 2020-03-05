@@ -259,7 +259,7 @@ class Net(nn.Module):
         else:
             seq_mask = y == self.ignore_out
 
-        buffs = {'y_dis': [], 'x_dis': [], 'p_augs_s': [], 'sim_max_s': [], 'loss_src': [], 'attn': [], 'hs': []}
+        buffs = {'y_dis': [], 'x_dis': [], 'p_augs_s': [], 'sim_max_s': [], 'loss': [], 'attn': [], 'hs': []}
 
         # iterative method for subtraction
         y_res = y.clone()
@@ -268,16 +268,16 @@ class Net(nn.Module):
             # 1. augment and search optimal aug-parameter
             # (B, Tmax, idim) -> (B, Tmax, idim)
             x_aug, sim_max_global, p_augs_global = self.argaug(x_res, y_res, scale=False, measurement=self.measurement)
-            buffs['p_augs_s'].append(p_augs_global.unsqueeze(-1))
-            buffs['sim_max_s'].append(sim_max_global.unsqueeze(-1))
+            buffs['p_augs_s'].append(p_augs_global[0].unsqueeze(-1))
+            buffs['sim_max_s'].append(sim_max_global[0].unsqueeze(-1))
 
             # 2. attention mask
-            # denom = torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True)
-            score = x_aug * y_res
+            denom = torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True)
+            score = x_aug * y_res / denom
             attn = self.temp_softmax(score, T=self.temper,
                                      dim=-1).detach()  # temperature can be determined by similarity and p_aug
             attn[torch.isnan(attn)] = 0.0
-            buffs['attn'].append(attn.unsqueeze(-1))
+            buffs['attn'].append(attn[0].unsqueeze(-1))
             x_attn = x_aug * attn
             # y_attn = y_res * attn
 
@@ -296,6 +296,7 @@ class Net(nn.Module):
                 h = h.view(b_size * t_size, self.hdim)
                 h[torch.arange(h.size(0))[:, None], indices_g.view(b_size * t_size, -1)] = 0.0
                 h = h.view(b_size, t_size, self.hdim)
+            buffs['hs'].append(h[0].unsqueeze(-1))
             y_ele = self.fc2(h)
 
             # 4. compute loss of residual feature
@@ -304,7 +305,7 @@ class Net(nn.Module):
                                         y_res.view(-1, self.odim),
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local = loss_local / move_energy
-            buffs['loss_src'].append(loss_local.sum().unsqueeze(-1))
+            buffs['loss'].append(loss_local.sum().unsqueeze(-1))
 
             # 5. compute residual feature
             y_res = (y_res - y_ele).detach()
@@ -315,29 +316,48 @@ class Net(nn.Module):
             buffs['y_dis'].append(y_ele.unsqueeze(-1))
 
         # 6. total loss compute
-        loss = torch.cat(buffs['loss_src'], dim=-1).mean()
+        loss = torch.cat(buffs['loss'], dim=-1).mean()
+        self.reporter.report_dict['loss'] = float(loss)
 
+        # appendix. for reporting some value or tensor
+        # batch side sum needs for check
         x_dis = torch.cat(buffs['x_dis'], dim=-1)
         y_dis = torch.cat(buffs['y_dis'], dim=-1)
-
-        p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)
-        sim_max_s = torch.cat(buffs['sim_max_s'], dim=-1)
-        energy_y = y_dis.pow(2).sum(-2)
-        attns = torch.cat(buffs['attn'], dim=-1)
-
         loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
         loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim), y.view(-1, self.idim), mask=seq_mask)
-        # appendix. for reporting some value or tensor
-        self.reporter.report_dict['augs_p'] = p_augs_s[0, :, 0, :].detach().cpu().numpy()
-        self.reporter.report_dict['augs_sim'] = sim_max_s[0, :, :].detach().cpu().numpy()
-        self.reporter.report_dict['disentangle_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
-        self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
-        self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
-        self.reporter.report_dict['attns'] = attns.sum(-1)[0].detach().cpu().numpy()
-
-        self.reporter.report_dict['loss'] = float(loss)
         self.reporter.report_dict['loss_x'] = float(loss_x)
         self.reporter.report_dict['loss_y'] = float(loss_y)
+        self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
+        self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
+
+        # # just one sample at batch should be check
+        # p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)
+        # sim_max_s = torch.cat(buffs['sim_max_s'], dim=-1)
+        # energy_y = y_dis.pow(2).sum(-2)
+        #
+        # self.reporter.report_dict['augs_p'] = p_augs_s[:, 0, :].detach().cpu().numpy()
+        # self.reporter.report_dict['augs_sim'] = sim_max_s[:, :].detach().cpu().numpy()
+        # self.reporter.report_dict['disentangle_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
+
+        """
+        New block for testing hidden space
+        """
+        hs = torch.cat(buffs['hs'], dim=-1)
+        self.reporter.report_dict['hs0'] = hs[:, :, 0].detach().cpu().numpy()
+        self.reporter.report_dict['hs1'] = hs[:, :, 1].detach().cpu().numpy()
+        self.reporter.report_dict['hs2'] = hs[:, :, 2].detach().cpu().numpy()
+        self.reporter.report_dict['hs3'] = hs[:, :, 3].detach().cpu().numpy()
+        self.reporter.report_dict['hs4'] = hs[:, :, 4].detach().cpu().numpy()
+
+        """
+        New block for testing attention
+        """
+        attns = torch.cat(buffs['attn'], dim=-1)
+        self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
+        self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
+        self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
+        self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
+        self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
 
         return loss
 
