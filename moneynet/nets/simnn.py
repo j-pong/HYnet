@@ -299,10 +299,10 @@ class Net(nn.Module):
 
             # -3. reverse attention x_aug feature
             x_ele = self._reverse_pad_for_shift(x_attn, y_res, p_augs_global)
-            # x_res = (x_res - x_ele).detach()
-            # x_hype = self._reverse_pad_for_shift(y_ele, y_res, p_augs_global)
-            # attn_hyp = self.attention(x_hype, x_res, temper=self.temper)
-            # x_ele = x_hype * attn_hyp
+            x_res = (x_res - x_ele).detach()
+            x_hype = self._reverse_pad_for_shift(y_ele, y_res, p_augs_global)
+            attn_hyp = self.attention(x_hype, x_res, temper=self.temper)
+            x_ele = x_hype * attn_hyp
 
             # 4. compute loss of residual feature
             move_energy = torch.abs(p_augs_global[..., 0] - self.odim + 1).view(-1, 1) + 1.0
