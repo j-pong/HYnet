@@ -10,7 +10,7 @@ from torch import nn
 import numpy as np
 
 
-def initialize(model, init_type="xavier_uniform"):
+def initialize(model, init_type="xavier_normal"):
     # weight init
     for p in model.parameters():
         if p.dim() > 1:
@@ -22,8 +22,6 @@ def initialize(model, init_type="xavier_uniform"):
                 nn.init.kaiming_uniform_(p.data, nonlinearity="relu")
             elif init_type == "kaiming_normal":
                 nn.init.kaiming_normal_(p.data, nonlinearity="relu")
-            elif init_type == "identity":
-                pass
             else:
                 raise ValueError("Unknown initialization: " + init_type)
     # bias init
@@ -250,6 +248,13 @@ class Net(nn.Module):
         p_augs_global = p_augs_global.view(batch_size, time_size, -1)
         return x_aug, sim_max_global, p_augs_global
 
+    def attention(self, x, y, temper):
+        denom = (torch.norm(x, dim=-1, keepdim=True) * torch.norm(y, dim=-1, keepdim=True) + 1e-6)
+        score = x * y / denom
+        attn = self.temp_softmax(score, T=temper, dim=-1).detach()
+        attn[torch.isnan(attn)] = 0.0
+        return attn
+
     def forward(self, x, y):
         self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
         # 0. prepare data
@@ -272,17 +277,10 @@ class Net(nn.Module):
             buffs['sim_max_s'].append(sim_max_global[0].unsqueeze(-1))
 
             # 2. attention mask
-            denom = (torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True) + 1e-6)
-            score = x_aug * y_res / denom
-            attn = self.temp_softmax(score, T=self.temper,
-                                     dim=-1).detach()  # temperature can be determined by similarity and p_aug
-            attn[torch.isnan(attn)] = 0.0
+            attn = self.attention(x_aug, y_res, temper=self.temper)
             buffs['attn'].append(attn[0].unsqueeze(-1))
             x_attn = x_aug * attn
             # y_attn = y_res * attn
-
-            # aux1. reverse attention x_aug feature
-            x_ele = self._reverse_pad_for_shift(x_attn, y_res, p_augs_global)
 
             # 3. subtract inference feature and residual re-match to new one (This function act like value scale)
             h = self.fc1(x_attn)
@@ -298,6 +296,13 @@ class Net(nn.Module):
                 h = h.view(b_size, t_size, self.hdim)
             buffs['hs'].append(h[0].unsqueeze(-1))
             y_ele = self.fc2(h)
+
+            # -3. reverse attention x_aug feature
+            x_ele = self._reverse_pad_for_shift(x_attn, y_res, p_augs_global)
+            # x_res = (x_res - x_ele).detach()
+            # x_hype = self._reverse_pad_for_shift(y_ele, y_res, p_augs_global)
+            # attn_hyp = self.attention(x_hype, x_res, temper=self.temper)
+            # x_ele = x_hype * attn_hyp
 
             # 4. compute loss of residual feature
             move_energy = torch.abs(p_augs_global[..., 0] - self.odim + 1).view(-1, 1) + 1.0
@@ -329,6 +334,7 @@ class Net(nn.Module):
         self.reporter.report_dict['loss_y'] = float(loss_y)
         self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
+        self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
 
         # # just one sample at batch should be check
         p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)

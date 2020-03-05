@@ -80,7 +80,7 @@ def get_parser():
                         help='Hidden layer dimension')
     parser.add_argument('--similarity', default='cos', type=str,
                         choices=['cos'], help='Similarity metric')
-    parser.add_argument('--temperature', default=0.08, type=float,
+    parser.add_argument('--temperature', default=0.01, type=float,
                         help='')
 
     return parser

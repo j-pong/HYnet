@@ -249,7 +249,7 @@ def train(args):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
             filename = 'epoch{}_images.png'.format(epoch + 1)
-            reporter.report_image(keys=['target', 'augs_p', 'energy_y', 'augs_sim'], filename=filename)
+            reporter.report_image(keys=['target', 'augs_p', 'energy_y', 'augs_sim', 'res_x'], filename=filename)
             filename = 'epoch{}_images_hs.png'.format(epoch + 1)
             reporter.report_image(keys=['pred_y', 'hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
