@@ -121,7 +121,7 @@ class Net(nn.Module):
 
     @staticmethod
     def _reverse_pad_for_shift(key, query, p_augs_global):
-        """
+        """Reverse to padded data
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
         :param torch.Tensor query: batch of padded source sequences (B, Tmax, idim_k)
@@ -147,12 +147,12 @@ class Net(nn.Module):
         return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
 
     @staticmethod
-    def _simiality(key_pad_trunk, query, query_mask=None, measurement='cos'):
+    def _score(key_pad_trunk, query, query_mask=None, measurement='cos'):
         """Measuring similarity of each other tensor
 
-        :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, idim_k + idim_q - 1, idim_k)
+        :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, ... , idim_k)
         :param torch.Tensor query: batch of padded target sequences (B, Tmax, idim_q)
-        :param torch.Tensor query_mask: batch of padded source sequences (B, Tmax, idim_k + idim_q - 1, idim_k)
+        :param torch.Tensor query_mask: batch of padded source sequences (B, Tmax, ... , idim_k)
         :param string measurement:
 
         :return: max similarity value of sequence (B, Tmax)
@@ -164,8 +164,8 @@ class Net(nn.Module):
         if query_mask is not None:
             query = query * query_mask
         if measurement == 'cos':
-            denom = torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1)
-            sim = torch.sum(query * key_pad_trunk, dim=-1) / denom  # (B, Tmax, idim_k + idim_q - 1)
+            denom = (torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1) + 1e-6)
+            sim = torch.sum(query * key_pad_trunk, dim=-1) / denom  # (B, Tmax, ...)
             # nan filtering
             mask = torch.isnan(sim)
             sim[mask] = 0.0
@@ -222,8 +222,8 @@ class Net(nn.Module):
             # shift
             x_s_pad_trunk, _ = self._pad_for_shift(key=x_s, query=y)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             # similarity measuring
-            sim_max, sim_max_idx = self._simiality(key_pad_trunk=x_s_pad_trunk, query=y, query_mask=None,
-                                                   measurement=measurement)  # (B, Tmax)
+            sim_max, sim_max_idx = self._score(key_pad_trunk=x_s_pad_trunk, query=y, query_mask=None,
+                                               measurement=measurement)  # (B, Tmax)
             # aug parameters
             p_aug_shift = sim_max_idx.view(-1, 1).float()
             p_aug_scale = torch.tensor([theta]).view(1, 1).repeat(repeats=p_aug_shift.size()).to(p_aug_shift.device)
@@ -272,7 +272,7 @@ class Net(nn.Module):
             buffs['sim_max_s'].append(sim_max_global[0].unsqueeze(-1))
 
             # 2. attention mask
-            denom = torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True)
+            denom = (torch.norm(x_aug, dim=-1, keepdim=True) * torch.norm(y_res, dim=-1, keepdim=True) + 1e-6)
             score = x_aug * y_res / denom
             attn = self.temp_softmax(score, T=self.temper,
                                      dim=-1).detach()  # temperature can be determined by similarity and p_aug
@@ -331,13 +331,13 @@ class Net(nn.Module):
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
 
         # # just one sample at batch should be check
-        # p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)
-        # sim_max_s = torch.cat(buffs['sim_max_s'], dim=-1)
-        # energy_y = y_dis.pow(2).sum(-2)
-        #
-        # self.reporter.report_dict['augs_p'] = p_augs_s[:, 0, :].detach().cpu().numpy()
-        # self.reporter.report_dict['augs_sim'] = sim_max_s[:, :].detach().cpu().numpy()
-        # self.reporter.report_dict['disentangle_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
+        p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)
+        sim_max_s = torch.cat(buffs['sim_max_s'], dim=-1)
+        energy_y = y_dis.pow(2).sum(-2)
+
+        self.reporter.report_dict['augs_p'] = p_augs_s[:, 0, :].detach().cpu().numpy()
+        self.reporter.report_dict['augs_sim'] = sim_max_s[:, :].detach().cpu().numpy()
+        self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
 
         """
         New block for testing hidden space

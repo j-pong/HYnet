@@ -1,1 +1,1 @@
-python moneynet/bin/unsup_train.py --indir dump --outdir exp/temperature0.05/
+python moneynet/bin/unsup_train.py --indir dump --outdir exp/temperature0.08
