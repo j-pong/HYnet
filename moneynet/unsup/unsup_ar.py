@@ -248,11 +248,13 @@ def train(args):
     for epoch in tqdm(range(args.epochs)):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
-            filename = 'epoch{}_images.png'.format(epoch + 1)
-            reporter.report_image(keys=['target', 'augs_p', 'energy_y', 'augs_sim', 'res_x'], filename=filename)
+            filename = 'epoch{}_images_sim.png'.format(epoch + 1)
+            reporter.report_image(keys=['theta_opt', 'energy_y', 'sim_opt'], filename=filename)
             filename = 'epoch{}_images_hs.png'.format(epoch + 1)
-            reporter.report_image(keys=['pred_y', 'hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
+            reporter.report_image(keys=['hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
-            reporter.report_image(keys=['pred_x', 'attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
+            reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
+            filename = 'epoch{}_images.png'.format(epoch + 1)
+            reporter.report_image(keys=['target', 'pred_y', 'pred_x'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)

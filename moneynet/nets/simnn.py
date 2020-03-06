@@ -67,11 +67,12 @@ class Net(nn.Module):
         self.measurement = args.similarity
         self.temper = args.temperature
 
-        # simple network add
-        self.fc1 = nn.Linear(idim, self.hdim)
+        # next frame predictor
+        self.encoder = nn.Linear(idim, self.hdim)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(self.hdim, odim)
-        self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
+        self.decoder_src = nn.Linear(self.hdim, odim)
+        self.decoder_self = nn.Linear(self.hdim, odim)
+        # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
         # network training related
         self.criterion = NetLoss(ignore_in=self.ignore_in, ignore_out=self.ignore_out)
@@ -115,15 +116,16 @@ class Net(nn.Module):
             query_mask.append(kpt_mask.unsqueeze(-2))
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+
         return key_pad_trunk, query_mask
 
     @staticmethod
-    def _reverse_pad_for_shift(key, query, p_augs_global):
+    def _reverse_pad_for_shift(key, query, theta):
         """Reverse to padded data
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
         :param torch.Tensor query: batch of padded source sequences (B, Tmax, idim_k)
-        :param torch.Tensor p_augs_global: batch of padded source sequences (B, Tmax)
+        :param torch.Tensor theta: batch of padded source sequences (B, Tmax)
 
         :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k)
         :rtype: torch.Tensor
@@ -133,14 +135,14 @@ class Net(nn.Module):
         pad = idim_q - 1
 
         key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
-        p_aug = p_augs_global.long().view(-1, 2)[:, 0]
+        theta = theta.long().view(-1)
         key_pad_trunk = []
         for i in six.moves.range(idim_k + idim_q - 1):
             kpt = key_pad[..., i:i + idim_q]
             key_pad_trunk.append(kpt.unsqueeze(-2))
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
         key_pad_trunk = key_pad_trunk.view(-1, idim_k + idim_q - 1, idim_q)
-        key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - p_aug]
+        key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - theta]
 
         return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
 
@@ -182,71 +184,21 @@ class Net(nn.Module):
         x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
         return x
 
-    def argaug(self, x, y, measurement='cos', scale=False):
-        """Find augmentation parameter using grid search
-
-        :param torch.Tensor x: batch of padded source sequences (B, Tmax, idim)
-        :param torch.Tensor y: batch of padded target sequences (B, Tmax, idim)
-        :param string measurement:
-        :param bool scale:
-
-        :return: augmented source sequences (B, Tmax, idim)
-        :rtype: torch.Tensor
-        :return: value of augmentation parameter (B, Tmax, *)
-        :rtype: torch.Tensor
-        :return: value of similarity (B, Tmax)
-        :rtype: torch.Tensor
-        """
-        global sim_max_global, p_augs_global
+    def sim_argmax(self, x, y, measurement='cos'):
         batch_size = x.size(0)
         time_size = x.size(1)
-        x_aug = None
 
-        if scale:
-            start = 0.8
-            end = 1.2
-            num = 5
-        else:
-            start = 1.0
-            end = 1.0
-            num = 1
+        # similarity measuring
+        sim_max, sim_max_idx = self._score(key_pad_trunk=x, query=y, query_mask=None,
+                                           measurement=measurement)  # (B, Tmax)
 
-        for theta in np.linspace(start, end, num):
-            if scale:
-                # scale
-                x_s = F.interpolate(x, scale_factor=theta)
-            else:
-                x_s = x
-            # shift
-            x_s_pad_trunk, _ = self._pad_for_shift(key=x_s, query=y)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-            # similarity measuring
-            sim_max, sim_max_idx = self._score(key_pad_trunk=x_s_pad_trunk, query=y, query_mask=None,
-                                               measurement=measurement)  # (B, Tmax)
-            # aug parameters
-            p_aug_shift = sim_max_idx.view(-1, 1).float()
-            p_aug_scale = torch.tensor([theta]).view(1, 1).repeat(repeats=p_aug_shift.size()).to(p_aug_shift.device)
-            p_augs = torch.cat([p_aug_shift, p_aug_scale], dim=-1)  # (B * Tmax, 2)
-            # maximum shift select
-            xspt_size = x_s_pad_trunk.size()
-            x_s_pad_trunk = x_s_pad_trunk.view(-1,
-                                               xspt_size[-2],
-                                               xspt_size[-1])  # (B * Tmax, idim_k + idim_q - 1, idim_q)
-            x_s_opt = x_s_pad_trunk[
-                torch.arange(x_s_pad_trunk.size(0)), sim_max_idx.view(-1)]  # (B * Tmax, idim_q)
-            # maximum scale select
-            if x_aug is None:
-                x_aug = x_s_opt
-                sim_max_global = sim_max
-                p_augs_global = p_augs
-            else:
-                mask = sim_max_global < sim_max
-                x_aug[mask.view(-1)] = x_s_opt[mask.view(-1)]
-                sim_max_global[mask] = sim_max[mask]
-                p_augs_global[mask.view(-1)] = p_augs[mask.view(-1)]
+        # maximum shift select
+        x = x.view(-1, x.size(-2), x.size(-1))  # (B * Tmax, idim_k + idim_q - 1, idim_q)
+        x = x[torch.arange(x.size(0)), sim_max_idx.view(-1)]  # (B * Tmax, idim_q)
+
         # recover shape
-        x_aug = x_aug.view(batch_size, time_size, -1)
-        p_augs_global = p_augs_global.view(batch_size, time_size, -1)
-        return x_aug, sim_max_global, p_augs_global
+        x = x.view(batch_size, time_size, -1)
+        return x, sim_max, sim_max_idx
 
     def attention(self, x, y, temper):
         denom = (torch.norm(x, dim=-1, keepdim=True) * torch.norm(y, dim=-1, keepdim=True) + 1e-6)
@@ -264,7 +216,9 @@ class Net(nn.Module):
         else:
             seq_mask = y == self.ignore_out
 
-        buffs = {'y_dis': [], 'x_dis': [], 'p_augs_s': [], 'sim_max_s': [], 'loss': [], 'attn': [], 'hs': []}
+        buffs = {'y_dis': [], 'x_dis': [],
+                 'theta_opt': [], 'sim_opt': [],
+                 'loss': [], 'attn': [], 'hs': []}
 
         # iterative method for subtraction
         y_res = y.clone()
@@ -272,18 +226,21 @@ class Net(nn.Module):
         for i in six.moves.range(int(self.hdim / self.cdim)):
             # 1. augment and search optimal aug-parameter
             # (B, Tmax, idim) -> (B, Tmax, idim)
-            x_aug, sim_max_global, p_augs_global = self.argaug(x_res, y_res, scale=False, measurement=self.measurement)
-            buffs['p_augs_s'].append(p_augs_global[0].unsqueeze(-1))
-            buffs['sim_max_s'].append(sim_max_global[0].unsqueeze(-1))
+            x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+            x_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+            buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
+            buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
             # 2. attention mask
-            attn = self.attention(x_aug, y_res, temper=self.temper)
+            attn = self.attention(x_opt, y_res, temper=self.temper)
             buffs['attn'].append(attn[0].unsqueeze(-1))
-            x_attn = x_aug * attn
-            # y_attn = y_res * attn
+            x_attn = x_opt * attn
+
+            # -1. reverse attention x_aug feature
+            x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
 
             # 3. subtract inference feature and residual re-match to new one (This function act like value scale)
-            h = self.fc1(x_attn)
+            h = self.encoder(x_attn)
             # previous fired hidden nodes should be suppressed
             if i == 0:
                 indices_g = torch.topk(h, k=self.cdim, dim=-1)[1]  # (B, Tmax, cdim)
@@ -295,13 +252,10 @@ class Net(nn.Module):
                 h[torch.arange(h.size(0))[:, None], indices_g.view(b_size * t_size, -1)] = 0.0
                 h = h.view(b_size, t_size, self.hdim)
             buffs['hs'].append(h[0].unsqueeze(-1))
-            y_ele = self.fc2(h)
-
-            # -3. reverse attention x_aug feature
-            x_ele = self._reverse_pad_for_shift(x_attn, y_res, p_augs_global)
+            y_ele = self.decoder_src(h)
 
             # 4. compute loss of residual feature
-            move_energy = torch.abs(p_augs_global[..., 0] - self.odim + 1).view(-1, 1) + 1.0
+            move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
             loss_local = self.criterion(y_ele.view(-1, self.odim),
                                         y_res.view(-1, self.odim),
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
@@ -332,13 +286,13 @@ class Net(nn.Module):
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
 
-        # # just one sample at batch should be check
-        p_augs_s = torch.cat(buffs['p_augs_s'], dim=-1)
-        sim_max_s = torch.cat(buffs['sim_max_s'], dim=-1)
+        # just one sample at batch should be check
+        p_augs_s = torch.cat(buffs['theta_opt'], dim=-1)
+        sim_max_s = torch.cat(buffs['sim_opt'], dim=-1)
         energy_y = y_dis.pow(2).sum(-2)
 
-        self.reporter.report_dict['augs_p'] = p_augs_s[:, 0, :].detach().cpu().numpy()
-        self.reporter.report_dict['augs_sim'] = sim_max_s[:, :].detach().cpu().numpy()
+        self.reporter.report_dict['theta_opt'] = p_augs_s.detach().cpu().numpy()
+        self.reporter.report_dict['sim_opt'] = sim_max_s.detach().cpu().numpy()
         self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
 
         """
