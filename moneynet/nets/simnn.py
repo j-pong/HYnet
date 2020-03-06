@@ -207,11 +207,19 @@ class Net(nn.Module):
         attn[torch.isnan(attn)] = 0.0
         return attn
 
-    def self_net(self, x):
+    def self_net(self, x, indices_self):
         h = self.encoder(x)
-        h = self.relu(h)
+        b_size = h.size(0)
+        t_size = h.size(1)
+        if indices_self is None:
+            indices_self = torch.topk(h, k=self.cdim, dim=-1)[1]  # (B, Tmax, cdim)
+        else:
+            indices_self = torch.cat([indices_self, torch.topk(h, k=self.cdim, dim=-1)[1]], dim=-1)  # (B, Tmax, cdim)
+            h = h.view(b_size * t_size, self.hdim)
+            h[torch.arange(h.size(0))[:, None], indices_self.view(b_size * t_size, -1)] = 0.0
+            h = h.view(b_size, t_size, self.hdim)
         x = self.decoder_self(h)
-        return x
+        return x, indices_self
 
     def src_net(self, x, indices_src):
         h = self.encoder(x)
@@ -227,7 +235,7 @@ class Net(nn.Module):
         x = self.decoder_src(h)
         return x, h, indices_src
 
-    def forward(self, x, y):
+    def forward(self, x, y, pretrain=True):
         self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
         # 0. prepare data
         if np.isnan(self.ignore_out):
@@ -243,10 +251,10 @@ class Net(nn.Module):
         # iterative method for subtraction
         y_res = y.clone()
         x_res = x.clone()
+        indices_self = None
         indices_src = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. augment and search optimal aug-parameter
-            # (B, Tmax, idim) -> (B, Tmax, idim)
             x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             x_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
 
@@ -257,72 +265,75 @@ class Net(nn.Module):
 
             # (-2)&(-1). reverse attention x_aug feature
             x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
-            x_ele = self.self_net(x_ele)
+            x_ele, indices_self = self.self_net(x_ele, indices_self)
+            buffs['x_dis'].append(x_ele.unsqueeze(-1))
 
-            # 1. re augment and search optimal aug-parameter
-            x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-            x_ele_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
-            buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
-            buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
-
-            # 3. subtract inference feature and residual re-match to new one (This function act like value scale)
-            y_ele, h, indices_src = self.src_net(x_ele_opt, indices_src)
-            buffs['hs'].append(h[0].unsqueeze(-1))
-
-            # 4. compute loss of residual feature
-            move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
-            loss_local_src = self.criterion(y_ele.view(-1, self.odim),
-                                            y_res.view(-1, self.odim),
-                                            mask=seq_mask.view(-1, self.odim), reduce=None)
-            loss_local_src = loss_local_src / move_energy
             loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                              x_res.view(-1, self.odim),
                                              mask=seq_mask.view(-1, self.odim))
-            buffs['loss'].append(loss_local_src.sum().unsqueeze(-1) + loss_local_self.unsqueeze(-1))
+            loss = loss_local_self.unsqueeze(-1)
 
-            # 5. compute residual feature
-            y_res = (y_res - y_ele).detach()
+            if not pretrain:
+                # 3. re augment and search optimal aug-parameter
+                x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+                x_ele_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+                buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
+                buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
+
+                # 4. subtract inference feature and residual re-match to new one (This function act like value scale)
+                y_ele, h, indices_src = self.src_net(x_ele_opt, indices_src)
+                buffs['y_dis'].append(y_ele.unsqueeze(-1))
+                buffs['hs'].append(h[0].unsqueeze(-1))
+
+                # 5. compute loss of residual feature
+                move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
+                loss_local_src = self.criterion(y_ele.view(-1, self.odim),
+                                                y_res.view(-1, self.odim),
+                                                mask=seq_mask.view(-1, self.odim), reduce=None)
+                loss_local_src = loss_local_src / move_energy
+                loss += loss_local_src.sum().unsqueeze(-1)
+
+                # 6. compute residual feature
+                y_res = (y_res - y_ele).detach()
             x_res = (x_res - x_ele).detach()
 
-            # aux 2. inference result save as each nodes fire
-            buffs['x_dis'].append(x_ele.unsqueeze(-1))
-            buffs['y_dis'].append(y_ele.unsqueeze(-1))
+            buffs['loss'].append(loss)
 
         # 6. total loss compute
         loss = torch.cat(buffs['loss'], dim=-1).mean()
         self.reporter.report_dict['loss'] = float(loss)
 
-        # appendix. for reporting some value or tensor
-        # batch side sum needs for check
+        # # appendix. for reporting some value or tensor
+        # # batch side sum needs for check
         x_dis = torch.cat(buffs['x_dis'], dim=-1)
-        y_dis = torch.cat(buffs['y_dis'], dim=-1)
-        loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
-        loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim), y.view(-1, self.idim), mask=seq_mask)
-        self.reporter.report_dict['loss_x'] = float(loss_x)
-        self.reporter.report_dict['loss_y'] = float(loss_y)
-        self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
+        # y_dis = torch.cat(buffs['y_dis'], dim=-1)
+        # loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
+        # loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim), y.view(-1, self.idim), mask=seq_mask)
+        # self.reporter.report_dict['loss_x'] = float(loss_x)
+        # self.reporter.report_dict['loss_y'] = float(loss_y)
+        # self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
-
-        # just one sample at batch should be check
-        theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
-        sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
-        energy_y = y_dis.pow(2).sum(-2)
-
-        self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
-        self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
-        self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
-
-        """
-        New block for testing hidden space
-        """
-        hs = torch.cat(buffs['hs'], dim=-1)
-        self.reporter.report_dict['hs0'] = hs[:, :, 0].detach().cpu().numpy()
-        self.reporter.report_dict['hs1'] = hs[:, :, 1].detach().cpu().numpy()
-        self.reporter.report_dict['hs2'] = hs[:, :, 2].detach().cpu().numpy()
-        self.reporter.report_dict['hs3'] = hs[:, :, 3].detach().cpu().numpy()
-        self.reporter.report_dict['hs4'] = hs[:, :, 4].detach().cpu().numpy()
-
+        #
+        # # just one sample at batch should be check
+        # theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
+        # sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
+        # energy_y = y_dis.pow(2).sum(-2)
+        #
+        # self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
+        # self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
+        # self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
+        #
+        # """
+        # New block for testing hidden space
+        # """
+        # hs = torch.cat(buffs['hs'], dim=-1)
+        # self.reporter.report_dict['hs0'] = hs[:, :, 0].detach().cpu().numpy()
+        # self.reporter.report_dict['hs1'] = hs[:, :, 1].detach().cpu().numpy()
+        # self.reporter.report_dict['hs2'] = hs[:, :, 2].detach().cpu().numpy()
+        # self.reporter.report_dict['hs3'] = hs[:, :, 3].detach().cpu().numpy()
+        # self.reporter.report_dict['hs4'] = hs[:, :, 4].detach().cpu().numpy()
+        #
         """
         New block for testing attention
         """

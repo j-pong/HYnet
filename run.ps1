@@ -1,1 +1,1 @@
-python moneynet/bin/unsup_train.py --indir dump --outdir exp/temperature0.01_self_relu_test
+python moneynet/bin/unsup_train.py --indir dump --outdir exp/temperature0.01_self_pretrain_hsr
