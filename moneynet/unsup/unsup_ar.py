@@ -145,7 +145,6 @@ class Updater(object):
             else:
                 self.optimizer.step()
             self.optimizer.zero_grad()
-        self.reporter.report_dict['loss'] = float(loss)
 
     def train_core(self):
         for samples in self.train_loader:
@@ -255,6 +254,6 @@ def train(args):
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
             reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
             filename = 'epoch{}_images.png'.format(epoch + 1)
-            reporter.report_image(keys=['target', 'pred_y', 'pred_x'], filename=filename)
+            reporter.report_image(keys=['target', 'pred_y', 'pred_x', 'res_x'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)
