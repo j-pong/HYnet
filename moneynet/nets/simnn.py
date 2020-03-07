@@ -219,8 +219,13 @@ class Net(nn.Module):
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_intersection = mask_prev * mask_cur
                 seq_mask = seq_mask.prod(-1).unsqueeze(-1).repeat(1, 1, self.hdim).bool()
-                seq_mask *= mask_intersection.bool()
-                loss_h = self.criterion_h(h.clone().retain_grad(), (1.0 - mask_intersection).to(h.device), seq_mask)
+                h_ = h.clone()
+                h_.retain_grad()
+                loss_h = self.criterion_h(h_.view(-1, self.hdim),
+                                          (1.0 - mask_intersection).view(-1, self.hdim),
+                                          mask=seq_mask.view(-1, self.hdim),
+                                          reduce=None)
+                loss_h = loss_h.masked_fill(~(mask_intersection.view(-1, self.hdim).bool()), 0.0).sum()
 
                 h[mask_prev.bool()] = -1e+8
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
@@ -228,7 +233,7 @@ class Net(nn.Module):
                 mask_prev = mask_prev + mask_cur
         else:
             pass
-        h = h * mask_cur
+        h = h.masked_fill(~(mask_cur.bool()), 0.0)
         return h, mask_prev, loss_h
 
     def forward(self, x, y, pretrain=True):
@@ -311,7 +316,9 @@ class Net(nn.Module):
         # batch side sum needs for check
         x_dis = torch.cat(buffs['x_dis'], dim=-1)
         # y_dis = torch.cat(buffs['y_dis'], dim=-1)
-        loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
+        loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim),
+                                x.view(-1, self.idim),
+                                mask=seq_mask.view(-1, self.odim))
         # loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim), y.view(-1, self.idim), mask=seq_mask)
         self.reporter.report_dict['loss_x'] = float(loss_x)
         # self.reporter.report_dict['loss_y'] = float(loss_y)
