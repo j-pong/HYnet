@@ -206,8 +206,7 @@ class Net(nn.Module):
         attn[torch.isnan(attn)] = 0.0
         return attn
 
-    def self_net(self, x, mask_prev, mask=True):
-        h = self.encoder(x)
+    def hsr(self, h, mask_prev, mask=True):
         if mask:
             if mask_prev is None:
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
@@ -215,36 +214,18 @@ class Net(nn.Module):
                 mask_prev = mask_cur
             else:
                 assert mask_prev is not None
-                h[mask_prev.bool()] = -1e+8
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_intersection = mask_prev * mask_cur
-                mask_prev = mask_prev + mask_cur - mask_intersection
-        else:
-            pass
-        h = h * mask_cur
-        x = self.decoder_self(h)
-        return x, h, mask_prev
 
-    def src_net(self, x, mask_prev, mask=True):
-        h = self.encoder(x)
-        if mask:
-            if mask_prev is None:
-                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
-                mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
-                mask_prev = mask_cur
-            else:
-                assert mask_prev is not None
                 h[mask_prev.bool()] = -1e+8
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
-                mask_intersection = mask_prev * mask_cur
-                mask_prev = mask_prev + mask_cur - mask_intersection
+                mask_prev = mask_prev + mask_cur
         else:
             pass
         h = h * mask_cur
-        x = self.decoder_src(h)
-        return x, h, mask_prev
+        return h, mask_prev
 
     def forward(self, x, y, pretrain=True):
         self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
@@ -272,13 +253,15 @@ class Net(nn.Module):
             buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
             # 2. attention mask
-            attn = self.attention(x_opt, y_res, temper=self.temper)
+            attn = self.attention(x_res, y_res, temper=self.temper)
             buffs['attn'].append(attn[0].unsqueeze(-1))
-            x_attn = x_opt * attn
+            x_attn = x_res * attn
 
             # (-2) & (-1). reverse attention x_aug feature
             x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
-            x_ele, h_self, mask_prev_self = self.self_net(x_ele, mask_prev_self)
+            h_self = self.encoder(x_ele)
+            h_self, mask_prev_self = self.hsr(h_self, mask_prev_self)
+            x_ele = self.decoder_self(h_self)
             buffs['x_dis'].append(x_ele.unsqueeze(-1))
             loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                              x_res.view(-1, self.odim),
@@ -293,7 +276,9 @@ class Net(nn.Module):
                 # buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
                 # 4. subtract inference feature and residual re-match to new one (This function act like value scale)
-                y_ele, h_src, mask_prev_src = self.src_net(x_ele_opt, mask_prev_src)
+                h_src = self.encoder(x_attn)
+                h_src, mask_prev_src = self.hsr(h_src, mask_prev_src)
+                y_ele = self.decoder_self(h_src)
                 buffs['y_dis'].append(y_ele.unsqueeze(-1))
                 buffs['h_src'].append(h_src[0].unsqueeze(-1))
 
