@@ -74,7 +74,7 @@ class Net(nn.Module):
 
         # network training related
         self.criterion = SeqLoss(criterion=nn.MSELoss(reduce=None))
-        self.criterion_h = SeqLoss(criterion=nn.BCELoss(reduction=None))
+        self.criterion_h = SeqLoss(criterion=nn.MSELoss(reduce=None))
 
         # initialize parameter
         self.reset_parameters()
@@ -206,17 +206,21 @@ class Net(nn.Module):
         attn[torch.isnan(attn)] = 0.0
         return attn
 
-    def hsr(self, h, mask_prev, mask=True):
+    def hsr(self, h, mask_prev, seq_mask, mask=True):
         if mask:
             if mask_prev is None:
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_prev = mask_cur
+                loss_h = None
             else:
                 assert mask_prev is not None
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_intersection = mask_prev * mask_cur
+                seq_mask = seq_mask.prod(-1).unsqueeze(-1).repeat(1, 1, self.hdim).bool()
+                seq_mask *= mask_intersection.bool()
+                loss_h = self.criterion_h(h.clone().retain_grad(), (1.0 - mask_intersection).to(h.device), seq_mask)
 
                 h[mask_prev.bool()] = -1e+8
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
@@ -225,7 +229,7 @@ class Net(nn.Module):
         else:
             pass
         h = h * mask_cur
-        return h, mask_prev
+        return h, mask_prev, loss_h
 
     def forward(self, x, y, pretrain=True):
         self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
@@ -253,20 +257,23 @@ class Net(nn.Module):
             buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
             # 2. attention mask
-            attn = self.attention(x_res, y_res, temper=self.temper)
+            attn = self.attention(x_res, x_res, temper=self.temper)
             buffs['attn'].append(attn[0].unsqueeze(-1))
             x_attn = x_res * attn
 
             # (-2) & (-1). reverse attention x_aug feature
-            x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
-            h_self = self.encoder(x_ele)
-            h_self, mask_prev_self = self.hsr(h_self, mask_prev_self)
+            # x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
+            h_self = self.encoder(x_attn)
+            h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
             x_ele = self.decoder_self(h_self)
             buffs['x_dis'].append(x_ele.unsqueeze(-1))
             loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                              x_res.view(-1, self.odim),
                                              mask=seq_mask.view(-1, self.odim))
-            loss = loss_local_self.unsqueeze(-1)
+            if loss_h_self is not None:
+                loss = loss_local_self.unsqueeze(-1) + loss_h_self.unsqueeze(-1)
+            else:
+                loss = loss_local_self.unsqueeze(-1)
 
             if not pretrain:
                 # 3. re augment and search optimal aug-parameter
@@ -277,7 +284,7 @@ class Net(nn.Module):
 
                 # 4. subtract inference feature and residual re-match to new one (This function act like value scale)
                 h_src = self.encoder(x_attn)
-                h_src, mask_prev_src = self.hsr(h_src, mask_prev_src)
+                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
                 y_ele = self.decoder_self(h_src)
                 buffs['y_dis'].append(y_ele.unsqueeze(-1))
                 buffs['h_src'].append(h_src[0].unsqueeze(-1))
