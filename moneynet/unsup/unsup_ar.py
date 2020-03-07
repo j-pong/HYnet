@@ -125,13 +125,13 @@ class Updater(object):
 
         self.forward_count = 0
 
-    def train_core(self):
+    def train_core(self, pretrain=True):
         for samples in self.train_loader:
             self.reporter.report_dict['fname'] = samples['fname'][0]
             data = samples['input'][0].to(self.device)
             target = samples['target'][0].to(self.device)
 
-            loss = self.model(data, target)
+            loss = self.model(data, target, pretrain)
             loss.backward()
 
             self.forward_count += 1
@@ -226,8 +226,8 @@ def train(args):
     for epoch in tqdm(range(args.epochs)):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
-            # filename = 'epoch{}_images_sim.png'.format(epoch + 1)
-            # reporter.report_image(keys=['theta_opt', 'energy_y', 'sim_opt'], filename=filename)
+            filename = 'epoch{}_images_sim.png'.format(epoch + 1)
+            reporter.report_image(keys=['theta_opt', 'sim_opt', 'mask_prev'], filename=filename)
             # filename = 'epoch{}_images_hs.png'.format(epoch + 1)
             # reporter.report_image(keys=['hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
@@ -238,4 +238,4 @@ def train(args):
             reporter.report_image(keys=['target', 'pred_x', 'res_x'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
             # reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)
-            reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
+            reporter.report_plot_buffer(keys=['loss', 'loss_x'], epoch=epoch + 1)

@@ -30,12 +30,10 @@ def initialize(model, init_type="xavier_normal"):
             p.data.zero_()
 
 
-class NetLoss(nn.Module):
-    def __init__(self, ignore_in, ignore_out, criterion=nn.MSELoss(reduce=None)):
-        super(NetLoss, self).__init__()
+class SeqLoss(nn.Module):
+    def __init__(self, criterion=nn.MSELoss(reduce=None)):
+        super(SeqLoss, self).__init__()
         self.criterion = criterion
-        self.ignore_in = ignore_in
-        self.ignore_out = ignore_out
 
     def forward(self, x, y, mask, reduce='mean'):
         denom = (~mask).float().sum()
@@ -75,7 +73,8 @@ class Net(nn.Module):
         # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
         # network training related
-        self.criterion = NetLoss(ignore_in=self.ignore_in, ignore_out=self.ignore_out)
+        self.criterion = SeqLoss(criterion=nn.MSELoss(reduce=None))
+        self.criterion_h = SeqLoss(criterion=nn.BCELoss(reduction=None))
 
         # initialize parameter
         self.reset_parameters()
@@ -207,19 +206,25 @@ class Net(nn.Module):
         attn[torch.isnan(attn)] = 0.0
         return attn
 
-    def self_net(self, x, indices_self):
+    def self_net(self, x, mask_prev, mask=True):
         h = self.encoder(x)
-        b_size = h.size(0)
-        t_size = h.size(1)
-        if indices_self is None:
-            indices_self = torch.topk(h, k=self.cdim, dim=-1)[1]  # (B, Tmax, cdim)
+        if mask:
+            if mask_prev is None:
+                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
+                mask_prev = mask_cur
+            else:
+                assert mask_prev is not None
+                h[mask_prev.bool()] = 1e-10
+                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
+                mask_intersection = mask_prev * mask_cur
+                mask_prev = mask_prev + mask_cur - mask_intersection
         else:
-            indices_self = torch.cat([indices_self, torch.topk(h, k=self.cdim, dim=-1)[1]], dim=-1)  # (B, Tmax, cdim)
-            h = h.view(b_size * t_size, self.hdim)
-            h[torch.arange(h.size(0))[:, None], indices_self.view(b_size * t_size, -1)] = 0.0
-            h = h.view(b_size, t_size, self.hdim)
+            pass
+        h = h * mask_cur
         x = self.decoder_self(h)
-        return x, indices_self
+        return x, h, mask_prev
 
     def src_net(self, x, indices_src):
         h = self.encoder(x)
@@ -228,10 +233,10 @@ class Net(nn.Module):
         if indices_src is None:
             indices_src = torch.topk(h, k=self.cdim, dim=-1)[1]  # (B, Tmax, cdim)
         else:
-            indices_src = torch.cat([indices_src, torch.topk(h, k=self.cdim, dim=-1)[1]], dim=-1)  # (B, Tmax, cdim)
             h = h.view(b_size * t_size, self.hdim)
             h[torch.arange(h.size(0))[:, None], indices_src.view(b_size * t_size, -1)] = 0.0
             h = h.view(b_size, t_size, self.hdim)
+            indices_src = torch.cat([indices_src, torch.topk(h, k=self.cdim, dim=-1)[1]], dim=-1)  # (B, Tmax, cdim)
         x = self.decoder_src(h)
         return x, h, indices_src
 
@@ -251,23 +256,25 @@ class Net(nn.Module):
         # iterative method for subtraction
         y_res = y.clone()
         x_res = x.clone()
-        indices_self = None
-        indices_src = None
+        mask_prev = None
+        # h_self = None
+        # indices_src = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. augment and search optimal aug-parameter
             x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             x_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+            buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
+            buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
             # 2. attention mask
             attn = self.attention(x_opt, y_res, temper=self.temper)
             buffs['attn'].append(attn[0].unsqueeze(-1))
             x_attn = x_opt * attn
 
-            # (-2)&(-1). reverse attention x_aug feature
+            # (-2) & (-1). reverse attention x_aug feature
             x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
-            x_ele, indices_self = self.self_net(x_ele, indices_self)
+            x_ele, h_self, mask_prev = self.self_net(x_ele, mask_prev)
             buffs['x_dis'].append(x_ele.unsqueeze(-1))
-
             loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                              x_res.view(-1, self.odim),
                                              mask=seq_mask.view(-1, self.odim))
@@ -277,8 +284,8 @@ class Net(nn.Module):
                 # 3. re augment and search optimal aug-parameter
                 x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 x_ele_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
-                buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
-                buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
+                # buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
+                # buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
                 # 4. subtract inference feature and residual re-match to new one (This function act like value scale)
                 y_ele, h, indices_src = self.src_net(x_ele_opt, indices_src)
@@ -307,21 +314,22 @@ class Net(nn.Module):
         # # batch side sum needs for check
         x_dis = torch.cat(buffs['x_dis'], dim=-1)
         # y_dis = torch.cat(buffs['y_dis'], dim=-1)
-        # loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
+        loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
         # loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim), y.view(-1, self.idim), mask=seq_mask)
-        # self.reporter.report_dict['loss_x'] = float(loss_x)
+        self.reporter.report_dict['loss_x'] = float(loss_x)
         # self.reporter.report_dict['loss_y'] = float(loss_y)
         # self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
+        self.reporter.report_dict['mask_prev'] = mask_prev[0].detach().cpu().numpy()
         #
         # # just one sample at batch should be check
-        # theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
-        # sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
+        theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
+        sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
         # energy_y = y_dis.pow(2).sum(-2)
         #
-        # self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
-        # self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
+        self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
+        self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
         # self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
         #
         # """
