@@ -215,7 +215,7 @@ class Net(nn.Module):
                 mask_prev = mask_cur
             else:
                 assert mask_prev is not None
-                h[mask_prev.bool()] = 1e-10
+                h[mask_prev.bool()] = -1e+8
                 indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_intersection = mask_prev * mask_cur
@@ -226,19 +226,25 @@ class Net(nn.Module):
         x = self.decoder_self(h)
         return x, h, mask_prev
 
-    def src_net(self, x, indices_src):
+    def src_net(self, x, mask_prev, mask=True):
         h = self.encoder(x)
-        b_size = h.size(0)
-        t_size = h.size(1)
-        if indices_src is None:
-            indices_src = torch.topk(h, k=self.cdim, dim=-1)[1]  # (B, Tmax, cdim)
+        if mask:
+            if mask_prev is None:
+                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
+                mask_prev = mask_cur
+            else:
+                assert mask_prev is not None
+                h[mask_prev.bool()] = -1e+8
+                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
+                mask_intersection = mask_prev * mask_cur
+                mask_prev = mask_prev + mask_cur - mask_intersection
         else:
-            h = h.view(b_size * t_size, self.hdim)
-            h[torch.arange(h.size(0))[:, None], indices_src.view(b_size * t_size, -1)] = 0.0
-            h = h.view(b_size, t_size, self.hdim)
-            indices_src = torch.cat([indices_src, torch.topk(h, k=self.cdim, dim=-1)[1]], dim=-1)  # (B, Tmax, cdim)
+            pass
+        h = h * mask_cur
         x = self.decoder_src(h)
-        return x, h, indices_src
+        return x, h, mask_prev
 
     def forward(self, x, y, pretrain=True):
         self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
@@ -256,9 +262,8 @@ class Net(nn.Module):
         # iterative method for subtraction
         y_res = y.clone()
         x_res = x.clone()
-        mask_prev = None
-        # h_self = None
-        # indices_src = None
+        mask_prev_self = None
+        mask_prev_src = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. augment and search optimal aug-parameter
             x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
@@ -273,7 +278,7 @@ class Net(nn.Module):
 
             # (-2) & (-1). reverse attention x_aug feature
             x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
-            x_ele, h_self, mask_prev = self.self_net(x_ele, mask_prev)
+            x_ele, h_self, mask_prev_self = self.self_net(x_ele, mask_prev_self)
             buffs['x_dis'].append(x_ele.unsqueeze(-1))
             loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                              x_res.view(-1, self.odim),
@@ -288,9 +293,9 @@ class Net(nn.Module):
                 # buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
 
                 # 4. subtract inference feature and residual re-match to new one (This function act like value scale)
-                y_ele, h, indices_src = self.src_net(x_ele_opt, indices_src)
+                y_ele, h_src, mask_prev_src = self.src_net(x_ele_opt, mask_prev_src)
                 buffs['y_dis'].append(y_ele.unsqueeze(-1))
-                buffs['hs'].append(h[0].unsqueeze(-1))
+                buffs['h_src'].append(h_src[0].unsqueeze(-1))
 
                 # 5. compute loss of residual feature
                 move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
@@ -310,8 +315,8 @@ class Net(nn.Module):
         loss = torch.cat(buffs['loss'], dim=-1).mean()
         self.reporter.report_dict['loss'] = float(loss)
 
-        # # appendix. for reporting some value or tensor
-        # # batch side sum needs for check
+        # appendix. for reporting some value or tensor
+        # batch side sum needs for check
         x_dis = torch.cat(buffs['x_dis'], dim=-1)
         # y_dis = torch.cat(buffs['y_dis'], dim=-1)
         loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim), x.view(-1, self.idim), mask=seq_mask)
@@ -321,13 +326,12 @@ class Net(nn.Module):
         # self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
-        self.reporter.report_dict['mask_prev'] = mask_prev[0].detach().cpu().numpy()
-        #
-        # # just one sample at batch should be check
+
+        # just one sample at batch should be check
         theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
         sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
         # energy_y = y_dis.pow(2).sum(-2)
-        #
+
         self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
         self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
         # self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
@@ -335,12 +339,12 @@ class Net(nn.Module):
         # """
         # New block for testing hidden space
         # """
-        # hs = torch.cat(buffs['hs'], dim=-1)
-        # self.reporter.report_dict['hs0'] = hs[:, :, 0].detach().cpu().numpy()
-        # self.reporter.report_dict['hs1'] = hs[:, :, 1].detach().cpu().numpy()
-        # self.reporter.report_dict['hs2'] = hs[:, :, 2].detach().cpu().numpy()
-        # self.reporter.report_dict['hs3'] = hs[:, :, 3].detach().cpu().numpy()
-        # self.reporter.report_dict['hs4'] = hs[:, :, 4].detach().cpu().numpy()
+        # hs = torch.cat(buffs['h_src'], dim=-1)
+        # self.reporter.report_dict['h_src0'] = hs[:, :, 0].detach().cpu().numpy()
+        # self.reporter.report_dict['h_src1'] = hs[:, :, 1].detach().cpu().numpy()
+        # self.reporter.report_dict['h_src2'] = hs[:, :, 2].detach().cpu().numpy()
+        # self.reporter.report_dict['h_src3'] = hs[:, :, 3].detach().cpu().numpy()
+        # self.reporter.report_dict['h_src4'] = hs[:, :, 4].detach().cpu().numpy()
         #
         """
         New block for testing attention
@@ -351,5 +355,12 @@ class Net(nn.Module):
         self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
         self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
         self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
+        """
+        Checker block
+        """
+        # seq_mask_ = ~(seq_mask)
+        # seq_mask_ = (seq_mask_.float().sum(-1) > 0).unsqueeze(-1).repeat(1, 1, self.hdim).bool()
+        # print(mask_prev[0][seq_mask_[0]].view(-1, mask_prev.size(2)).sum(-1),
+        #       seq_mask_[0].sum(-1))
 
         return loss

@@ -227,7 +227,7 @@ def train(args):
         updater.train_core()
         if (epoch + 1) % args.high_interval_epochs == 0:
             filename = 'epoch{}_images_sim.png'.format(epoch + 1)
-            reporter.report_image(keys=['theta_opt', 'sim_opt', 'mask_prev'], filename=filename)
+            reporter.report_image(keys=['theta_opt', 'sim_opt'], filename=filename)
             # filename = 'epoch{}_images_hs.png'.format(epoch + 1)
             # reporter.report_image(keys=['hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_images_attn.png'.format(epoch + 1)
