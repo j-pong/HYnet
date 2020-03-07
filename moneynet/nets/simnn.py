@@ -208,17 +208,20 @@ class Net(nn.Module):
 
     def hsr(self, h, mask_prev, seq_mask, mask=True):
         if mask:
+            energy_h = h.pow(2)
             if mask_prev is None:
-                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                indices_cur = torch.topk(energy_h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_prev = mask_cur
                 loss_h = None
             else:
                 assert mask_prev is not None
-                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                # intersection of prev and current hidden space
+                indices_cur = torch.topk(energy_h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_intersection = mask_prev * mask_cur
                 seq_mask = seq_mask.prod(-1).unsqueeze(-1).repeat(1, 1, self.hdim).bool()
+                # loss define
                 h_ = h.clone()
                 h_.retain_grad()
                 loss_h = self.criterion_h(h_.view(-1, self.hdim),
@@ -226,9 +229,10 @@ class Net(nn.Module):
                                           mask=seq_mask.view(-1, self.hdim),
                                           reduce=None)
                 loss_h = loss_h.masked_fill(~(mask_intersection.view(-1, self.hdim).bool()), 0.0).sum()
-
-                h[mask_prev.bool()] = -1e+8
-                indices_cur = torch.topk(h, k=self.cdim, dim=-1)[1]
+                # eliminate fired hidden nodes
+                h[mask_prev.bool()] = 0.0
+                energy_h = h.pow(2)
+                indices_cur = torch.topk(energy_h, k=self.cdim, dim=-1)[1]
                 mask_cur = F.one_hot(indices_cur, num_classes=self.hdim).float().sum(-2)
                 mask_prev = mask_prev + mask_cur
         else:
@@ -359,7 +363,8 @@ class Net(nn.Module):
         """
         # seq_mask_ = ~(seq_mask)
         # seq_mask_ = (seq_mask_.float().sum(-1) > 0).unsqueeze(-1).repeat(1, 1, self.hdim).bool()
-        # print(mask_prev[0][seq_mask_[0]].view(-1, mask_prev.size(2)).sum(-1),
+        # print(mask_prev_self[0][seq_mask_[0]].view(-1, mask_prev_self.size(2)).sum(-1),
         #       seq_mask_[0].sum(-1))
+        # exit()
 
         return loss
