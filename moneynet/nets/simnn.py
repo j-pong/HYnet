@@ -263,19 +263,20 @@ class Net(nn.Module):
             x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             x_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
             attn = self.attention(x_opt, y_res, temper=self.temper)
-            x_attn = x_res * attn
+            x_attn = x_opt * attn
+            x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
             buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
             buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
             buffs['attn'].append(attn[0].unsqueeze(-1))
 
             # 2. feedforward for self estimation
-            h_self = self.encoder(x_attn)
+            h_self = self.encoder(x_ele)
             h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
-            x_ele = self.decoder_self(h_self)
-            buffs['x_dis'].append(x_ele.unsqueeze(-1))
+            x_ele_relation = self.decoder_self(h_self)
+            buffs['x_dis'].append(x_ele_relation.unsqueeze(-1))
 
             # 3. compute self estimation loss
-            loss_local_self = self.criterion(x_ele.view(-1, self.odim),
+            loss_local_self = self.criterion(x_ele_relation.view(-1, self.odim),
                                              x_res.view(-1, self.odim),
                                              mask=seq_mask.view(-1, self.odim))
             if loss_h_self is not None:
@@ -284,30 +285,31 @@ class Net(nn.Module):
                 loss = loss_local_self.unsqueeze(-1)
 
             # 4. attention x_ele and y_res matching with transform for src disentangling
-            x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+            x_aug, _ = self._pad_for_shift(key=x_ele_relation, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             x_ele_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
             attn = self.attention(x_ele_opt, y_res, temper=self.temper)
             x_attn = x_ele_opt * attn
             x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
 
+            # 5. feedforward for src estimation
             h_src = self.encoder(x_attn)
             h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
             y_ele = self.decoder_self(h_src)
             buffs['y_dis'].append(y_ele.unsqueeze(-1))
 
-            # 5. compute src estimation loss
+            # 6. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
             loss_local_src = self.criterion(y_ele.view(-1, self.odim),
                                             y_res.view(-1, self.odim),
                                             mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local_src = loss_local_src / move_energy
-            if loss_h_self is not None:
+            if loss_h_src is not None:
                 loss += loss_local_src.sum().unsqueeze(-1) + loss_h_src.unsqueeze(-1)
             else:
                 loss += loss_local_src.sum().unsqueeze(-1)
             buffs['loss'].append(loss)
 
-            # 6. compute residual feature
+            # 7. compute residual feature
             y_res = (y_res - y_ele).detach()
             x_res = (x_res - x_ele).detach()
 

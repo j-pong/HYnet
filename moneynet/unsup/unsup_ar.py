@@ -201,10 +201,8 @@ def train(args):
             # reporter.report_image(keys=['hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_{}_attn.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
-            # filename = 'epoch{}_images.png'.format(epoch + 1)
-            # reporter.report_image(keys=['target', 'pred_y', 'pred_x', 'res_x'], filename=filename)
             filename = 'epoch{}_{}.png'.format(epoch + 1, sample_name.split('.')[0])
-            reporter.report_image(keys=['target', 'pred_x', 'res_x'], filename=filename)
+            reporter.report_image(keys=['target', 'pred_y', 'pred_x', 'res_x'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)
         if (epoch + 1) % args.save_interval_epochs == 0:
