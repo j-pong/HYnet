@@ -294,7 +294,7 @@ class Net(nn.Module):
             # 5. feedforward for src estimation
             h_src = self.encoder(y_align_opt_relation_attn)
             h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-            y_ele = self.decoder_self(h_src)
+            y_ele = self.decoder_src(h_src)
             buffs['y_dis'].append(y_ele.unsqueeze(-1))
 
             # 6. compute src estimation loss
@@ -385,7 +385,6 @@ class Net(nn.Module):
         # iterative method for subtraction
         x_res = x.clone()
         mask_prev_self = None
-        mask_prev_src = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             attn = self.attention(x_res, x_res, temper=self.temper)
             buffs['attn'].append(attn[0].unsqueeze(-1))
