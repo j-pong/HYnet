@@ -261,16 +261,16 @@ class Net(nn.Module):
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. attention x_res and y_res matching with transform for self disentangling
             x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-            x_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
-            attn = self.attention(x_opt, y_res, temper=self.temper)
-            x_attn = x_opt * attn
-            x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
+            y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+            attn = self.attention(y_align_opt, y_res, temper=self.temper)
+            y_align_opt_attn = y_align_opt * attn
+            x_attn = self._reverse_pad_for_shift(key=y_align_opt_attn, query=y_res, theta=theta_opt)
             buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
             buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
             buffs['attn'].append(attn[0].unsqueeze(-1))
 
             # 2. feedforward for self estimation
-            h_self = self.encoder(x_ele)
+            h_self = self.encoder(x_attn)
             h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
             x_ele_relation = self.decoder_self(h_self)
             buffs['x_dis'].append(x_ele_relation.unsqueeze(-1))
@@ -286,13 +286,13 @@ class Net(nn.Module):
 
             # 4. attention x_ele and y_res matching with transform for src disentangling
             x_aug, _ = self._pad_for_shift(key=x_ele_relation, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-            x_ele_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
-            attn = self.attention(x_ele_opt, y_res, temper=self.temper)
-            x_attn = x_ele_opt * attn
-            x_ele = self._reverse_pad_for_shift(key=x_attn, query=y_res, theta=theta_opt)
+            y_align_opt_relation, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+            attn = self.attention(y_align_opt_relation, y_res, temper=self.temper)
+            y_align_opt_relation_attn = y_align_opt_relation * attn
+            x_ele = self._reverse_pad_for_shift(key=y_align_opt_relation_attn, query=y_res, theta=theta_opt)
 
             # 5. feedforward for src estimation
-            h_src = self.encoder(x_attn)
+            h_src = self.encoder(y_align_opt_relation_attn)
             h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
             y_ele = self.decoder_self(h_src)
             buffs['y_dis'].append(y_ele.unsqueeze(-1))
