@@ -1,1 +1,1 @@
-python moneynet/bin/unsup_train.py --indir dump --outdir exp/temperature0.01_src_pretrain_hiddenmask_hsrwithenergy
+python moneynet/bin/unsup_train.py --indir dump --outdir exp/temperature0.01_srconly_pretrain_hiddenmask_hsrwithenergy
