@@ -67,7 +67,7 @@ class Net(nn.Module):
 
         # next frame predictor
         self.encoder = nn.Linear(idim, self.hdim)
-        self.decode = nn.Linear(self.hdim, odim)
+        self.decoder = nn.Linear(self.hdim, odim)
         # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
         # network training related
@@ -266,7 +266,7 @@ class Net(nn.Module):
             # 2. feedforward for src estimation
             h_src = self.encoder(y_align_opt_attn)
             h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-            y_ele = self.decoder_self(h_src)
+            y_ele = self.decoder(h_src)
 
             # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
@@ -275,9 +275,9 @@ class Net(nn.Module):
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local = loss_local / move_energy
             if loss_h_src is not None:
-                loss += loss_local.sum().unsqueeze(-1) + loss_h_src.unsqueeze(-1)
+                loss = loss_local.sum().unsqueeze(-1) + loss_h_src.unsqueeze(-1)
             else:
-                loss += loss_local.sum().unsqueeze(-1)
+                loss = loss_local.sum().unsqueeze(-1)
 
             # 4. compute residual feature
             y_res = (y_res - y_ele).detach()
