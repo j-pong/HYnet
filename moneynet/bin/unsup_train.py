@@ -35,19 +35,19 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=33, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=25, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--low-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
-    parser.add_argument('--high-interval-epochs', default=10, type=int,
+    parser.add_argument('--high-interval-epochs', default=100, type=int,
                         help="Evaluation interval epochs")
-    parser.add_argument('--save-interval-epochs', default=100, type=int,
+    parser.add_argument('--save-interval-epochs', default=1000, type=int,
                         help="Save interval epochs")
 
     # optimization related
     parser.add_argument('--opt', default='sgd', type=str,
                         choices=['adam', 'sgd'], help='Optimizer')
-    parser.add_argument('--accum-grad', default=3, type=int,
+    parser.add_argument('--accum-grad', default=4, type=int,
                         help='Number of gradient accumuration')
     parser.add_argument('--lr', default=1e-3, type=float,
                         help='Learning rate for optimizer')

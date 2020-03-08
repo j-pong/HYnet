@@ -206,8 +206,7 @@ def train(args):
             filename = 'epoch{}_{}.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['target', 'pred_x', 'res_x'], filename=filename)
         if (epoch + 1) % args.low_interval_epochs == 0:
-            # reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)
-            reporter.report_plot_buffer(keys=['loss', 'loss_x'], epoch=epoch + 1)
+            reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)
         if (epoch + 1) % args.save_interval_epochs == 0:
             filename = 'epoch{}.ckpt'.format(epoch + 1)
             torch.save(model.state_dict(), os.path.join(args.outdir, filename))
