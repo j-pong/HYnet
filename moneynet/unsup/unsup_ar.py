@@ -118,13 +118,6 @@ def train(args):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False  # https://github.com/pytorch/pytorch/issues/6351
 
-    # check the use of multi-gpu
-    if args.ngpu > 1:
-        if args.batch_size != 0:
-            logging.warning('batch size is automatically increased (%d -> %d)' % (
-                args.batch_size, args.batch_size * args.ngpu))
-            args.batch_size *= args.ngpu
-
     # check cuda availability
     if not torch.cuda.is_available():
         logging.warning('cuda is not available')

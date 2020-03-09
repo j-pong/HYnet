@@ -60,6 +60,7 @@ class Net(nn.Module):
         self.cdim = args.cdim
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
+        self.selftrain = args.self_train
 
         # training hyperparameter
         self.measurement = args.similarity
@@ -244,7 +245,7 @@ class Net(nn.Module):
         h = h.masked_fill(~(mask_cur.bool()), 0.0)
         return h, mask_prev, loss_h
 
-    def forward(self, x, y, selftrain=False):
+    def forward(self, x, y):
         # 0. prepare data
         if np.isnan(self.ignore_out):
             seq_mask = torch.isnan(y)
@@ -269,7 +270,7 @@ class Net(nn.Module):
             y_align_opt_attn = y_align_opt * attn
             x_ele = self._reverse_pad_for_shift(key=y_align_opt_attn, query=y_res, theta=theta_opt)
 
-            if selftrain:
+            if self.selftrain:
                 # 1.1
                 b_size = x_ele.size(0)
                 t_size = x_ele.size(1)
@@ -280,7 +281,7 @@ class Net(nn.Module):
                 h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
                 x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
                 x_ele = torch.stack(
-                    [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in six.moves.range(self.indim)],
+                    [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in six.moves.range(self.idim)],
                     dim=-1).view(b_size, t_size, -1)
                 # 1.2
                 x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
@@ -311,7 +312,7 @@ class Net(nn.Module):
                                         y_res.view(-1, self.odim),
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local = loss_local / move_energy
-            if selftrain:
+            if self.selftrain:
                 if loss_h_src is not None:
                     loss = loss_local.sum() + loss_local_self + loss_h_src + loss_h_self
                 else:

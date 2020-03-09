@@ -47,6 +47,8 @@ def get_parser():
                         help="Save interval epochs")
     parser.add_argument('--pin-memory', default=0, type=int,
                         help='')
+    parser.add_argument('--datamper', default=1, type=int,
+                        help='')
 
     # optimization related
     parser.add_argument('--opt', default='sgd', type=str,
@@ -85,6 +87,8 @@ def get_parser():
     parser.add_argument('--similarity', default='cos', type=str,
                         choices=['cos'], help='Similarity metric')
     parser.add_argument('--temperature', default=0.01, type=float,
+                        help='')
+    parser.add_argument('--self-train', default=0, type=int,
                         help='')
 
     return parser

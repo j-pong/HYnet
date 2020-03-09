@@ -32,6 +32,7 @@ class Pikachu(torch.utils.data.Dataset):
         self.batch_size = args.batch_size
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
+        self.datamper = args.datamper
 
         # ram_memory is waring to small ram case
         if ram_memory:
@@ -60,7 +61,7 @@ class Pikachu(torch.utils.data.Dataset):
         return pad_list(batch_in_feat, self.ignore_in), pad_list(batch_out_feat, self.ignore_out), batch_fname
 
     def __len__(self):
-        return int(self.num_samples / self.batch_size) * self.ngpu
+        return int(self.num_samples / self.batch_size) * self.ngpu * self.datamper
 
     def __dims__(self):
         sample = self.__getitem__(0)
