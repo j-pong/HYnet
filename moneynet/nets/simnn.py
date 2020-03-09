@@ -66,8 +66,14 @@ class Net(nn.Module):
         self.temper = args.temperature
 
         # next frame predictor
-        self.encoder = nn.Linear(idim, self.hdim)
-        self.decoder = nn.Linear(self.hdim, odim)
+        # self.encoder = nn.Linear(idim, self.hdim)
+        input_extrarea = idim
+        output_extrarea = odim
+        kernel_size = idim + input_extrarea
+        padding = idim
+        self.encoder = nn.Conv1d(in_channels=1, out_channels=self.hdim, kernel_size=kernel_size,
+                                 padding=padding)
+        self.decoder = nn.Linear(self.hdim, odim + output_extrarea)
         # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
 
         # network training related
@@ -264,9 +270,19 @@ class Net(nn.Module):
             x_ele = self._reverse_pad_for_shift(key=y_align_opt_attn, query=y_res, theta=theta_opt)
 
             # 2. feedforward for src estimation
+            # (B * T,idim) -> (B * T,1,idim) -> (B * T, hdim, idim + 2 * idim - 1) -> (B * T, idim * 2 - 1, hdim)
+            b_size = y_align_opt.size(0)
+            t_size = y_align_opt.size(1)
+            y_align_opt_attn = y_align_opt_attn.view(b_size * t_size, 1, -1)
             h_src = self.encoder(y_align_opt_attn)
+            h_src = torch.transpose(h_src, -1, -2)  # (B * T, *, hdim)
+            h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * T)
+            h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, T, hdim)
             h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-            y_ele = self.decoder(h_src)
+            y_ele_ext = self.decoder(h_src).view(b_size * t_size, -1)
+            y_ele = torch.stack(
+                [y_ele_ext[torch.arange(y_ele_ext.size(0)), h_src_ind + i] for i in six.moves.range(self.odim)],
+                dim=-1).view(b_size, t_size, -1)
 
             # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
@@ -275,30 +291,30 @@ class Net(nn.Module):
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local = loss_local / move_energy
             if loss_h_src is not None:
-                loss = loss_local.sum().unsqueeze(-1) + loss_h_src.unsqueeze(-1)
+                loss = loss_local.sum() + loss_h_src
             else:
-                loss = loss_local.sum().unsqueeze(-1)
+                loss = loss_local.sum()
 
             # 4. compute residual feature
             y_res = (y_res - y_ele).detach()
             x_res = (x_res - x_ele).detach()
 
             # buffering
-            buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
-            buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
-            buffs['attn'].append(attn[0].unsqueeze(-1))
-            buffs['x_dis'].append(x_ele.unsqueeze(-1))
-            buffs['y_dis'].append(y_ele.unsqueeze(-1))
+            buffs['theta_opt'].append(theta_opt[0])
+            buffs['sim_opt'].append(sim_opt[0])
+            buffs['attn'].append(attn[0])
+            buffs['x_dis'].append(x_ele)
+            buffs['y_dis'].append(y_ele)
             buffs['loss'].append(loss)
 
         # 5. total loss compute
-        loss = torch.cat(buffs['loss'], dim=-1).mean()
+        loss = torch.stack(buffs['loss'], dim=-1).mean()
         self.reporter.report_dict['loss'] = float(loss)
 
         # appendix. for reporting some value or tensor
         # batch side sum needs for check
-        x_dis = torch.cat(buffs['x_dis'], dim=-1)
-        y_dis = torch.cat(buffs['y_dis'], dim=-1)
+        x_dis = torch.stack(buffs['x_dis'], dim=-1)
+        y_dis = torch.stack(buffs['y_dis'], dim=-1)
         loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim),
                                 x.view(-1, self.idim),
                                 mask=seq_mask.view(-1, self.odim))
@@ -312,13 +328,13 @@ class Net(nn.Module):
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
 
         # just one sample at batch should be check
-        theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
-        sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
+        theta_opt = torch.stack(buffs['theta_opt'], dim=-1)
+        sim_opt = torch.stack(buffs['sim_opt'], dim=-1)
         self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
         self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
 
         # disentangled hidden space check by attention disentangling
-        attns = torch.cat(buffs['attn'], dim=-1)
+        attns = torch.stack(buffs['attn'], dim=-1)
         self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
         self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
         self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()

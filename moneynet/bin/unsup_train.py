@@ -35,7 +35,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=35, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=33, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--low-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
