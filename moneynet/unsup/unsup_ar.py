@@ -89,13 +89,13 @@ class Updater(object):
 
         self.forward_count = 0
 
-    def train_core(self, pretrain=True):
+    def train_core(self, selftrain=False):
         for samples in self.train_loader:
             self.reporter.report_dict['fname'] = samples['fname'][0]
             data = samples['input'][0].to(self.device)
             target = samples['target'][0].to(self.device)
 
-            loss = self.model(data, target, pretrain)
+            loss = self.model(data, target, selftrain)
             loss.backward()
 
             self.forward_count += 1

@@ -74,7 +74,7 @@ class Net(nn.Module):
         self.encoder = nn.Conv1d(in_channels=1, out_channels=self.hdim, kernel_size=kernel_size,
                                  padding=padding)
         self.decoder = nn.Linear(self.hdim, odim + output_extrarea)
-        # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
+        self.decoder_self = nn.Linear(self.hdim, idim + input_extrarea)
 
         # network training related
         self.criterion = SeqLoss(criterion=nn.MSELoss(reduce=None))
@@ -244,7 +244,7 @@ class Net(nn.Module):
         h = h.masked_fill(~(mask_cur.bool()), 0.0)
         return h, mask_prev, loss_h
 
-    def forward(self, x, y, pretrain=True):
+    def forward(self, x, y, selftrain=False):
         self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
         # 0. prepare data
         if np.isnan(self.ignore_out):
@@ -261,6 +261,7 @@ class Net(nn.Module):
         y_res = y.clone()
         x_res = x.clone()
         mask_prev_src = None
+        mask_prev_self = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. attention x_ele and y_res matching with transform for src disentangling
             x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
@@ -269,13 +270,34 @@ class Net(nn.Module):
             y_align_opt_attn = y_align_opt * attn
             x_ele = self._reverse_pad_for_shift(key=y_align_opt_attn, query=y_res, theta=theta_opt)
 
+            if selftrain:
+                # 1.1
+                b_size = x_ele.size(0)
+                t_size = x_ele.size(1)
+                x_ele = x_ele.view(b_size * t_size, 1, -1)
+                h_self = self.encoder(x_ele).transpose(-1, -2)  # (B * T, *, hdim)
+                h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * T)
+                h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size, -1)  # (B, T, hdim)
+                h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
+                x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
+                x_ele = torch.stack(
+                    [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in six.moves.range(self.indim)],
+                    dim=-1).view(b_size, t_size, -1)
+                # 1.2
+                x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+                y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+                attn = self.attention(y_align_opt, y_res, temper=self.temper)
+                y_align_opt_attn = y_align_opt * attn
+                loss_local_self = self.criterion(x_ele.view(-1, self.odim),
+                                                 x_res.view(-1, self.odim),
+                                                 mask=seq_mask.view(-1, self.odim))
+
             # 2. feedforward for src estimation
             # (B * T,idim) -> (B * T,1,idim) -> (B * T, hdim, idim + 2 * idim - 1) -> (B * T, idim * 2 - 1, hdim)
             b_size = y_align_opt.size(0)
             t_size = y_align_opt.size(1)
             y_align_opt_attn = y_align_opt_attn.view(b_size * t_size, 1, -1)
-            h_src = self.encoder(y_align_opt_attn)
-            h_src = torch.transpose(h_src, -1, -2)  # (B * T, *, hdim)
+            h_src = self.encoder(y_align_opt_attn).transpose(-1, -2)  # (B * T, *, hdim)
             h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * T)
             h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, T, hdim)
             h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
@@ -290,12 +312,18 @@ class Net(nn.Module):
                                         y_res.view(-1, self.odim),
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local = loss_local / move_energy
-            if loss_h_src is not None:
-                loss = loss_local.sum() + loss_h_src
+            if selftrain:
+                if loss_h_src is not None:
+                    loss = loss_local.sum() + loss_local_self + loss_h_src + loss_h_self
+                else:
+                    loss = loss_local.sum() + loss_local_self
             else:
-                loss = loss_local.sum()
+                if loss_h_src is not None:
+                    loss = loss_local.sum() + loss_h_src
+                else:
+                    loss = loss_local.sum()
 
-            # 4. compute residual feature
+                    # 4. compute residual feature
             y_res = (y_res - y_ele).detach()
             x_res = (x_res - x_ele).detach()
 
