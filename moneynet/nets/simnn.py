@@ -286,8 +286,8 @@ class Net(nn.Module):
                 # 1.2
                 x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
-                attn = self.attention(y_align_opt, y_res, temper=self.temper)
-                y_align_opt_attn = y_align_opt * attn
+                # attn = self.attention(y_align_opt, y_res, temper=self.temper)
+                y_align_opt_attn = y_align_opt #* attn
                 loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                                  x_res.view(-1, self.odim),
                                                  mask=seq_mask.view(-1, self.odim))
