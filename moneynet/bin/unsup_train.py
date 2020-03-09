@@ -22,6 +22,8 @@ def get_parser():
     # general configuration
     parser.add_argument('--ngpu', default=1, type=int,
                         help='Number of GPUs. If not given, use all visible devices')
+    parser.add_argument('--ncpu', default=16, type=int,
+                        help='Number of CPUs. If not given, use all visible devices')
     parser.add_argument('--train-dtype', default="float32",
                         choices=["float16", "float32", "float64", "O0", "O1", "O2", "O3"],
                         help='Data type for training')
@@ -35,7 +37,7 @@ def get_parser():
                         help='Random seed')
     parser.add_argument('--resume', '-r', default='', type=str, nargs='?',
                         help='Resume the training from snapshot')
-    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=33, type=int,
+    parser.add_argument('--batch-size', '--batch-seqs', '-b', default=97, type=int,
                         help='Maximum seqs in a minibatch (0 to disable)')
     parser.add_argument('--low-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
@@ -43,11 +45,13 @@ def get_parser():
                         help="Evaluation interval epochs")
     parser.add_argument('--save-interval-epochs', default=1000, type=int,
                         help="Save interval epochs")
+    parser.add_argument('--pin-memory', default=0, type=int,
+                        help='')
 
     # optimization related
     parser.add_argument('--opt', default='sgd', type=str,
                         choices=['adam', 'sgd'], help='Optimizer')
-    parser.add_argument('--accum-grad', default=3, type=int,
+    parser.add_argument('--accum-grad', default=1, type=int,
                         help='Number of gradient accumuration')
     parser.add_argument('--lr', default=1e-3, type=float,
                         help='Learning rate for optimizer')

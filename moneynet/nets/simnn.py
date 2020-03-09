@@ -245,7 +245,6 @@ class Net(nn.Module):
         return h, mask_prev, loss_h
 
     def forward(self, x, y, selftrain=False):
-        self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
         # 0. prepare data
         if np.isnan(self.ignore_out):
             seq_mask = torch.isnan(y)
@@ -354,6 +353,7 @@ class Net(nn.Module):
         self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
+        self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
 
         # just one sample at batch should be check
         theta_opt = torch.stack(buffs['theta_opt'], dim=-1)

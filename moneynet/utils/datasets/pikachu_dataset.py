@@ -27,6 +27,7 @@ class Pikachu(torch.utils.data.Dataset):
 
         # task related
         self.num_samples = len(self.filelist)
+        self.ngpu = args.ngpu
         self.transform = transform
         self.batch_size = args.batch_size
         self.ignore_in = args.ignore_in
@@ -59,7 +60,7 @@ class Pikachu(torch.utils.data.Dataset):
         return pad_list(batch_in_feat, self.ignore_in), pad_list(batch_out_feat, self.ignore_out), batch_fname
 
     def __len__(self):
-        return int(self.num_samples / self.batch_size)
+        return int(self.num_samples / self.batch_size) * self.ngpu
 
     def __dims__(self):
         sample = self.__getitem__(0)
