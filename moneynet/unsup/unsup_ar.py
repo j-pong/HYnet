@@ -183,8 +183,6 @@ def train(args):
         if (epoch + 1) % args.high_interval_epochs == 0:
             filename = 'epoch{}_{}_sim.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['theta_opt', 'sim_opt'], filename=filename)
-            # filename = 'epoch{}_images_hs.png'.format(epoch + 1)
-            # reporter.report_image(keys=['hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_{}_attn.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
             filename = 'epoch{}_{}.png'.format(epoch + 1, sample_name.split('.')[0])

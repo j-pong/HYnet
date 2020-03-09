@@ -67,15 +67,20 @@ class Net(nn.Module):
         self.temper = args.temperature
 
         # next frame predictor
-        # self.encoder = nn.Linear(idim, self.hdim)
-        input_extrarea = idim
-        output_extrarea = odim
-        kernel_size = idim + input_extrarea
-        padding = idim
-        self.encoder = nn.Conv1d(in_channels=1, out_channels=self.hdim, kernel_size=kernel_size,
-                                 padding=padding)
-        self.decoder = nn.Linear(self.hdim, odim + output_extrarea)
-        self.decoder_self = nn.Linear(self.hdim, idim + input_extrarea)
+        self.encoder_type = 'linear'
+        if self.encoder_type == 'conv1d':
+            input_extrarea = idim
+            output_extrarea = odim
+            kernel_size = idim + input_extrarea
+            padding = idim
+            self.encoder = nn.Conv1d(in_channels=1, out_channels=self.hdim, kernel_size=kernel_size,
+                                     padding=padding)
+            self.decoder = nn.Linear(self.hdim, odim + output_extrarea)
+            self.decoder_self = nn.Linear(self.hdim, idim + input_extrarea)
+        elif self.encoder_type == 'linear':
+            self.encoder = nn.Linear(idim, self.hdim)
+            self.decoder = nn.Linear(self.hdim, odim)
+            self.decoder_self = nn.Linear(self.hdim, idim)
 
         # network training related
         self.criterion = SeqLoss(criterion=nn.MSELoss(reduce=None))
@@ -272,39 +277,50 @@ class Net(nn.Module):
 
             if self.selftrain:
                 # 1.1
-                b_size = x_ele.size(0)
-                t_size = x_ele.size(1)
-                x_ele = x_ele.view(b_size * t_size, 1, -1)
-                h_self = self.encoder(x_ele).transpose(-1, -2)  # (B * T, *, hdim)
-                h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * T)
-                h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size, -1)  # (B, T, hdim)
-                h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
-                x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
-                x_ele = torch.stack(
-                    [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in six.moves.range(self.idim)],
-                    dim=-1).view(b_size, t_size, -1)
+                if self.encoder_type == 'conv1d':
+                    b_size = x_ele.size(0)
+                    t_size = x_ele.size(1)
+                    x_ele = x_ele.view(b_size * t_size, 1, -1)
+                    h_self = self.encoder(x_ele).transpose(-1, -2)  # (B * T, *, hdim)
+                    h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * T)
+                    h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size, -1)  # (B, T, hdim)
+                    h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
+                    x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
+                    x_ele = torch.stack(
+                        [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in
+                         six.moves.range(self.idim)],
+                        dim=-1).view(b_size, t_size, -1)
+                elif self.encoder_type == 'linear':
+                    h_self = self.encoder(x_ele)  # (B * T, *, hdim)
+                    h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
+                    x_ele = self.decoder_self(h_self)
                 # 1.2
                 x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
                 # attn = self.attention(y_align_opt, y_res, temper=self.temper)
-                y_align_opt_attn = y_align_opt #* attn
+                y_align_opt_attn = y_align_opt  # * attn
                 loss_local_self = self.criterion(x_ele.view(-1, self.odim),
                                                  x_res.view(-1, self.odim),
                                                  mask=seq_mask.view(-1, self.odim))
 
             # 2. feedforward for src estimation
             # (B * T,idim) -> (B * T,1,idim) -> (B * T, hdim, idim + 2 * idim - 1) -> (B * T, idim * 2 - 1, hdim)
-            b_size = y_align_opt.size(0)
-            t_size = y_align_opt.size(1)
-            y_align_opt_attn = y_align_opt_attn.view(b_size * t_size, 1, -1)
-            h_src = self.encoder(y_align_opt_attn).transpose(-1, -2)  # (B * T, *, hdim)
-            h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * T)
-            h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, T, hdim)
-            h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-            y_ele_ext = self.decoder(h_src).view(b_size * t_size, -1)
-            y_ele = torch.stack(
-                [y_ele_ext[torch.arange(y_ele_ext.size(0)), h_src_ind + i] for i in six.moves.range(self.odim)],
-                dim=-1).view(b_size, t_size, -1)
+            if self.encoder_type == 'conv1d':
+                b_size = y_align_opt.size(0)
+                t_size = y_align_opt.size(1)
+                y_align_opt_attn = y_align_opt_attn.view(b_size * t_size, 1, -1)
+                h_src = self.encoder(y_align_opt_attn).transpose(-1, -2)  # (B * T, *, hdim)
+                h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * T)
+                h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, T, hdim)
+                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
+                y_ele_ext = self.decoder(h_src).view(b_size * t_size, -1)
+                y_ele = torch.stack(
+                    [y_ele_ext[torch.arange(y_ele_ext.size(0)), h_src_ind + i] for i in six.moves.range(self.odim)],
+                    dim=-1).view(b_size, t_size, -1)
+            elif self.encoder_type == 'linear':
+                h_src = self.encoder(x_ele)  # (B * T, *, hdim)
+                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
+                y_ele = self.decoder(h_src)
 
             # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
