@@ -67,16 +67,13 @@ class Net(nn.Module):
         self.temper = args.temperature
 
         # next frame predictor
-        self.encoder_type = 'linear'
+        self.encoder_type = args.encoder_type
         if self.encoder_type == 'conv1d':
-            input_extrarea = idim
-            output_extrarea = odim
-            kernel_size = idim + input_extrarea
-            padding = idim
-            self.encoder = nn.Conv1d(in_channels=1, out_channels=self.hdim, kernel_size=kernel_size,
-                                     padding=padding)
-            self.decoder = nn.Linear(self.hdim, odim + output_extrarea)
-            self.decoder_self = nn.Linear(self.hdim, idim + input_extrarea)
+            self.input_extra = idim
+            self.output_extra = odim
+            self.encoder = nn.Linear(idim + self.input_extra, self.hdim)
+            self.decoder = nn.Linear(self.hdim, odim + self.output_extra)
+            self.decoder_self = nn.Linear(self.hdim, idim + self.input_extra)
         elif self.encoder_type == 'linear':
             self.encoder = nn.Linear(idim, self.hdim)
             self.decoder = nn.Linear(self.hdim, odim)
@@ -93,7 +90,7 @@ class Net(nn.Module):
         initialize(self)
 
     @staticmethod
-    def _pad_for_shift(key, query):
+    def _pad_for_shift(key, pad, trunk=True):
         """Padding to channel dim for convolution
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
@@ -105,31 +102,32 @@ class Net(nn.Module):
         :rtype: torch.Tensor
         """
         idim_k = key.size(-1)
-        idim_q = query.size(-1)
-        pad = idim_q - 1
-
+        window = pad + 1
         key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
         key_pad_trunk = []
-        query_mask = []
-        for i in six.moves.range(idim_k + idim_q - 1):
-            # key pad trunk
-            kpt = key_pad[..., i:i + idim_q]
-            key_pad_trunk.append(kpt.unsqueeze(-2))
-            # make mask for similarity
-            kpt_mask = torch.zeros_like(kpt).to(kpt.device)
-            end = -max(i - idim_q, 0)
-            if end < 0:
-                kpt_mask[..., -(i + 1):end] = 1
+        # query_mask = []
+        for i in six.moves.range(idim_k + pad):
+            if trunk:
+                kpt = key_pad[..., i:i + window]
+                # kpt_mask = torch.zeros_like(kpt).to(kpt.device)
+                # end = -max(i - window, 0)
+                # if end < 0:
+                #     kpt_mask[..., -(i + 1):end] = 1
+                # else:
+                #     kpt_mask[..., -(i + 1):] = 1
+                # query_mask.append(kpt_mask.unsqueeze(-2))
             else:
-                kpt_mask[..., -(i + 1):] = 1
-            query_mask.append(kpt_mask.unsqueeze(-2))
+                kpt = key_pad
+            key_pad_trunk.append(kpt.unsqueeze(-2))
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-
-        return key_pad_trunk, query_mask
+        # if trunk:
+        #     query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+        # else:
+        #     query_mask = None
+        return key_pad_trunk, None  # query_mask
 
     @staticmethod
-    def _reverse_pad_for_shift(key, query, theta):
+    def _reverse_pad_for_shift(key, pad, theta):
         """Reverse to padded data
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
@@ -140,17 +138,15 @@ class Net(nn.Module):
         :rtype: torch.Tensor
         """
         idim_k = key.size(-1)
-        idim_q = query.size(-1)
-        pad = idim_q - 1
-
+        window = pad + 1
         key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
         theta = theta.long().view(-1)
         key_pad_trunk = []
-        for i in six.moves.range(idim_k + idim_q - 1):
-            kpt = key_pad[..., i:i + idim_q]
+        for i in six.moves.range(idim_k + pad):
+            kpt = key_pad[..., i:i + window]
             key_pad_trunk.append(kpt.unsqueeze(-2))
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        key_pad_trunk = key_pad_trunk.view(-1, idim_k + idim_q - 1, idim_q)
+        key_pad_trunk = key_pad_trunk.view(-1, idim_k + pad, window)
         key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - theta]
 
         return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
@@ -269,21 +265,24 @@ class Net(nn.Module):
         mask_prev_self = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. attention x_ele and y_res matching with transform for src disentangling
-            x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+            x_aug, _ = self._pad_for_shift(key=x_res, pad=self.odim - 1)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
             attn = self.attention(y_align_opt, y_res, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
-            x_ele = self._reverse_pad_for_shift(key=y_align_opt_attn, query=y_res, theta=theta_opt)
+            x_ele = self._reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, theta=theta_opt)
 
             if self.selftrain:
                 # 1.1
                 if self.encoder_type == 'conv1d':
                     b_size = x_ele.size(0)
                     t_size = x_ele.size(1)
-                    x_ele = x_ele.view(b_size * t_size, 1, -1)
-                    h_self = self.encoder(x_ele).transpose(-1, -2)  # (B * T, *, hdim)
-                    h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * T)
-                    h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size, -1)  # (B, T, hdim)
+                    x_ele, _ = self._pad_for_shift(key=x_ele,
+                                                   pad=int(self.input_extra / 2),
+                                                   trunk=False)  # (B, Tmax, *, idim)
+                    h_self = self.encoder(x_ele).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
+                    h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
+                    h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size,
+                                                                                   -1)  # (B, Tmax, hdim)
                     h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
                     x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
                     x_ele = torch.stack(
@@ -295,7 +294,7 @@ class Net(nn.Module):
                     h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
                     x_ele = self.decoder_self(h_self)
                 # 1.2
-                x_aug, _ = self._pad_for_shift(key=x_ele, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+                x_aug, _ = self._pad_for_shift(key=x_ele, pad=self.odim - 1)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
                 # attn = self.attention(y_align_opt, y_res, temper=self.temper)
                 y_align_opt_attn = y_align_opt  # * attn
@@ -304,14 +303,15 @@ class Net(nn.Module):
                                                  mask=seq_mask.view(-1, self.odim))
 
             # 2. feedforward for src estimation
-            # (B * T,idim) -> (B * T,1,idim) -> (B * T, hdim, idim + 2 * idim - 1) -> (B * T, idim * 2 - 1, hdim)
             if self.encoder_type == 'conv1d':
                 b_size = y_align_opt.size(0)
                 t_size = y_align_opt.size(1)
-                y_align_opt_attn = y_align_opt_attn.view(b_size * t_size, 1, -1)
-                h_src = self.encoder(y_align_opt_attn).transpose(-1, -2)  # (B * T, *, hdim)
-                h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * T)
-                h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, T, hdim)
+                y_align_opt_attn, _ = self._pad_for_shift(key=y_align_opt_attn,
+                                                          pad=int(self.input_extra / 2),
+                                                          trunk=False)  # (B, Tmax, *, idim)
+                h_src = self.encoder(y_align_opt_attn).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
+                h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
+                h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, Tmax, hdim)
                 h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
                 y_ele_ext = self.decoder(h_src).view(b_size * t_size, -1)
                 y_ele = torch.stack(

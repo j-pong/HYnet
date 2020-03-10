@@ -1,1 +1,1 @@
-python moneynet/bin/unsup_train.py --ngpu 1 --batch-size 32 --accum-grad 3 --datamper 1 --ncpu 6 --pin-memory 1 --indir dump --outdir exp/temperature0.01_srconly_pretrain_hiddenmask_hsrwithenergy_batchsizefix
+python moneynet/bin/unsup_train.py --batch-size 16 --accum-grad 6 --datamper 1 --ngpu 1 --ncpu 6 --pin-memory 1 --self-train 0 --encoder-type conv1d --pin-memory 0 --indir dump --outdir exp/temperature0.01_srconly_pretrain_hiddenmask_hsrwithenergy_batchsizefix_conv1d

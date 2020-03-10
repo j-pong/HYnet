@@ -90,6 +90,8 @@ def get_parser():
                         help='')
     parser.add_argument('--self-train', default=0, type=int,
                         help='')
+    parser.add_argument('--encoder-type', default='linear', type=str,
+                        choices=['linear', 'conv1d'], help='Similarity metric')
 
     return parser
 
