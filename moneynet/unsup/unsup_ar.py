@@ -6,6 +6,7 @@ import logging
 import json
 
 import torch
+from torch.nn.parallel import data_parallel
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -81,21 +82,19 @@ class Updater(object):
         self.optimizer = optimizer
         self.model = model
         self.device = device
-        self.model = model
         self.reporter = reporter
+        self.ngpu = args.ngpu
 
         self.grad_clip = args.grad_clip
         self.accum_grad = args.accum_grad
 
         self.forward_count = 0
 
-    def train_core(self, pretrain=True):
+    def train_core(self):
         for samples in self.train_loader:
             self.reporter.report_dict['fname'] = samples['fname'][0]
-            data = samples['input'][0].to(self.device)
-            target = samples['target'][0].to(self.device)
-
-            loss = self.model(data, target, pretrain)
+            x = (samples['input'][0].to(self.device), samples['target'][0].to(self.device))
+            loss = data_parallel(self.model, x, range(self.ngpu)).mean() / self.accum_grad
             loss.backward()
 
             self.forward_count += 1
@@ -131,6 +130,11 @@ def train(args):
     logging.info('#input dims : ' + str(idim))
     logging.info('#output dims: ' + str(odim))
 
+    # specify model architecture
+    reporter = Reporter(args)
+    model = Net(idim, odim, args, reporter)
+    logging.info(model)
+
     # write model config
     if not os.path.exists(args.outdir):
         os.makedirs(args.outdir)
@@ -141,19 +145,6 @@ def train(args):
                            indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
     for key in sorted(vars(args).keys()):
         logging.info('ARGS: ' + key + ': ' + str(vars(args)[key]))
-
-    # specify model architecture
-    reporter = Reporter(args)
-    model = Net(idim, odim, args, reporter)
-    logging.info(model)
-
-    # check the use of multi-gpu
-    if args.ngpu > 1:
-        model = torch.nn.DataParallel(model, device_ids=list(range(args.ngpu)))
-        if args.batch_size != 0:
-            logging.warning('batch size is automatically increased (%d -> %d)' % (
-                args.batch_size, args.batch_size * args.ngpu))
-            args.batch_size *= args.ngpu
 
     # set torch device
     device = torch.device("cuda" if args.ngpu > 0 else "cpu")
@@ -175,8 +166,8 @@ def train(args):
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=6, pin_memory=True)
-
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=args.ncpu,
+                                               pin_memory=args.pin_memory)
     updater = Updater(args, train_loader, optimizer, device, model, reporter)
 
     if args.resume:
@@ -186,19 +177,12 @@ def train(args):
     # Training dataset
     model.train()
 
-    # for epoch in tqdm(range(args.pretrain_epochs)):
-    #     updater.pretrain_core()
-    #     if (epoch + 1) % args.low_interval_epochs == 0:
-    #         reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
-
     for epoch in tqdm(range(args.epochs)):
         updater.train_core()
         sample_name = reporter.report_dict['fname'][0].split()[-1]
         if (epoch + 1) % args.high_interval_epochs == 0:
             filename = 'epoch{}_{}_sim.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['theta_opt', 'sim_opt'], filename=filename)
-            # filename = 'epoch{}_images_hs.png'.format(epoch + 1)
-            # reporter.report_image(keys=['hs0', 'hs1', 'hs2', 'hs3', 'hs4'], filename=filename)
             filename = 'epoch{}_{}_attn.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
             filename = 'epoch{}_{}.png'.format(epoch + 1, sample_name.split('.')[0])

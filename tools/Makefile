@@ -5,8 +5,9 @@ PYTHON :=
 # NOTE(kan-bayashi): Use 3.7.3 to avoid sentencepiece installation error
 PYTHON_VERSION := 3.7.3
 TH_VERSION :=
+CUDA_VERSION := 10.1
 WGET := wget --tries 3
-OS := MaxOSX
+OS := Linux
 
 # Both Miniconda2/3 can install any Python versions
 CONDA_URL := https://repo.continuum.io/miniconda/Miniconda3-latest-$(OS)-x86_64.sh
@@ -15,9 +16,9 @@ GCC_VERSION := $(shell gcc -dumpversion)
 
 
 ifneq ($(shell which nvidia-smi),) # 'nvcc' found
-CONDA_PYTORCH := pytorch=$(TH_VERSION) cudatoolkit=$(CUDA_VERSION)
+CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cudatoolkit=$(CUDA_VERSION)
 else
-CONDA_PYTORCH := pytorch-cpu=$(TH_VERSION)
+CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cpuonly -c pytorch
 endif
 
 
@@ -35,7 +36,7 @@ venv: miniconda.sh
 	. venv/bin/activate && conda install -y python=$(PYTHON_VERSION)
 	. venv/bin/activate && conda info -a
 
-	. venv/bin/activate && conda install pytorch torchvision -c pytorch
+	. venv/bin/activate && conda install -y $(CONDA_PYTORCH) -c pytorch
 	. venv/bin/activate && pip install scikit-learn matplotlib seaborn librosa soundfile configargparse tqdm
 	. venv/bin/activate && pip install requests BeautifulSoup4  # making dataset related
 	. venv/bin/activate && pip install -e ..

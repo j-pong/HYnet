@@ -60,17 +60,24 @@ class Net(nn.Module):
         self.cdim = args.cdim
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
+        self.selftrain = args.self_train
 
         # training hyperparameter
         self.measurement = args.similarity
         self.temper = args.temperature
 
         # next frame predictor
-        self.encoder = nn.Linear(idim, self.hdim)
-        self.relu = nn.ReLU()
-        self.decoder_src = nn.Linear(self.hdim, odim)
-        self.decoder_self = nn.Linear(self.hdim, odim)
-        # self.q = torch.nn.parameter.Parameter(torch.eye(odim, dtype=torch.float32))
+        self.encoder_type = args.encoder_type
+        if self.encoder_type == 'conv1d':
+            self.input_extra = idim
+            self.output_extra = odim
+            self.encoder = nn.Linear(idim + self.input_extra, self.hdim)
+            self.decoder = nn.Linear(self.hdim, odim + self.output_extra)
+            self.decoder_self = nn.Linear(self.hdim, idim + self.input_extra)
+        elif self.encoder_type == 'linear':
+            self.encoder = nn.Linear(idim, self.hdim)
+            self.decoder = nn.Linear(self.hdim, odim)
+            self.decoder_self = nn.Linear(self.hdim, idim)
 
         # network training related
         self.criterion = SeqLoss(criterion=nn.MSELoss(reduce=None))
@@ -83,7 +90,7 @@ class Net(nn.Module):
         initialize(self)
 
     @staticmethod
-    def _pad_for_shift(key, query):
+    def _pad_for_shift(key, pad, trunk=True):
         """Padding to channel dim for convolution
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
@@ -95,31 +102,32 @@ class Net(nn.Module):
         :rtype: torch.Tensor
         """
         idim_k = key.size(-1)
-        idim_q = query.size(-1)
-        pad = idim_q - 1
-
+        window = pad + 1
         key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
         key_pad_trunk = []
-        query_mask = []
-        for i in six.moves.range(idim_k + idim_q - 1):
-            # key pad trunk
-            kpt = key_pad[..., i:i + idim_q]
-            key_pad_trunk.append(kpt.unsqueeze(-2))
-            # make mask for similarity
-            kpt_mask = torch.zeros_like(kpt).to(kpt.device)
-            end = -max(i - idim_q, 0)
-            if end < 0:
-                kpt_mask[..., -(i + 1):end] = 1
+        # query_mask = []
+        for i in six.moves.range(idim_k + pad):
+            if trunk:
+                kpt = key_pad[..., i:i + window]
+                # kpt_mask = torch.zeros_like(kpt).to(kpt.device)
+                # end = -max(i - window, 0)
+                # if end < 0:
+                #     kpt_mask[..., -(i + 1):end] = 1
+                # else:
+                #     kpt_mask[..., -(i + 1):] = 1
+                # query_mask.append(kpt_mask.unsqueeze(-2))
             else:
-                kpt_mask[..., -(i + 1):] = 1
-            query_mask.append(kpt_mask.unsqueeze(-2))
+                kpt = key_pad
+            key_pad_trunk.append(kpt.unsqueeze(-2))
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-
-        return key_pad_trunk, query_mask
+        # if trunk:
+        #     query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+        # else:
+        #     query_mask = None
+        return key_pad_trunk, None  # query_mask
 
     @staticmethod
-    def _reverse_pad_for_shift(key, query, theta):
+    def _reverse_pad_for_shift(key, pad, theta):
         """Reverse to padded data
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
@@ -130,17 +138,15 @@ class Net(nn.Module):
         :rtype: torch.Tensor
         """
         idim_k = key.size(-1)
-        idim_q = query.size(-1)
-        pad = idim_q - 1
-
+        window = pad + 1
         key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
         theta = theta.long().view(-1)
         key_pad_trunk = []
-        for i in six.moves.range(idim_k + idim_q - 1):
-            kpt = key_pad[..., i:i + idim_q]
+        for i in six.moves.range(idim_k + pad):
+            kpt = key_pad[..., i:i + window]
             key_pad_trunk.append(kpt.unsqueeze(-2))
         key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        key_pad_trunk = key_pad_trunk.view(-1, idim_k + idim_q - 1, idim_q)
+        key_pad_trunk = key_pad_trunk.view(-1, idim_k + pad, window)
         key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * idim_k - 2 - theta]
 
         return key_pad_trunk.view(key.size(0), key.size(1), idim_k)
@@ -240,8 +246,7 @@ class Net(nn.Module):
         h = h.masked_fill(~(mask_cur.bool()), 0.0)
         return h, mask_prev, loss_h
 
-    def forward(self, x, y, pretrain=True):
-        self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
+    def forward(self, x, y):
         # 0. prepare data
         if np.isnan(self.ignore_out):
             seq_mask = torch.isnan(y)
@@ -256,71 +261,104 @@ class Net(nn.Module):
         # iterative method for subtraction
         y_res = y.clone()
         x_res = x.clone()
-        mask_prev_self = None
         mask_prev_src = None
+        mask_prev_self = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
-            # 1. attention x_res and y_res matching with transform for self disentangling
-            x_aug, _ = self._pad_for_shift(key=x_res, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+            # 1. attention x_ele and y_res matching with transform for src disentangling
+            x_aug, _ = self._pad_for_shift(key=x_res, pad=self.odim - 1)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
             attn = self.attention(y_align_opt, y_res, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
-            x_attn = self._reverse_pad_for_shift(key=y_align_opt_attn, query=y_res, theta=theta_opt)
-            buffs['theta_opt'].append(theta_opt[0].unsqueeze(-1))
-            buffs['sim_opt'].append(sim_opt[0].unsqueeze(-1))
-            buffs['attn'].append(attn[0].unsqueeze(-1))
+            x_ele = self._reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, theta=theta_opt)
 
-            # 2. feedforward for self estimation
-            h_self = self.encoder(x_attn)
-            h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
-            x_ele_relation = self.decoder_self(h_self)
-            buffs['x_dis'].append(x_ele_relation.unsqueeze(-1))
+            if self.selftrain:
+                # 1.1
+                if self.encoder_type == 'conv1d':
+                    b_size = x_ele.size(0)
+                    t_size = x_ele.size(1)
+                    x_ele, _ = self._pad_for_shift(key=x_ele,
+                                                   pad=int(self.input_extra / 2),
+                                                   trunk=False)  # (B, Tmax, *, idim)
+                    h_self = self.encoder(x_ele).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
+                    h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
+                    h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size,
+                                                                                   -1)  # (B, Tmax, hdim)
+                    h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
+                    x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
+                    x_ele = torch.stack(
+                        [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in
+                         six.moves.range(self.idim)],
+                        dim=-1).view(b_size, t_size, -1)
+                elif self.encoder_type == 'linear':
+                    h_self = self.encoder(x_ele)  # (B * T, *, hdim)
+                    h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
+                    x_ele = self.decoder_self(h_self)
+                # 1.2
+                x_aug, _ = self._pad_for_shift(key=x_ele, pad=self.odim - 1)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+                y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
+                # attn = self.attention(y_align_opt, y_res, temper=self.temper)
+                y_align_opt_attn = y_align_opt  # * attn
+                loss_local_self = self.criterion(x_ele.view(-1, self.odim),
+                                                 x_res.view(-1, self.odim),
+                                                 mask=seq_mask.view(-1, self.odim))
 
-            # 3. compute self estimation loss
-            loss_local_self = self.criterion(x_ele_relation.view(-1, self.odim),
-                                             x_res.view(-1, self.odim),
-                                             mask=seq_mask.view(-1, self.odim))
-            if loss_h_self is not None:
-                loss = loss_local_self.unsqueeze(-1) + loss_h_self.unsqueeze(-1)
-            else:
-                loss = loss_local_self.unsqueeze(-1)
+            # 2. feedforward for src estimation
+            if self.encoder_type == 'conv1d':
+                b_size = y_align_opt.size(0)
+                t_size = y_align_opt.size(1)
+                y_align_opt_attn, _ = self._pad_for_shift(key=y_align_opt_attn,
+                                                          pad=int(self.input_extra / 2),
+                                                          trunk=False)  # (B, Tmax, *, idim)
+                h_src = self.encoder(y_align_opt_attn).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
+                h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
+                h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, Tmax, hdim)
+                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
+                y_ele_ext = self.decoder(h_src).view(b_size * t_size, -1)
+                y_ele = torch.stack(
+                    [y_ele_ext[torch.arange(y_ele_ext.size(0)), h_src_ind + i] for i in six.moves.range(self.odim)],
+                    dim=-1).view(b_size, t_size, -1)
+            elif self.encoder_type == 'linear':
+                h_src = self.encoder(x_ele)  # (B * T, *, hdim)
+                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
+                y_ele = self.decoder(h_src)
 
-            # 4. attention x_ele and y_res matching with transform for src disentangling
-            x_aug, _ = self._pad_for_shift(key=x_ele_relation, query=y_res)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-            y_align_opt_relation, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
-            attn = self.attention(y_align_opt_relation, y_res, temper=self.temper)
-            y_align_opt_relation_attn = y_align_opt_relation * attn
-            x_ele = self._reverse_pad_for_shift(key=y_align_opt_relation_attn, query=y_res, theta=theta_opt)
-
-            # 5. feedforward for src estimation
-            h_src = self.encoder(y_align_opt_relation_attn)
-            h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-            y_ele = self.decoder_src(h_src)
-            buffs['y_dis'].append(y_ele.unsqueeze(-1))
-
-            # 6. compute src estimation loss
+            # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
-            loss_local_src = self.criterion(y_ele.view(-1, self.odim),
-                                            y_res.view(-1, self.odim),
-                                            mask=seq_mask.view(-1, self.odim), reduce=None)
-            loss_local_src = loss_local_src / move_energy
-            if loss_h_src is not None:
-                loss += loss_local_src.sum().unsqueeze(-1) + loss_h_src.unsqueeze(-1)
+            loss_local = self.criterion(y_ele.view(-1, self.odim),
+                                        y_res.view(-1, self.odim),
+                                        mask=seq_mask.view(-1, self.odim), reduce=None)
+            loss_local = loss_local / move_energy
+            if self.selftrain:
+                if loss_h_src is not None:
+                    loss = loss_local.sum() + loss_local_self + loss_h_src + loss_h_self
+                else:
+                    loss = loss_local.sum() + loss_local_self
             else:
-                loss += loss_local_src.sum().unsqueeze(-1)
-            buffs['loss'].append(loss)
+                if loss_h_src is not None:
+                    loss = loss_local.sum() + loss_h_src
+                else:
+                    loss = loss_local.sum()
 
-            # 7. compute residual feature
+                    # 4. compute residual feature
             y_res = (y_res - y_ele).detach()
             x_res = (x_res - x_ele).detach()
 
-        # 6. total loss compute
-        loss = torch.cat(buffs['loss'], dim=-1).mean()
+            # buffering
+            buffs['theta_opt'].append(theta_opt[0])
+            buffs['sim_opt'].append(sim_opt[0])
+            buffs['attn'].append(attn[0])
+            buffs['x_dis'].append(x_ele)
+            buffs['y_dis'].append(y_ele)
+            buffs['loss'].append(loss)
+
+        # 5. total loss compute
+        loss = torch.stack(buffs['loss'], dim=-1).mean()
         self.reporter.report_dict['loss'] = float(loss)
 
         # appendix. for reporting some value or tensor
         # batch side sum needs for check
-        x_dis = torch.cat(buffs['x_dis'], dim=-1)
-        y_dis = torch.cat(buffs['y_dis'], dim=-1)
+        x_dis = torch.stack(buffs['x_dis'], dim=-1)
+        y_dis = torch.stack(buffs['y_dis'], dim=-1)
         loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim),
                                 x.view(-1, self.idim),
                                 mask=seq_mask.view(-1, self.odim))
@@ -332,80 +370,20 @@ class Net(nn.Module):
         self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
         self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
+        self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
 
         # just one sample at batch should be check
-        theta_opt = torch.cat(buffs['theta_opt'], dim=-1)
-        sim_opt = torch.cat(buffs['sim_opt'], dim=-1)
-        # energy_y = y_dis.pow(2).sum(-2)
-
+        theta_opt = torch.stack(buffs['theta_opt'], dim=-1)
+        sim_opt = torch.stack(buffs['sim_opt'], dim=-1)
         self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
         self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
-        # self.reporter.report_dict['energy_y'] = np.log(energy_y[0].detach().cpu().numpy() + 1e-6)
-        #
-        # """
-        # New block for testing hidden space
-        # """
-        # hs = torch.cat(buffs['h_src'], dim=-1)
-        # self.reporter.report_dict['h_src0'] = hs[:, :, 0].detach().cpu().numpy()
-        # self.reporter.report_dict['h_src1'] = hs[:, :, 1].detach().cpu().numpy()
-        # self.reporter.report_dict['h_src2'] = hs[:, :, 2].detach().cpu().numpy()
-        # self.reporter.report_dict['h_src3'] = hs[:, :, 3].detach().cpu().numpy()
-        # self.reporter.report_dict['h_src4'] = hs[:, :, 4].detach().cpu().numpy()
-        #
-        """
-        New block for testing attention
-        """
-        attns = torch.cat(buffs['attn'], dim=-1)
+
+        # disentangled hidden space check by attention disentangling
+        attns = torch.stack(buffs['attn'], dim=-1)
         self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
         self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
         self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
         self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
         self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
-        """
-        Checker block
-        """
-        # seq_mask_ = ~(seq_mask)
-        # seq_mask_ = (seq_mask_.float().sum(-1) > 0).unsqueeze(-1).repeat(1, 1, self.hdim).bool()
-        # print(mask_prev_self[0][seq_mask_[0]].view(-1, mask_prev_self.size(2)).sum(-1),
-        #       seq_mask_[0].sum(-1))
-        # exit()
 
         return loss
-
-    def forward_self(self, x, y):
-        if np.isnan(self.ignore_out):
-            seq_mask = torch.isnan(y)
-        else:
-            seq_mask = y == self.ignore_out
-
-        buffs = {'y_dis': [], 'x_dis': [],
-                 'theta_opt': [], 'sim_opt': [],
-                 'loss': [], 'attn': [], 'hs': []}
-
-        # iterative method for subtraction
-        x_res = x.clone()
-        mask_prev_self = None
-        for _ in six.moves.range(int(self.hdim / self.cdim)):
-            attn = self.attention(x_res, x_res, temper=self.temper)
-            buffs['attn'].append(attn[0].unsqueeze(-1))
-            x_attn = x_res * attn
-
-            h_self = self.encoder(x_attn)
-            h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
-            x_ele = self.decoder_self(h_self)
-            buffs['x_dis'].append(x_ele.unsqueeze(-1))
-            loss_local_self = self.criterion(x_ele.view(-1, self.odim),
-                                             x_res.view(-1, self.odim),
-                                             mask=seq_mask.view(-1, self.odim))
-            if loss_h_self is not None:
-                loss = loss_local_self.unsqueeze(-1) + loss_h_self.unsqueeze(-1)
-            else:
-                loss = loss_local_self.unsqueeze(-1)
-
-            x_res = (x_res - x_ele).detach()
-
-            buffs['loss'].append(loss)
-
-        # 6. total loss compute
-        loss = torch.cat(buffs['loss'], dim=-1).mean()
-        self.reporter.report_dict['loss'] = float(loss)
