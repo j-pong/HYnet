@@ -90,7 +90,7 @@ class Net(nn.Module):
         initialize(self)
 
     @staticmethod
-    def _pad_for_shift(key, pad, trunk=True):
+    def _pad_for_shift(key, pad, window=None, mask=True):
         """Padding to channel dim for convolution
 
         :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
@@ -102,29 +102,28 @@ class Net(nn.Module):
         :rtype: torch.Tensor
         """
         idim_k = key.size(-1)
-        window = pad + 1
-        key_pad = F.pad(key, pad=[pad, pad])  # (B, Tmax, idim_k + pad * 2)
+        if window is None:
+            window = pad + 1
+        key_pad = F.pad(key, pad=(pad, pad), value=-100)  # (B, Tmax, idim_k + pad * 2)
         key_pad_trunk = []
-        # query_mask = []
-        for i in six.moves.range(idim_k + pad):
-            if trunk:
-                kpt = key_pad[..., i:i + window]
-                # kpt_mask = torch.zeros_like(kpt).to(kpt.device)
-                # end = -max(i - window, 0)
-                # if end < 0:
-                #     kpt_mask[..., -(i + 1):end] = 1
-                # else:
-                #     kpt_mask[..., -(i + 1):] = 1
-                # query_mask.append(kpt_mask.unsqueeze(-2))
-            else:
-                kpt = key_pad
-            key_pad_trunk.append(kpt.unsqueeze(-2))
-        key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        # if trunk:
-        #     query_mask = torch.cat(query_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-        # else:
-        #     query_mask = None
-        return key_pad_trunk, None  # query_mask
+        trunk_mask = []
+        for i in six.moves.range(idim_k + 2 * pad - window + 1):
+            kpt = key_pad[..., i:i + window]
+            if mask:
+                kpt_mask = torch.zeros_like(kpt).to(kpt.device)
+                end = -max(i - window, 0)
+                if end < 0:
+                    kpt_mask[..., -(i + 1):end] = 1
+                else:
+                    kpt_mask[..., -(i + 1):] = 1
+                trunk_mask.append(kpt_mask.unsqueeze(-2))
+            key_pad_trunk.append(kpt)
+        key_pad_trunk = torch.stack(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+        if mask:
+            trunk_mask = torch.stack(trunk_mask, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+        else:
+            trunk_mask = None
+        return key_pad_trunk, trunk_mask
 
     @staticmethod
     def _reverse_pad_for_shift(key, pad, theta):
@@ -265,7 +264,7 @@ class Net(nn.Module):
         mask_prev_self = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # 1. attention x_ele and y_res matching with transform for src disentangling
-            x_aug, _ = self._pad_for_shift(key=x_res, pad=self.odim - 1)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+            x_aug, _ = self._pad_for_shift(key=x_res, pad=self.odim - 1, window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
             attn = self.attention(y_align_opt, y_res, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
@@ -277,8 +276,8 @@ class Net(nn.Module):
                     b_size = x_ele.size(0)
                     t_size = x_ele.size(1)
                     x_ele, _ = self._pad_for_shift(key=x_ele,
-                                                   pad=int(self.input_extra / 2),
-                                                   trunk=False)  # (B, Tmax, *, idim)
+                                                   pad=self.input_extra,
+                                                   window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
                     h_self = self.encoder(x_ele).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
                     h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
                     h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size,
@@ -294,7 +293,7 @@ class Net(nn.Module):
                     h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
                     x_ele = self.decoder_self(h_self)
                 # 1.2
-                x_aug, _ = self._pad_for_shift(key=x_ele, pad=self.odim - 1)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+                x_aug, _ = self._pad_for_shift(key=x_ele, pad=self.odim - 1, window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 y_align_opt, sim_opt, theta_opt = self.sim_argmax(x_aug, y_res, measurement=self.measurement)
                 # attn = self.attention(y_align_opt, y_res, temper=self.temper)
                 y_align_opt_attn = y_align_opt  # * attn
@@ -307,8 +306,8 @@ class Net(nn.Module):
                 b_size = y_align_opt.size(0)
                 t_size = y_align_opt.size(1)
                 y_align_opt_attn_pad, _ = self._pad_for_shift(key=y_align_opt_attn,
-                                                              pad=int(self.input_extra / 2),
-                                                              trunk=False)  # (B, Tmax, *, idim)
+                                                              pad=self.input_extra,
+                                                              window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
                 h_src = self.encoder(y_align_opt_attn_pad).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
                 h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
                 h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, Tmax, hdim)

@@ -3,7 +3,7 @@
 # Copyright 2020 Hanyang University (j-pong)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
-stage=1
+stage=0
 stop_stage=100
 
 . utils/parse_options.sh || exit 1;
