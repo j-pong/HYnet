@@ -76,14 +76,14 @@ def get_parser():
                         help='Feature type for audio')
     parser.add_argument('--feat-dim', default=40, type=int,
                         help='Feature dimension')
-    parser.add_argument('--hdim', default=1024, type=int,
-                        help='Hidden layer dimension')
-    parser.add_argument('--cdim', default=32, type=int,
-                        help='')
     parser.add_argument('--ignore_in', default=0, type=float,
                         help='')
     parser.add_argument('--ignore_out', default=float('NaN'), type=float,
                         help='Hidden layer dimension')
+    parser.add_argument('--hdim', default=1024, type=int,
+                        help='Hidden layer dimension')
+    parser.add_argument('--cdim', default=32, type=int,
+                        help='')
     parser.add_argument('--similarity', default='cos', type=str,
                         choices=['cos'], help='Similarity metric')
     parser.add_argument('--temperature', default=0.01, type=float,
@@ -91,7 +91,9 @@ def get_parser():
     parser.add_argument('--self-train', default=0, type=int,
                         help='')
     parser.add_argument('--encoder-type', default='linear', type=str,
-                        choices=['linear', 'conv1d'], help='Similarity metric')
+                        choices=['linear', 'conv1d'], help='')
+    parser.add_argument('--energy-threshold', default=10, type=float,
+                        help='')
 
     return parser
 

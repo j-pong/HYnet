@@ -33,6 +33,7 @@ class Net(nn.Module):
         # training hyperparameter
         self.measurement = args.similarity
         self.temper = args.temperature
+        self.energy_th = args.energy_threshold
 
         # next frame predictor
         self.encoder_type = args.encoder_type
@@ -141,7 +142,7 @@ class Net(nn.Module):
                     x_ele = self.decoder_self(h_self)
                 # 1.2
                 move_energy = torch.abs(theta_opt - self.idim + 1).view(-1, 1) + 1.0
-                move_mask = torch.abs(theta_opt - self.idim + 1).view(-1, 1) > 10
+                move_mask = torch.abs(theta_opt - self.idim + 1).view(-1, 1) > self.energy_th
                 loss_local_self = self.criterion(x_ele.view(-1, self.idim),
                                                  x_res.view(-1, self.idim),
                                                  mask=seq_mask.view(-1, self.idim), reduce=None)
@@ -152,7 +153,6 @@ class Net(nn.Module):
                 y_align_opt, sim_opt, theta_opt = sim_argmax(x_aug, y_res, measurement=self.measurement)
                 # attn = attention(y_align_opt, y_res, temper=self.temper)
                 y_align_opt_attn = y_align_opt  # * attn
-
 
             # 2. feedforward for src estimation
             if self.encoder_type == 'conv1d':
@@ -176,10 +176,10 @@ class Net(nn.Module):
 
             # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
-            move_mask = torch.abs(theta_opt - self.odim + 1).view(-1, 1) > 10
+            move_mask = torch.abs(theta_opt - self.odim + 1).view(-1, 1) > self.energy_th
             loss_local_src = self.criterion(y_ele.view(-1, self.odim),
-                                        y_res.view(-1, self.odim),
-                                        mask=seq_mask.view(-1, self.odim), reduce=None)
+                                            y_res.view(-1, self.odim),
+                                            mask=seq_mask.view(-1, self.odim), reduce=None)
             loss_local_src = loss_local_src.masked_fill(move_mask, 0.0) / move_energy
 
             # 4. aggregate all loss
