@@ -27,7 +27,7 @@ def get_parser():
     parser.add_argument('--train-dtype', default="float32",
                         choices=["float16", "float32", "float64", "O0", "O1", "O2", "O3"],
                         help='Data type for training')
-    parser.add_argument('--datadir', type=str, default='./data',
+    parser.add_argument('--datadir', type=str, default='data',
                         help='Raw data directory')
     parser.add_argument('--indir', type=str, required=True,
                         help='Input directory')

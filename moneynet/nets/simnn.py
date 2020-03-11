@@ -306,10 +306,10 @@ class Net(nn.Module):
             if self.encoder_type == 'conv1d':
                 b_size = y_align_opt.size(0)
                 t_size = y_align_opt.size(1)
-                y_align_opt_attn, _ = self._pad_for_shift(key=y_align_opt_attn,
-                                                          pad=int(self.input_extra / 2),
-                                                          trunk=False)  # (B, Tmax, *, idim)
-                h_src = self.encoder(y_align_opt_attn).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
+                y_align_opt_attn_pad, _ = self._pad_for_shift(key=y_align_opt_attn,
+                                                              pad=int(self.input_extra / 2),
+                                                              trunk=False)  # (B, Tmax, *, idim)
+                h_src = self.encoder(y_align_opt_attn_pad).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
                 h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
                 h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, Tmax, hdim)
                 h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
@@ -324,10 +324,11 @@ class Net(nn.Module):
 
             # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
+            move_mask = torch.abs(theta_opt - self.odim + 1).view(-1, 1) > 10
             loss_local = self.criterion(y_ele.view(-1, self.odim),
                                         y_res.view(-1, self.odim),
                                         mask=seq_mask.view(-1, self.odim), reduce=None)
-            loss_local = loss_local / move_energy
+            loss_local = loss_local.masked_fill(move_mask, 0.0) / move_energy
             if self.selftrain:
                 if loss_h_src is not None:
                     loss = loss_local.sum() + loss_local_self + loss_h_src + loss_h_self
