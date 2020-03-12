@@ -50,7 +50,7 @@ def main():
     print(x_aug.size())
 
     # make virtual theta
-    theta = torch.ones((2, 30)) * 60
+    theta = torch.ones((2, 30)) * 50
 
     # select with theta
     x_opt = select_with_ind(x_aug, theta)
@@ -77,7 +77,7 @@ def main():
     # print(x_aug.size())
     #
     # # make virtual theta
-    # theta = torch.ones((2, 30)) * 4
+    # theta = torch.ones((2, 30)) * 10
     #
     # # select with theta
     # x_opt = select_with_ind(x_aug, theta)

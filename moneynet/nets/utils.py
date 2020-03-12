@@ -34,7 +34,7 @@ def select_with_ind(x, ind):
     # select with ind
     x = x.view(x_new_size)
     ind = ind.view(x_new_size[0])
-    x = x[torch.arange(x_new_size[0]), ind.long()].view(x_return_size)
+    x = x[torch.arange(x_new_size[0]), ind].view(x_return_size)
 
     return x
 
@@ -79,7 +79,6 @@ def reverse_pad_for_shift(key, pad, theta, window=None):
     """Reverse to padded data
 
     :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
-    :param torch.Tensor query: batch of padded source sequences (B, Tmax, idim_k)
     :param torch.Tensor theta: batch of padded source sequences (B, Tmax)
 
     :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k)
@@ -87,14 +86,12 @@ def reverse_pad_for_shift(key, pad, theta, window=None):
     """
     idim_k = key.size(-1)
     key_pad = F.pad(key, pad=(pad, pad))  # (B, Tmax, idim_k + pad * 2)
-    theta = theta.long().view(-1)
     key_pad_trunk = []
     for i in six.moves.range(idim_k + 2 * pad - window + 1):
         kpt = key_pad[..., i:i + window]
         key_pad_trunk.append(kpt.unsqueeze(-2))
     key_pad_trunk = torch.cat(key_pad_trunk, dim=-2)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-    key_pad_trunk = key_pad_trunk.view(-1, idim_k + 2 * pad - window + 1, window)
-    key_pad_trunk = key_pad_trunk[torch.arange(key_pad_trunk.size(0)), 2 * pad - theta]
+    key_pad_trunk = select_with_ind(key_pad_trunk, 2 * pad - theta)
 
     return key_pad_trunk.view(key.size(0), key.size(1), -1)
 
@@ -137,18 +134,10 @@ def temp_softmax(x, T=10.0, dim=-1):
     return x
 
 
-def sim_argmax(x, y, measurement='cos'):
-    batch_size = x.size(0)
-    time_size = x.size(1)
-
+def selector(x, y, measurement='cos'):
     # similarity measuring
     sim_max, sim_max_idx = score(key_pad_trunk=x, query=y, query_mask=None,
                                  measurement=measurement)  # (B, Tmax)
-
     # maximum shift select
-    x = x.view(-1, x.size(-2), x.size(-1))  # (B * Tmax, idim_k + idim_q - 1, idim_q)
-    x = x[torch.arange(x.size(0)), sim_max_idx.view(-1)]  # (B * Tmax, idim_q)
-
-    # recover shape
-    x = x.view(batch_size, time_size, -1)
+    x = select_with_ind(x, sim_max_idx)
     return x, sim_max, sim_max_idx

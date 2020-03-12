@@ -9,7 +9,7 @@ from torch import nn
 
 import numpy as np
 
-from moneynet.nets.utils import pad_for_shift, reverse_pad_for_shift, sim_argmax
+from moneynet.nets.utils import pad_for_shift, reverse_pad_for_shift, selector, select_with_ind
 from moneynet.nets.attention import attention
 from moneynet.nets.initialization import initialize
 from moneynet.nets.loss import SeqLoss
@@ -92,6 +92,27 @@ class Net(nn.Module):
         h = h.masked_fill(~(mask_cur.bool()), 0.0)
         return h, mask_prev, loss_h
 
+    def disentangle(self, x, mask_prev, seq_mask, decoder):
+        if self.encoder_type == 'conv1d':
+            x, _ = pad_for_shift(key=x, pad=self.input_extra,
+                                 window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
+            h = self.encoder(x)
+            h_ind = torch.max(h.pow(2).sum(-1), dim=-1)[1]  # (B, Tmax)
+            h = select_with_ind(h, h_ind)
+            h, mask_prev, loss_h = self.hsr(h, mask_prev, seq_mask=seq_mask)
+
+            b_size = x.size(0)
+            t_size = x.size(1)
+            x_ext = decoder(h).view(b_size * t_size, -1)
+            x = torch.stack([x_ext[torch.arange(x_ext.size(0)), h_ind.view(-1) + i] for i in six.moves.range(self.idim)],
+                            dim=-1).view(b_size, t_size, -1)
+        elif self.encoder_type == 'linear':
+            h = self.encoder(x)  # (B * T, *, hdim)
+            h, mask_prev, loss_h = self.hsr(h, mask_prev, seq_mask=seq_mask)
+            x = decoder(h)
+
+        return x, mask_prev, loss_h
+
     def forward(self, x, y):
         # 0. prepare data
         if np.isnan(self.ignore_out):
@@ -113,33 +134,14 @@ class Net(nn.Module):
             # 1. attention x_ele and y_res matching with transform for src disentangling
             x_aug, _ = pad_for_shift(key=x_res, pad=self.odim - 1,
                                      window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-            y_align_opt, sim_opt, theta_opt = sim_argmax(x_aug, y_res, measurement=self.measurement)
+            y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
             attn = attention(y_align_opt, y_res, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
             x_ele = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
 
             if self.selftrain:
-                # 1.1
-                if self.encoder_type == 'conv1d':
-                    b_size = x_ele.size(0)
-                    t_size = x_ele.size(1)
-                    x_ele, _ = pad_for_shift(key=x_ele,
-                                             pad=self.input_extra,
-                                             window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
-                    h_self = self.encoder(x_ele).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
-                    h_self_ind = torch.max(h_self.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
-                    h_self = h_self[torch.arange(h_self.size(0)), h_self_ind].view(b_size, t_size,
-                                                                                   -1)  # (B, Tmax, hdim)
-                    h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
-                    x_ele_ext = self.decoder_self(h_self).view(b_size * t_size, -1)
-                    x_ele = torch.stack(
-                        [x_ele_ext[torch.arange(x_ele_ext.size(0)), h_self_ind + i] for i in
-                         six.moves.range(self.idim)],
-                        dim=-1).view(b_size, t_size, -1)
-                elif self.encoder_type == 'linear':
-                    h_self = self.encoder(x_ele)  # (B * T, *, hdim)
-                    h_self, mask_prev_self, loss_h_self = self.hsr(h_self, mask_prev_self, seq_mask=seq_mask)
-                    x_ele = self.decoder_self(h_self)
+                x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask,
+                                                                      decoder=self.decoder_self)
                 # 1.2
                 move_energy = torch.abs(theta_opt - self.idim + 1).view(-1, 1) + 1.0
                 move_mask = torch.abs(theta_opt - self.idim + 1).view(-1, 1) > self.energy_th
@@ -150,29 +152,13 @@ class Net(nn.Module):
                 # 1.3
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
                                          window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
-                y_align_opt, sim_opt, theta_opt = sim_argmax(x_aug, y_res, measurement=self.measurement)
+                y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
                 # attn = attention(y_align_opt, y_res, temper=self.temper)
                 y_align_opt_attn = y_align_opt  # * attn
 
             # 2. feedforward for src estimation
-            if self.encoder_type == 'conv1d':
-                b_size = y_align_opt.size(0)
-                t_size = y_align_opt.size(1)
-                y_align_opt_attn_pad, _ = pad_for_shift(key=y_align_opt_attn,
-                                                        pad=self.input_extra,
-                                                        window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
-                h_src = self.encoder(y_align_opt_attn_pad).view(b_size * t_size, -1, self.hdim)  # (B * Tmax, *, hdim)
-                h_src_ind = torch.max(h_src.pow(2).sum(-1), dim=-1)[1]  # (B * Tmax)
-                h_src = h_src[torch.arange(h_src.size(0)), h_src_ind].view(b_size, t_size, -1)  # (B, Tmax, hdim)
-                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-                y_ele_ext = self.decoder(h_src).view(b_size * t_size, -1)
-                y_ele = torch.stack(
-                    [y_ele_ext[torch.arange(y_ele_ext.size(0)), h_src_ind + i] for i in six.moves.range(self.odim)],
-                    dim=-1).view(b_size, t_size, -1)
-            elif self.encoder_type == 'linear':
-                h_src = self.encoder(x_ele)  # (B * T, *, hdim)
-                h_src, mask_prev_src, loss_h_src = self.hsr(h_src, mask_prev_src, seq_mask=seq_mask)
-                y_ele = self.decoder(h_src)
+            y_ele, mask_prev_src, loss_h_src = self.disentangle(y_align_opt_attn, mask_prev_src, seq_mask,
+                                                                decoder=self.decoder)
 
             # 3. compute src estimation loss
             move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
