@@ -105,7 +105,9 @@ class Net(nn.Module):
             # target trunk along feature side with window
             assert self.idim == self.odim
             x_ext = decoder(h)
-            x = torch.stack([select_with_ind(x_ext, h_ind + i) for i in torch.arange(self.idim)], dim=-1)
+            x = torch.stack(
+                [select_with_ind(x_ext, x_ext.size(-1) - 1 - h_ind - i) for i in torch.arange(self.idim).flip(0)],
+                dim=-1)
         elif self.encoder_type == 'linear':
             h = self.encoder(x)
             h, mask_prev, loss_h = self.hsr(h, mask_prev, seq_mask=seq_mask)
@@ -131,7 +133,7 @@ class Net(nn.Module):
         mask_prev_src = None
         mask_prev_self = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
-            # 1. attention x_ele and y_res matching with transform for src disentangling
+            # 1. feature selection
             x_aug, _ = pad_for_shift(key=x_res, pad=self.odim - 1,
                                      window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
             y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
@@ -139,6 +141,7 @@ class Net(nn.Module):
             y_align_opt_attn = y_align_opt * attn
             x_ele = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
 
+            # feature inference with selected feature
             if self.selftrain:
                 x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask,
                                                                       decoder=self.decoder_self)

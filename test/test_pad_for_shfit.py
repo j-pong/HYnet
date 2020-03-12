@@ -9,12 +9,12 @@ from moneynet.nets.utils import pad_for_shift, reverse_pad_for_shift, select_wit
 
 def main():
     # case 0 select_with_ind check
-    theta = torch.ones((2, 30)).long() * 10
+    theta = torch.ones((2, 30)).long() *10
     # theta = torch.arange(30).view(1, 30).repeat((2, 1))
     x = torch.rand(2 * 30 * 80).view(2, 30, 80)
     plt.subplot(1, 2, 1)
     plt.imshow(x[0].numpy())
-    x_hat = torch.stack([select_with_ind(x, theta + i) for i in torch.arange(40)], dim=-1)
+    x_hat = torch.stack([select_with_ind(x, 80 - 1 - theta - i) for i in torch.arange(40).flip(0)], dim=-1)
     plt.subplot(1, 2, 2)
     plt.imshow(x_hat[0].numpy())
     plt.show()
@@ -45,8 +45,6 @@ def main():
     # plt.subplot(1, 3, 3)
     # plt.imshow(x_hat[0].numpy())
     # plt.show()
-
-
 
     # # case 2
     # # make random data
