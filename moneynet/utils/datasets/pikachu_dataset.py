@@ -19,20 +19,27 @@ def pad_list(xs, pad_value):
     return pad
 
 
+# ToDo: Large eval batchsize case is not cover yet!
 class Pikachu(torch.utils.data.Dataset):
-    def __init__(self, args, transform=None, ram_memory=True):
-        # load and set the ram mode
-        self.filelist = load_file_list(args.indir)
-        self.ram_memory = ram_memory
+    def __init__(self, args, train, transform=None, ram_memory=True):
+        filelist = load_file_list(args.indir)
+        train_filelist = filelist[:90]
+        eval_filelist = filelist[-7:]
 
-        # task related
+        if train:
+            self.filelist = train_filelist
+            self.batch_size = args.batch_size
+        else:
+            self.filelist = eval_filelist
+            self.batch_size = args.eval_batch_size
+        self.train = train
         self.num_samples = len(self.filelist)
         self.ngpu = args.ngpu
         self.transform = transform
-        self.batch_size = args.batch_size
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
         self.datamper = args.datamper
+        self.ram_memory = ram_memory
 
         # ram_memory is waring to small ram case
         if ram_memory:
@@ -43,8 +50,11 @@ class Pikachu(torch.utils.data.Dataset):
                 self.buffer[idx] = feat  # numpy array attach to key that sample number
 
     def _batch_with_padding(self, idx):
-        # sampling indexs that independent to dataloader (pytorch) idx
-        index_queue = np.random.randint(0, self.num_samples, size=self.batch_size)
+        if self.train:
+            # sampling indexs that independent to dataloader (pytorch) idx
+            index_queue = np.random.randint(0, self.num_samples, size=self.batch_size)
+        else:
+            index_queue = np.arange(self.num_samples)
         # batch sampling
         batch_in_feat = []
         batch_out_feat = []
@@ -61,7 +71,10 @@ class Pikachu(torch.utils.data.Dataset):
         return pad_list(batch_in_feat, self.ignore_in), pad_list(batch_out_feat, self.ignore_out), batch_fname
 
     def __len__(self):
-        return int(self.num_samples / self.batch_size) * self.ngpu * self.datamper
+        if self.train:
+            return int(self.num_samples / self.batch_size) * self.ngpu * self.datamper
+        else:
+            return 1
 
     def __dims__(self):
         sample = self.__getitem__(0)

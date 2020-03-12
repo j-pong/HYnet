@@ -51,13 +51,19 @@ class Reporter(object):
         fig.savefig(os.path.join(sav_dir, filename))
         plt.close()
 
-    def report_plot_buffer(self, keys, epoch):
+    def report_plot_buffer(self, keys, epoch, tag=None):
         for key in keys:
             scalar = self.report_dict[key]
             try:
-                self.report_buffer[key].append(scalar)
+                if tag is not None:
+                    self.report_buffer[key + tag].append(scalar)
+                else:
+                    self.report_buffer[key].append(scalar)
             except:
-                self.report_buffer[key] = [scalar]
+                if tag is not None:
+                    self.report_buffer[key + tag] = [scalar]
+                else:
+                    self.report_buffer[key].append(scalar)
 
         for key in keys:
             fig = plt.figure()
@@ -67,13 +73,42 @@ class Reporter(object):
             ax.plot(self.report_buffer[key])
             ax.grid()
 
-            filename = '{}.png'.format(key)
+            if tag is None:
+                filename = '{}.png'.format(key)
+            else:
+                filename = '{}_{}.png'.format(key, tag)
             fig.savefig(os.path.join(self.outdir, filename))
             plt.close()
 
     def add_report_attribute(self, attribute):
         for key in attribute.keys():
             self.report_dict[key] = attribute[key]
+
+
+class Evaluator(object):
+    def __init__(self, args, test_loader, device, model, reporter):
+        self.test_loader = test_loader
+        self.model = model
+        self.device = device
+        self.reporter = reporter
+        if args.ngpu is not None:
+            self.ngpu = args.ngpu
+        elif device.type == "cpu":
+            self.ngpu = 0
+        else:
+            self.ngpu = 1
+
+    def evaluate_core(self):
+        self.model.eval()
+        with torch.no_grad():
+            for samples in self.test_loader:
+                self.reporter.report_dict['fname'] = samples['fname'][0]
+                x = (samples['input'][0].to(self.device), samples['target'][0].to(self.device))
+                if self.ngpu == 0:
+                    self.model(*x)
+                else:
+                    data_parallel(self.model, x, range(self.ngpu))
+        self.model.train()
 
 
 class Updater(object):
@@ -92,7 +127,6 @@ class Updater(object):
 
     def train_core(self):
         for samples in self.train_loader:
-            self.reporter.report_dict['fname'] = samples['fname'][0]
             x = (samples['input'][0].to(self.device), samples['target'][0].to(self.device))
             loss = data_parallel(self.model, x, range(self.ngpu)).mean() / self.accum_grad
             loss.backward()
@@ -123,10 +157,11 @@ def train(args):
         logging.warning('cuda is not available')
 
     # get dataset
-    dataset = Pikachu(args=args)
+    train_dataset = Pikachu(args=args, train=True)
+    eval_dataset = Pikachu(args=args, train=False)
 
     # reverse input and output dimension
-    idim, odim = map(int, dataset.__dims__())
+    idim, odim = map(int, train_dataset.__dims__())
     logging.info('#input dims : ' + str(idim))
     logging.info('#output dims: ' + str(odim))
 
@@ -166,9 +201,12 @@ def train(args):
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=args.ncpu,
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=args.ncpu,
                                                pin_memory=args.pin_memory)
+    test_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=1, shuffle=False, num_workers=args.ncpu,
+                                              pin_memory=args.pin_memory)
     updater = Updater(args, train_loader, optimizer, device, model, reporter)
+    evaluator = Evaluator(args, test_loader, device, model, reporter)
 
     if args.resume:
         logging.info('resumed from %s' % args.resume)
@@ -176,19 +214,20 @@ def train(args):
 
     # Training dataset
     model.train()
-
     for epoch in tqdm(range(args.epochs)):
         updater.train_core()
-        sample_name = reporter.report_dict['fname'][0].split()[-1]
         if (epoch + 1) % args.high_interval_epochs == 0:
+            evaluator.evaluate_core()
+            sample_name = reporter.report_dict['fname'][0].split()[-1]
             filename = 'epoch{}_{}_sim.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['theta_opt', 'sim_opt'], filename=filename)
             filename = 'epoch{}_{}_attn.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
             filename = 'epoch{}_{}.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['target', 'pred_y', 'pred_x', 'res_x'], filename=filename)
+            reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1, tag='eval')
         if (epoch + 1) % args.low_interval_epochs == 0:
-            reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1)
+            reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
         if (epoch + 1) % args.save_interval_epochs == 0:
             filename = 'epoch{}.ckpt'.format(epoch + 1)
             torch.save(model.state_dict(), os.path.join(args.outdir, filename))

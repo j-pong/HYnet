@@ -21,6 +21,5 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     echo "stage 1: Network Training"
     python moneynet/bin/unsup_train.py --ngpu 4 --batch-size 97 --accum-grad 1 \
                                        --ncpu 28 --datamper 1 --self-train 1 --encoder-type conv1d --pin-memory 0 \
-                                       --indir dump --outdir exp/train97_conv1d_reversedecoder \
-                                       --save-interval-epochs 100
+                                       --indir dump --outdir exp/train97_conv1d_reversedecoder
 fi

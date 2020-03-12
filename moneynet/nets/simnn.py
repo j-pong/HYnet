@@ -115,6 +115,14 @@ class Net(nn.Module):
 
         return x, mask_prev, loss_h
 
+    def energy_loss(self, x, y, theta_opt, feat_dim, seq_mask):
+        move_energy = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) + 1.0
+        move_mask = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) > self.energy_th
+        loss_local = self.criterion(x.view(-1, feat_dim),
+                                    y.view(-1, feat_dim),
+                                    mask=seq_mask.view(-1, feat_dim), reduce=None)
+        return loss_local.masked_fill(move_mask, 0.0) / move_energy
+
     def forward(self, x, y):
         # 0. prepare data
         if np.isnan(self.ignore_out):
@@ -141,17 +149,12 @@ class Net(nn.Module):
             y_align_opt_attn = y_align_opt * attn
             x_ele = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
 
-            # feature inference with selected feature
             if self.selftrain:
+                # 1.1 self disentangle
                 x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask,
                                                                       decoder=self.decoder_self)
                 # 1.2 self loss
-                move_energy = torch.abs(theta_opt - self.idim + 1).view(-1, 1) + 1.0
-                move_mask = torch.abs(theta_opt - self.idim + 1).view(-1, 1) > self.energy_th
-                loss_local_self = self.criterion(x_ele.view(-1, self.idim),
-                                                 x_res.view(-1, self.idim),
-                                                 mask=seq_mask.view(-1, self.idim), reduce=None)
-                loss_local_self = loss_local_self.masked_fill(move_mask, 0.0) / move_energy
+                loss_local_self = self.energy_loss(x_ele, x_res, theta_opt, self.idim, seq_mask)
                 # 1.3 hand shake to output of model to source network
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
                                          window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
@@ -161,15 +164,8 @@ class Net(nn.Module):
             # 2. feedforward for src estimation
             y_ele, mask_prev_src, loss_h_src = self.disentangle(y_align_opt_attn, mask_prev_src, seq_mask,
                                                                 decoder=self.decoder)
-
-            # 3. compute src estimation loss
-            move_energy = torch.abs(theta_opt - self.odim + 1).view(-1, 1) + 1.0
-            move_mask = torch.abs(theta_opt - self.odim + 1).view(-1, 1) > self.energy_th
-            loss_local_src = self.criterion(y_ele.view(-1, self.odim),
-                                            y_res.view(-1, self.odim),
-                                            mask=seq_mask.view(-1, self.odim), reduce=None)
-            loss_local_src = loss_local_src.masked_fill(move_mask, 0.0) / move_energy
-
+            # 3. src loss
+            loss_local_src = self.energy_loss(y_ele, y_res, theta_opt, self.odim, seq_mask)
             # 4. aggregate all loss
             if self.selftrain:
                 if loss_h_src is not None:
@@ -187,46 +183,54 @@ class Net(nn.Module):
             x_res = (x_res - x_ele).detach()
 
             # buffering
-            buffs['theta_opt'].append(theta_opt[0])
-            buffs['sim_opt'].append(sim_opt[0])
-            buffs['attn'].append(attn[0])
-            buffs['x_dis'].append(x_ele)
-            buffs['y_dis'].append(y_ele)
+            if not self.training:
+                buffs['theta_opt'].append(theta_opt[0])
+                buffs['sim_opt'].append(sim_opt[0])
+                buffs['attn'].append(attn[0])
+                buffs['x_dis'].append(x_ele)
+                buffs['y_dis'].append(y_ele)
             buffs['loss'].append(loss)
 
         # 5. total loss compute
         loss = torch.stack(buffs['loss'], dim=-1).mean()
         self.reporter.report_dict['loss'] = float(loss)
 
-        # appendix. for reporting some value or tensor
-        # batch side sum needs for check
-        x_dis = torch.stack(buffs['x_dis'], dim=-1)
-        y_dis = torch.stack(buffs['y_dis'], dim=-1)
-        loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim),
-                                x.view(-1, self.idim),
-                                mask=seq_mask.view(-1, self.odim))
-        loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim),
-                                y.view(-1, self.idim),
-                                mask=seq_mask.view(-1, self.odim))
-        self.reporter.report_dict['loss_x'] = float(loss_x)
-        self.reporter.report_dict['loss_y'] = float(loss_y)
-        self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
-        self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
-        self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
-        self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
+        if not self.training:
+            # appendix. for reporting some value or tensor
+            # batch side sum needs for check
+            x_dis = torch.stack(buffs['x_dis'], dim=-1)
+            y_dis = torch.stack(buffs['y_dis'], dim=-1)
+            loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim),
+                                    x.view(-1, self.idim),
+                                    mask=seq_mask.view(-1, self.odim))
+            loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim),
+                                    y.view(-1, self.idim),
+                                    mask=seq_mask.view(-1, self.odim))
+            self.reporter.report_dict['loss_x'] = float(loss_x)
+            self.reporter.report_dict['loss_y'] = float(loss_y)
+            self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
+            self.reporter.report_dict['pred_x'] = x_dis.sum(-1)[0].detach().cpu().numpy()
+            self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
+            self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
 
-        # just one sample at batch should be check
-        theta_opt = torch.stack(buffs['theta_opt'], dim=-1)
-        sim_opt = torch.stack(buffs['sim_opt'], dim=-1)
-        self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
-        self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
+            # just one sample at batch should be check
+            theta_opt = torch.stack(buffs['theta_opt'], dim=-1)
+            sim_opt = torch.stack(buffs['sim_opt'], dim=-1)
+            self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
+            self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
 
-        # disentangled hidden space check by attention disentangling
-        attns = torch.stack(buffs['attn'], dim=-1)
-        self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
-        self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
-        self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
-        self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
-        self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
+            # # disentangled hidden space check by attention disentangling
+            # attns = torch.stack(buffs['attn'], dim=-1)
+            # self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
+            # self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
+            # self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
+            # self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
+            # self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
+
+            self.reporter.report_dict['attn0'] = x_dis[0, :, :, 0].detach().cpu().numpy()
+            self.reporter.report_dict['attn1'] = x_dis[0, :, :, 1].detach().cpu().numpy()
+            self.reporter.report_dict['attn2'] = x_dis[0, :, :, 2].detach().cpu().numpy()
+            self.reporter.report_dict['attn3'] = x_dis[0, :, :, 3].detach().cpu().numpy()
+            self.reporter.report_dict['attn4'] = x_dis[0, :, :, 4].detach().cpu().numpy()
 
         return loss

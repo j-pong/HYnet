@@ -1,4 +1,5 @@
-python moneynet/bin/unsup_train.py --batch-size 24 --accum-grad 4 --datamper 1 `
+python moneynet/bin/unsup_train.py --batch-size 22 --accum-grad 4 --datamper 1 `
                                    --ngpu 1 --ncpu 6 --pin-memory 0 `
                                    --self-train 0 --encoder-type conv1d `
-                                   --indir dump --outdir exp/train97_srconly_conv1d_reversedecoder
+                                   --indir dump --outdir exp/train97_srconly_conv1d_reversedecoder_test `
+                                   --high-interval-epochs 5 --low-interval-epochs 2

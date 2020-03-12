@@ -98,34 +98,31 @@ def reverse_pad_for_shift(key, pad, theta, window=None):
     return key_pad_trunk.view(key.size(0), key.size(1), -1)
 
 
-def score(key_pad_trunk, query, query_mask=None, measurement='cos'):
+def selector(x, y, measurement='cos'):
     """Measuring similarity of each other tensor
 
-    :param torch.Tensor key_pad_trunk: batch of padded source sequences (B, Tmax, * , idim_k)
-    :param torch.Tensor query: batch of padded target sequences (B, Tmax, idim_q)
-    :param torch.Tensor query_mask: batch of padded source sequences (B, Tmax, * , idim_k)
-    :param string measurement:
+        :param torch.Tensor x: batch of padded source sequences (B, Tmax, * , c1)
+        :param torch.Tensor y: batch of padded target sequences (B, Tmax, c2)
+        :param string measurement:
 
-    :return: max similarity value of sequence (B, Tmax)
-    :rtype: torch.Tensor
-    :return: max similarity index of sequence  (B, Tmax)
-    :rtype: torch.Tensor
-    """
-    query = query.unsqueeze(-2)
-    if query_mask is not None:
-        query = query * query_mask
+        :return: max similarity of x (B, Tmax, c1)
+        :rtype: torch.Tensor
+        :return: max similarity value of sequence (B, Tmax)
+        :rtype: torch.Tensor
+        :return: max similarity index of sequence  (B, Tmax)
+        :rtype: torch.Tensor
+        """
+    y = y.unsqueeze(-2)
     if measurement == 'cos':
-        denom = (torch.norm(query, dim=-1) * torch.norm(key_pad_trunk, dim=-1) + 1e-6)
-        sim = torch.sum(query * key_pad_trunk, dim=-1) / denom  # (B, Tmax, *)
-        # nan filtering
-        mask = torch.isnan(sim)
-        sim[mask] = 0.0
-        # optimal similarity point search
+        denom = (torch.norm(y, dim=-1) * torch.norm(x, dim=-1) + 1e-6)
+        sim = torch.sum(y * x, dim=-1) / denom  # (B, Tmax, *)
+        sim[torch.isnan(sim)] = 0.0
         sim_max, sim_max_idx = torch.max(sim, dim=-1)  # (B, Tmax)
     else:
         raise AttributeError('{} is not support yet'.format(measurement))
-
-    return sim_max, sim_max_idx
+    # maximum shift select
+    x = select_with_ind(x, sim_max_idx)
+    return x, sim_max, sim_max_idx
 
 
 def temp_softmax(x, T=10.0, dim=-1):
@@ -134,12 +131,3 @@ def temp_softmax(x, T=10.0, dim=-1):
     exp_x = torch.exp(x - max_x)
     x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
     return x
-
-
-def selector(x, y, measurement='cos'):
-    # similarity measuring
-    sim_max, sim_max_idx = score(key_pad_trunk=x, query=y, query_mask=None,
-                                 measurement=measurement)  # (B, Tmax)
-    # maximum shift select
-    x = select_with_ind(x, sim_max_idx)
-    return x, sim_max, sim_max_idx
