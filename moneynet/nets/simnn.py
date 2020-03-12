@@ -96,18 +96,18 @@ class Net(nn.Module):
         if self.encoder_type == 'conv1d':
             x, _ = pad_for_shift(key=x, pad=self.input_extra,
                                  window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
-            h = self.encoder(x)
+            h = self.encoder(x)  # (B, Tmax, *, hdim)
+            # max pooling along shift size
             h_ind = torch.max(h.pow(2).sum(-1), dim=-1)[1]  # (B, Tmax)
-            h = select_with_ind(h, h_ind)
+            h = select_with_ind(h, h_ind)  # (B, Tmax, hdim)
+            # hidden space regularization
             h, mask_prev, loss_h = self.hsr(h, mask_prev, seq_mask=seq_mask)
-
-            b_size = x.size(0)
-            t_size = x.size(1)
-            x_ext = decoder(h).view(b_size * t_size, -1)
-            x = torch.stack([x_ext[torch.arange(x_ext.size(0)), h_ind.view(-1) + i] for i in six.moves.range(self.idim)],
-                            dim=-1).view(b_size, t_size, -1)
+            # target trunk along feature side with window
+            assert self.idim == self.odim
+            x_ext = decoder(h)
+            x = torch.stack([select_with_ind(x_ext, h_ind + i) for i in torch.arange(self.idim)], dim=-1)
         elif self.encoder_type == 'linear':
-            h = self.encoder(x)  # (B * T, *, hdim)
+            h = self.encoder(x)
             h, mask_prev, loss_h = self.hsr(h, mask_prev, seq_mask=seq_mask)
             x = decoder(h)
 
@@ -142,19 +142,18 @@ class Net(nn.Module):
             if self.selftrain:
                 x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask,
                                                                       decoder=self.decoder_self)
-                # 1.2
+                # 1.2 self loss
                 move_energy = torch.abs(theta_opt - self.idim + 1).view(-1, 1) + 1.0
                 move_mask = torch.abs(theta_opt - self.idim + 1).view(-1, 1) > self.energy_th
                 loss_local_self = self.criterion(x_ele.view(-1, self.idim),
                                                  x_res.view(-1, self.idim),
                                                  mask=seq_mask.view(-1, self.idim), reduce=None)
                 loss_local_self = loss_local_self.masked_fill(move_mask, 0.0) / move_energy
-                # 1.3
+                # 1.3 hand shake to output of model to source network
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
                                          window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
-                # attn = attention(y_align_opt, y_res, temper=self.temper)
-                y_align_opt_attn = y_align_opt  # * attn
+                y_align_opt_attn = y_align_opt
 
             # 2. feedforward for src estimation
             y_ele, mask_prev_src, loss_h_src = self.disentangle(y_align_opt_attn, mask_prev_src, seq_mask,
