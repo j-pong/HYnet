@@ -43,7 +43,7 @@ def get_parser():
                         help='')
     parser.add_argument('--low-interval-epochs', default=10, type=int,
                         help="Evaluation interval epochs")
-    parser.add_argument('--high-interval-epochs', default=100, type=int,
+    parser.add_argument('--high-interval-epochs', default=200, type=int,
                         help="Evaluation interval epochs")
     parser.add_argument('--save-interval-epochs', default=1000, type=int,
                         help="Save interval epochs")
@@ -66,8 +66,6 @@ def get_parser():
     parser.add_argument('--weight-decay', default=0.0, type=float,
                         help='Weight decay coefficient for optimizer')
     parser.add_argument('--epochs', '-e', default=3000, type=int,
-                        help='Number of maximum epochs')
-    parser.add_argument('--pretrain_epochs', default=300, type=int,
                         help='Number of maximum epochs')
     parser.add_argument('--grad-clip', default=5, type=float,
                         help='Gradient norm threshold to clip')

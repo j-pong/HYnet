@@ -54,29 +54,28 @@ class Reporter(object):
     def report_plot_buffer(self, keys, epoch, tag=None):
         for key in keys:
             scalar = self.report_dict[key]
-            try:
-                if tag is not None:
+            if tag is not None:
+                try:
                     self.report_buffer[key + tag].append(scalar)
-                else:
-                    self.report_buffer[key].append(scalar)
-            except:
-                if tag is not None:
+                except:
                     self.report_buffer[key + tag] = [scalar]
-                else:
+            else:
+                try:
                     self.report_buffer[key].append(scalar)
+                except:
+                    self.report_buffer[key] = [scalar]
 
         for key in keys:
             fig = plt.figure()
             ax = fig.add_subplot(1, 1, 1)
             self.set_style(ax)
             fig.suptitle('epoch : {}'.format(epoch))
+            if tag is not None:
+                key = key + tag
             ax.plot(self.report_buffer[key])
             ax.grid()
 
-            if tag is None:
-                filename = '{}.png'.format(key)
-            else:
-                filename = '{}_{}.png'.format(key, tag)
+            filename = '{}.png'.format(key)
             fig.savefig(os.path.join(self.outdir, filename))
             plt.close()
 
