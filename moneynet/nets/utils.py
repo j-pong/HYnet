@@ -85,6 +85,8 @@ def reverse_pad_for_shift(key, pad, theta, window=None):
     :rtype: torch.Tensor
     """
     idim_k = key.size(-1)
+    # ToDo: other case of pad and window is not concerned at current reverse algorithm.
+    assert pad == idim_k - 1 and window == idim_k
     key_pad = F.pad(key, pad=(pad, pad))  # (B, Tmax, idim_k + pad * 2)
     key_pad_trunk = []
     for i in six.moves.range(idim_k + 2 * pad - window + 1):
