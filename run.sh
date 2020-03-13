@@ -5,6 +5,7 @@
 
 stage=0
 stop_stage=100
+tag=
 
 . utils/parse_options.sh || exit 1;
 
@@ -12,7 +13,7 @@ set -e
 set -u
 set -o pipefail
 
-expdir=exp/train97_linear_retest
+expdir=exp/train97_$(tag)
 mkdir -p ${expdir}
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     echo "stage 0: Feature Generation"
@@ -22,6 +23,6 @@ fi
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     echo "stage 1: Network Training"
     python moneynet/bin/unsup_train.py --ngpu 4 --batch-size 90 --accum-grad 1 \
-                                       --ncpu 28 --datamper 1 --self-train 1 --encoder-type linear --pin-memory 0 \
+                                       --ncpu 28 --datamper 1 --self-train 1 --encoder-type conv1d --pin-memory 0 \
                                        --indir dump --outdir ${expdir}
 fi
