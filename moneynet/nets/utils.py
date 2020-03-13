@@ -101,11 +101,11 @@ def reverse_pad_for_shift(key, pad, theta, window=None):
 def selector(x, y, measurement='cos'):
     """Measuring similarity of each other tensor
 
-        :param torch.Tensor x: batch of padded source sequences (B, Tmax, * , c1)
-        :param torch.Tensor y: batch of padded target sequences (B, Tmax, c2)
+        :param torch.Tensor x: batch of padded source sequences (B, Tmax, * , c)
+        :param torch.Tensor y: batch of padded target sequences (B, Tmax, c)
         :param string measurement:
 
-        :return: max similarity of x (B, Tmax, c1)
+        :return: max similarity of x (B, Tmax, c)
         :rtype: torch.Tensor
         :return: max similarity value of sequence (B, Tmax)
         :rtype: torch.Tensor

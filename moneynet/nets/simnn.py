@@ -115,7 +115,7 @@ class Net(nn.Module):
 
         return x, mask_prev, loss_h
 
-    def energy_loss(self, x, y, theta_opt, feat_dim, seq_mask):
+    def energy_loss(self, x, y, feat_dim, seq_mask, theta_opt):
         move_energy = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) + 1.0
         move_mask = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) > self.energy_th
         loss_local = self.criterion(x.view(-1, feat_dim),
@@ -130,12 +130,10 @@ class Net(nn.Module):
             y = y.masked_fill(seq_mask, self.ignore_in)
         else:
             seq_mask = y == self.ignore_out
-
         buffs = {'y_dis': [], 'x_dis': [],
                  'theta_opt': [], 'sim_opt': [],
                  'loss': [], 'attn': [], 'hs': []}
 
-        # iterative method for subtraction
         y_res = y.clone()
         x_res = x.clone()
         mask_prev_src = None
@@ -154,18 +152,17 @@ class Net(nn.Module):
                 x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask,
                                                                       decoder=self.decoder_self)
                 # 1.2 self loss
-                loss_local_self = self.energy_loss(x_ele, x_res, theta_opt, self.idim, seq_mask)
+                loss_local_self = self.energy_loss(x_ele, x_res, self.idim, seq_mask, theta_opt)
                 # 1.3 hand shake to output of model to source network
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
                                          window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
                 y_align_opt_attn = y_align_opt
-
             # 2. feedforward for src estimation
             y_ele, mask_prev_src, loss_h_src = self.disentangle(y_align_opt_attn, mask_prev_src, seq_mask,
                                                                 decoder=self.decoder)
             # 3. src loss
-            loss_local_src = self.energy_loss(y_ele, y_res, theta_opt, self.odim, seq_mask)
+            loss_local_src = self.energy_loss(y_ele, y_res, self.odim, seq_mask, theta_opt)
             # 4. aggregate all loss
             if self.selftrain:
                 if loss_h_src is not None:
