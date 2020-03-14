@@ -38,7 +38,7 @@ class Disentangling(nn.Module):
             self.decoder_self = nn.Linear(self.hdim, idim)
 
         # network training related
-        self.criterion = SeqLoss(criterion=nn.MSELoss(reduction='none'))
+        self.criterion = SeqLoss()
 
         # initialize parameter
         self.reset_parameters()
@@ -79,7 +79,7 @@ class Disentangling(nn.Module):
             loss_h = self.criterion(h_.view(-1, self.hdim),
                                     (1.0 - mask_intersection).view(-1, self.hdim),
                                     mask=seq_mask.view(-1, self.hdim),
-                                    reduction=None)
+                                    reduction='none')
             loss_h = loss_h.masked_fill(~(mask_intersection.view(-1, self.hdim).bool()), 0.0).sum()
             # eliminate fired hidden nodes
             h[mask_prev.bool()] = 0.0
@@ -87,6 +87,7 @@ class Disentangling(nn.Module):
             mask_prev = mask_prev + mask_cur
 
         h = h.masked_fill(~(mask_cur.bool()), 0.0)
+
         return h, mask_prev, loss_h
 
     def forward(self, x, mask_prev, seq_mask, theta, decoder='self'):
