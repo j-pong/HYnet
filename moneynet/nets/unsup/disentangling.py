@@ -76,11 +76,12 @@ class Disentangling(nn.Module):
             # loss define
             h_ = h.clone()
             h_.retain_grad()
+            target_mask = (1.0 - mask_intersection)
             loss_h = self.criterion(h_.view(-1, self.hdim),
-                                    (1.0 - mask_intersection).view(-1, self.hdim),
-                                    mask=seq_mask.view(-1, self.hdim),
+                                    target_mask.view(-1, self.hdim),
+                                    seq_mask.view(-1, self.hdim),
                                     reduction='none')
-            loss_h = loss_h.masked_fill(~(mask_intersection.view(-1, self.hdim).bool()), 0.0).sum()
+            loss_h = loss_h.masked_fill(target_mask.view(-1, self.hdim).bool(), 0.0).sum()
             # eliminate fired hidden nodes
             h[mask_prev.bool()] = 0.0
             mask_cur = self.relay(h, theta)

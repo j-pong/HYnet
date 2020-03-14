@@ -91,7 +91,7 @@ class Net(nn.Module):
                                                         seq_mask.view(-1, self.odim),
                                                         self.idim, theta_opt, self.energy_th)
 
-                # source 1.action
+                # source 1.action with inference feature that concern relation of pixel of frame
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
                                          window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
 
@@ -146,10 +146,10 @@ class Net(nn.Module):
             y_dis = torch.stack(buffs['y_dis'], dim=-1)
             loss_x = self.criterion(x_dis.sum(-1).view(-1, self.idim),
                                     x.view(-1, self.idim),
-                                    mask=seq_mask.view(-1, self.odim))
+                                    seq_mask.view(-1, self.odim))
             loss_y = self.criterion(y_dis.sum(-1).view(-1, self.idim),
                                     y.view(-1, self.idim),
-                                    mask=seq_mask.view(-1, self.odim))
+                                    seq_mask.view(-1, self.odim))
             self.reporter.report_dict['loss_x'] = float(loss_x)
             self.reporter.report_dict['loss_y'] = float(loss_y)
             self.reporter.report_dict['pred_y'] = y_dis.sum(-1)[0].detach().cpu().numpy()
