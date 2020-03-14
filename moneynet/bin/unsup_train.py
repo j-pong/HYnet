@@ -92,7 +92,7 @@ def get_parser():
                         help='')
     parser.add_argument('--encoder-type', default='linear', type=str,
                         choices=['linear', 'conv1d'], help='')
-    parser.add_argument('--energy-threshold', default=10, type=float,
+    parser.add_argument('--energy-threshold', default=4, type=float,
                         help='')
 
     return parser
