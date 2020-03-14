@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import torch
 
-from moneynet.nets.utils import temp_softmax
+from moneynet.nets.unsup.utils import temp_softmax
 
 
 def attention(x, y, temper, ):
