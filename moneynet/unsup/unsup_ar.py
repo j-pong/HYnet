@@ -90,12 +90,14 @@ class Evaluator(object):
         self.model = model
         self.device = device
         self.reporter = reporter
-        if args.ngpu is not None:
-            self.ngpu = args.ngpu
-        elif device.type == "cpu":
-            self.ngpu = 0
-        else:
-            self.ngpu = 1
+        # ToDo: reporter multi gpu not support
+        # if args.ngpu is not None:
+        #     self.ngpu = args.ngpu
+        # elif device.type == "cpu":
+        #     self.ngpu = 0
+        # else:
+        #     self.ngpu = 1
+        self.ngpu = 1
 
     def evaluate_core(self):
         self.model.eval()

@@ -27,27 +27,48 @@ def relay(theta, h, idim, cdim, hdim, energy_th):
                for m, ind in zip(move_mask, indices)]  # list (B,) with (T_b, cdim)
 
     indices = [indices[i][ind, :] for i, ind in enumerate(cum_move_indices)]
-    indices = torch.stack(indices, dim=0) # (B, T, cdim)
+    indices = torch.stack(indices, dim=0)  # (B, T, cdim)
     mask = F.one_hot(indices, num_classes=hdim).float().sum(-2)  # (B, T, hdim)
 
-    return mask, move_mask
+    return mask
 
 
 def main():
     # make random data
     h = torch.rand(2 * 30 * 66).view(2, 30, 66)
-    plt.subplot(2, 2, 1)
-    plt.imshow(h[0].numpy())
 
     # make virtual theta
     theta = torch.arange(60).view(2, 30)
-    mask, move_mask = relay(theta, h, 40, 4, 66, 35)
+    # mask, move_mask = relay(theta, h, 40, 4, 66, 35)
 
-    plt.subplot(2, 2, 2)
-    plt.imshow(mask[0].numpy())
-    plt.subplot(2, 1, 2)
-    plt.imshow(move_mask.float().numpy())
-    plt.show()
+    mask_prev = None
+    for i in range(2):
+        if mask_prev is None:
+            mask_cur = relay(theta, h, 40, 33, 66, 20)
+            mask_prev = mask_cur
+        else:
+            assert mask_prev is not None
+            # intersection of prev and current hidden space
+            mask_cur = relay(theta, h, 40, 33, 66, 20)
+            mask_intersection = mask_prev * mask_cur
+            # eliminate fired hidden nodes
+            h[mask_prev.bool()] = 0.0
+            mask_cur = relay(theta, h, 40, 33, 66, 20)
+            mask_prev = mask_prev + mask_cur
+        # h = h.masked_fill(~(mask_cur.bool()), 0.0)
+
+        plt.subplot(2, 2, 1)
+        plt.imshow(h[0].numpy())
+        plt.subplot(2, 2, 2)
+        plt.imshow(mask_prev[0].numpy())
+        plt.subplot(2, 2, 3)
+        plt.imshow(mask_cur[0].numpy())
+        try:
+            plt.subplot(2, 2, 4)
+            plt.imshow(mask_intersection[0].numpy())
+        except:
+            pass
+        plt.show()
 
 
 if __name__ == '__main__':
