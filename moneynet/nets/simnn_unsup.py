@@ -56,7 +56,7 @@ class Net(nn.Module):
             y = y.masked_fill(seq_mask, self.ignore_in)
         else:
             seq_mask = y == self.ignore_out
-        buffs = {'y_dis': [], 'x_dis': [],
+        buffs = {'y_dis': [], 'x_dis': [], 'x_res': [], 'y_res': [],
                  'theta_opt': [], 'sim_opt': [],
                  'loss': [], 'attn': [], 'hs': []}
 
@@ -77,13 +77,19 @@ class Net(nn.Module):
             attn = attention(y_align_opt, y_res, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
 
+            if not self.training:
+                buffs['theta_opt'].append(theta_opt[0])
+                buffs['sim_opt'].append(sim_opt[0])
+                buffs['attn'].append(attn[0])
+
             # self 4. reverse action
-            x_ele = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
+            x_align_opt_attn = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
 
             if self.selftrain:
                 # self 5 inference
-                x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask, theta=theta_opt,
+                x_ele, mask_prev_self, loss_h_self = self.disentangle(x_align_opt_attn, mask_prev_self, seq_mask, theta=theta_opt,
                                                                       decoder='self')
+                x_ele = x_ele + x_align_opt_attn
 
                 # self 6 loss
                 loss_local_self = self.criterion_energy(x_ele.view(-1, self.idim),
@@ -97,7 +103,9 @@ class Net(nn.Module):
 
                 # source 2. selection of action
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
-                y_align_opt_attn = y_align_opt
+                y_align_opt_attn = y_align_opt + y_align_opt_attn
+            else:
+                x_ele = x_align_opt_attn
 
             # source 3. inference
             y_ele, mask_prev_src, loss_h_src = self.disentangle(y_align_opt_attn, mask_prev_src, seq_mask,
@@ -128,11 +136,13 @@ class Net(nn.Module):
 
             # buffering
             if not self.training:
-                buffs['theta_opt'].append(theta_opt[0])
-                buffs['sim_opt'].append(sim_opt[0])
-                buffs['attn'].append(attn[0])
+                # buffs['theta_opt'].append(theta_opt[0])
+                # buffs['sim_opt'].append(sim_opt[0])
+                # buffs['attn'].append(attn[0])
                 buffs['x_dis'].append(x_ele)
                 buffs['y_dis'].append(y_ele)
+                buffs['x_res'].append(x_res)
+                buffs['y_res'].append(y_res)
             buffs['loss'].append(loss)
 
         # 5. total loss compute
@@ -164,17 +174,29 @@ class Net(nn.Module):
             self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
 
             # # disentangled hidden space check by attention disentangling
-            # attns = torch.stack(buffs['attn'], dim=-1)
-            # self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
-            # self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
-            # self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
-            # self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
-            # self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
+            attns = torch.stack(buffs['attn'], dim=-1)
+            self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
+            self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
+            self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
+            self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
+            self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
 
-            self.reporter.report_dict['attn0'] = x_dis[0, :, :, 0].detach().cpu().numpy()
-            self.reporter.report_dict['attn1'] = x_dis[0, :, :, 1].detach().cpu().numpy()
-            self.reporter.report_dict['attn2'] = x_dis[0, :, :, 2].detach().cpu().numpy()
-            self.reporter.report_dict['attn3'] = x_dis[0, :, :, 3].detach().cpu().numpy()
-            self.reporter.report_dict['attn4'] = x_dis[0, :, :, 4].detach().cpu().numpy()
+            self.reporter.report_dict['x_dis0'] = x_dis[0, :, :, 0].detach().cpu().numpy()
+            self.reporter.report_dict['x_dis1'] = x_dis[0, :, :, 1].detach().cpu().numpy()
+            self.reporter.report_dict['x_dis2'] = x_dis[0, :, :, 2].detach().cpu().numpy()
+            self.reporter.report_dict['x_dis3'] = x_dis[0, :, :, 3].detach().cpu().numpy()
+            self.reporter.report_dict['x_dis4'] = x_dis[0, :, :, 4].detach().cpu().numpy()
+
+            self.reporter.report_dict['x_res0'] = buffs['x_res'][0][0].detach().cpu().numpy()
+            self.reporter.report_dict['x_res1'] = buffs['x_res'][1][0].detach().cpu().numpy()
+            self.reporter.report_dict['x_res2'] = buffs['x_res'][2][0].detach().cpu().numpy()
+            self.reporter.report_dict['x_res3'] = buffs['x_res'][3][0].detach().cpu().numpy()
+            self.reporter.report_dict['x_res4'] = buffs['x_res'][4][0].detach().cpu().numpy()
+
+            # self.reporter.report_dict['y_res'] = buffs['y_res'][0][0].detach().cpu().numpy()
+            # self.reporter.report_dict['y_res'] = buffs['y_res'][1][0].detach().cpu().numpy()
+            # self.reporter.report_dict['y_res'] = buffs['y_res'][2][0].detach().cpu().numpy()
+            # self.reporter.report_dict['y_res'] = buffs['y_res'][3][0].detach().cpu().numpy()
+            # self.reporter.report_dict['y_res'] = buffs['y_res'][4][0].detach().cpu().numpy()
 
         return loss

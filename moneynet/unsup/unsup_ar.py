@@ -224,9 +224,13 @@ def train(args):
             reporter.report_image(keys=['theta_opt', 'sim_opt'], filename=filename)
             filename = 'epoch{}_{}_attn.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['attn0', 'attn1', 'attn2', 'attn3', 'attn4'], filename=filename)
+            filename = 'epoch{}_{}_xdis.png'.format(epoch + 1, sample_name.split('.')[0])
+            reporter.report_image(keys=['x_dis0', 'x_dis1', 'x_dis2', 'x_dis3', 'x_dis4'], filename=filename)
+            filename = 'epoch{}_{}_xres.png'.format(epoch + 1, sample_name.split('.')[0])
+            reporter.report_image(keys=['x_res0', 'x_res1', 'x_res2', 'x_res3', 'x_res4'], filename=filename)
             filename = 'epoch{}_{}.png'.format(epoch + 1, sample_name.split('.')[0])
             reporter.report_image(keys=['target', 'pred_y', 'pred_x', 'res_x'], filename=filename)
-            reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1, tag='eval')
+            reporter.report_plot_buffer(keys=['loss', 'loss_x', 'loss_y'], epoch=epoch + 1, tag='_eval')
         if (epoch + 1) % args.low_interval_epochs == 0:
             reporter.report_plot_buffer(keys=['loss'], epoch=epoch + 1)
         if (epoch + 1) % args.save_interval_epochs == 0:

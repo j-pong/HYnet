@@ -29,7 +29,7 @@ class SeqEnergyLoss(nn.Module):
 
     def forward(self, x, y, seq_mask, feat_dim, theta_opt, energy_th, reduction='mean'):
         move_energy = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) + 1.0
-        move_energy = move_energy.repeat(1,seq_mask.size(-1))
+        move_energy = move_energy.repeat(1, seq_mask.size(-1))
         move_mask = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) > energy_th
         move_mask = move_mask.repeat(1, seq_mask.size(-1))
 
