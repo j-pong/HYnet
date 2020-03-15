@@ -8,7 +8,7 @@ from torch import nn
 
 import numpy as np
 
-from moneynet.nets.unsup.utils import pad_for_shift, reverse_pad_for_shift, selector, select_with_ind
+from moneynet.nets.unsup.utils import pad_for_shift, reverse_pad_for_shift, selector
 from moneynet.nets.unsup.attention import attention
 from moneynet.nets.unsup.initialization import initialize
 from moneynet.nets.unsup.loss import SeqLoss, SeqEnergyLoss
