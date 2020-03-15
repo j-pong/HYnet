@@ -105,7 +105,7 @@ class Net(nn.Module):
 
                 # source 2. selection of action
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
-                y_align_opt_attn = y_align_opt + y_align_opt_attn
+                y_align_opt_attn = y_align_opt
             else:
                 x_ele = x_align_opt_attn
 
