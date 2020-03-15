@@ -83,11 +83,13 @@ class Net(nn.Module):
                 buffs['attn'].append(attn[0])
 
             # self 4. reverse action
-            x_align_opt_attn = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
+            x_align_opt_attn = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim,
+                                                     theta=theta_opt)
 
             if self.selftrain:
                 # self 5 inference
-                x_ele, mask_prev_self, loss_h_self = self.disentangle(x_align_opt_attn, mask_prev_self, seq_mask, theta=theta_opt,
+                x_ele, mask_prev_self, loss_h_self = self.disentangle(x_align_opt_attn, mask_prev_self, seq_mask,
+                                                                      theta=theta_opt,
                                                                       decoder='self')
                 x_ele = x_ele + x_align_opt_attn
 
