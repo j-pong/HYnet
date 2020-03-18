@@ -79,6 +79,7 @@ def reverse_pad_for_shift(key, pad, theta, window=None):
     """Reverse to padded data
 
     :param torch.Tensor key: batch of padded source sequences (B, Tmax, idim_k)
+    :param torch.Tensor query: batch of padded source sequences (B, Tmax, idim_k)
     :param torch.Tensor theta: batch of padded source sequences (B, Tmax)
 
     :return: padded and truncated tensor that matches to query dim (B, Tmax, idim_k)

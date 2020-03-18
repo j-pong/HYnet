@@ -6,20 +6,20 @@ from torch import nn
 
 
 class SeqLoss(nn.Module):
-    def __init__(self, criterion=nn.MSELoss(reduction='none')):
+    def __init__(self, criterion=nn.MSELoss(reduce=None)):
         super(SeqLoss, self).__init__()
         self.criterion = criterion
 
-    def forward(self, x, y, seq_mask, reduction='mean'):
-        denom = (~seq_mask).float().sum()
+    def forward(self, x, y, mask, reduce='mean'):
+        denom = (~mask).float().sum()
         loss = self.criterion(input=x, target=y)
-        loss = loss.masked_fill(seq_mask, 0) / denom
-        if reduction == 'mean':
+        loss = loss.masked_fill(mask, 0) / denom
+        if reduce == 'mean':
             return loss.sum()
-        elif reduction == 'none':
+        elif reduce is None:
             return loss
         else:
-            raise ValueError("{} type reduction is not defined".format(reduction))
+            raise ValueError("{} type reduction is not defined".format(reduce))
 
 
 class SeqEnergyLoss(nn.Module):
@@ -29,9 +29,7 @@ class SeqEnergyLoss(nn.Module):
 
     def forward(self, x, y, seq_mask, feat_dim, theta_opt, energy_th, reduction='mean'):
         move_energy = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) + 1.0
-        move_energy = move_energy.repeat(1, seq_mask.size(-1))
         move_mask = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) > energy_th
-        move_mask = move_mask.repeat(1, seq_mask.size(-1))
 
         denom = (~seq_mask).float().sum()
         loss = self.criterion(input=x, target=y)
