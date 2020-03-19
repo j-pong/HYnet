@@ -120,7 +120,7 @@ class Net(nn.Module):
         move_mask = torch.abs(theta_opt - feat_dim + 1).view(-1, 1) > self.energy_th
         loss_local = self.criterion(x.view(-1, feat_dim),
                                     y.view(-1, feat_dim),
-                                    mask=seq_mask.view(-1, feat_dim), reduce=None)
+                                    seq_mask.view(-1, feat_dim), reduce=None)
         return loss_local.masked_fill(move_mask, 0.0) / move_energy
 
     def forward(self, x, y):

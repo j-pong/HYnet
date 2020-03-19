@@ -100,7 +100,7 @@ def attention(x, y, temper, type=2):
 def cosim(x, y):
     denom = (torch.norm(x, dim=-1) * torch.norm(y, dim=-1) + 1e-6)
     score = torch.sum(y * x, dim=-1) / denom
-    return score.mean()
+    return score
 
 
 def main():
@@ -110,52 +110,68 @@ def main():
     train_dataset = Pikachu(args=args, train=True)
 
     for x in train_dataset:
-        feat = x['input'].to('cuda')
+        # prepare data
         print(x['fname'])
-        x = feat.clone()
-        print(feat.size())
+        x = x['input'].to('cuda').clone()
 
+        # hyperparameter
+        iter = 10
+        consistency_sim_th = 0.99
+        pseudo_zero = 1e-6
+
+        # buffer
         attns = []
         x_res = []
-        iter = 10
-        base = torch.abs(x).sum()
+
+        # base data setting
         base_x = x.clone()
-        flag = False
+        base_denom = torch.abs(base_x).sum(-1)
         for i in range(iter):
+            # initialization loop variable
             j = 0
             while True:
-                attn = attention(x, base_x, temper=0.1)
+                # check how much data is left.
+                pow_res = torch.abs(x).sum(-1) / base_denom  # (B, T)
+                attn = attention(x, base_x, temper=0.1)  # (B, T)
                 if j == 0:
                     att_init = attn
                     attnadd = attn
                 else:
                     attnadd += attn
+
+                # compute residual data
                 x = (x - x * attn)
-                sim = cosim(attn, att_init)
-                if sim < 0.96:
-                    print(sim)
+
+                # check similarity of each data frame
+                mask_trivial = pow_res > pseudo_zero
+                denom = torch.norm(attn, dim=-1) * torch.norm(att_init, dim=-1)
+                sim = torch.sum(attn * att_init, dim=-1) / denom  # (B, T)
+                sim = sim.masked_select(mask_trivial).mean()
+                # print(mask_trivial.float().sum() / (mask_trivial.size(0) * mask_trivial.size(1)))
+                if sim < consistency_sim_th:
                     break
-                pow_res = torch.abs(x).sum() / base
-                if pow_res < 1e-8:
-                    flag = True
+                if pow_res.mean() < pseudo_zero:
                     break
                 j += 1
-            print(i, j)
+
             attns.append(attnadd[0])
             x_res.append(x[0])
-            if flag:
+            print(i, j, float(pow_res.mean()), float(sim))
+            if pow_res.mean() < pseudo_zero:
                 break
 
         iter = len(x_res)
         if iter == 10:
             break
-    for i, x_re in enumerate(x_res):
-        plt.subplot(iter, 2, 2 * (i + 1))
-        plt.imshow(x_re.cpu().numpy().T, aspect='auto')
-    for j, attn in enumerate(attns):
-        plt.subplot(iter, 2, 2 * (j) + 1)
-        plt.imshow(attn.cpu().numpy().T, aspect='auto')
-    plt.show()
+
+        # buffer display for evaluating
+        for i, x_re in enumerate(x_res):
+            plt.subplot(iter, 2, 2 * (i + 1))
+            plt.imshow(x_re.cpu().numpy().T, aspect='auto')
+        for j, attn in enumerate(attns):
+            plt.subplot(iter, 2, 2 * (j) + 1)
+            plt.imshow(attn.cpu().numpy().T, aspect='auto')
+        plt.show()
 
 
 if __name__ == '__main__':
