@@ -12,7 +12,7 @@ set -e
 set -u
 set -o pipefail
 
-expdir=exp/train97_conv1d_split_recover_recover
+expdir=exp/train97_conv1d_split_eth10_recover_recover_recover
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     echo "stage 0: Feature Generation"
     python moneynet/utils/compliance/librosa/make_feats.py --indir dump --outdir ${expdir} --datadir data
@@ -22,7 +22,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     echo "stage 1: Network Training"
     python moneynet/bin/unsup_train.py --ngpu 4 --batch-size 90 --accum-grad 1 \
                                        --ncpu 28 --datamper 1 --pin-memory 0 \
-                                       --self-train 1 --encoder-type conv1d --energy-threshold 10 \
+                                       --self-train 1 --encoder-type conv1d --energy-threshold 10 --relay-bypass 1 \
                                        --indir dump --outdir ${expdir} \
                                        --resume ${resume}
 fi

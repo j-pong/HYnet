@@ -94,6 +94,8 @@ def get_parser():
                         choices=['linear', 'conv1d'], help='')
     parser.add_argument('--energy-threshold', default=10, type=float,
                         help='')
+    parser.add_argument('--relay-bypass', default=0, type=int,
+                        help='')
 
     return parser
 

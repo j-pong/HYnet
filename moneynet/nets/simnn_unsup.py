@@ -134,37 +134,48 @@ class Net(nn.Module):
                  'theta_opt': [], 'sim_opt': [],
                  'loss': [], 'attn': [], 'hs': []}
 
-        # iterative method for subtraction
+        # start iteration for superposition
         y_res = y.clone()
         x_res = x.clone()
         mask_prev_src = None
         mask_prev_self = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
-            # 1. feature selection
+            # self 1. action for self feature (current version just pad action support)
             x_aug, _ = pad_for_shift(key=x_res, pad=self.odim - 1,
                                      window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+
+            # self 2. selection of action
             y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
+
+            # self 3. attention to target feature with selected feature
             attn = attention(y_align_opt, y_res, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
+
+            # self 4. reverse action
             x_ele = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
 
             if self.selftrain:
-                # 1.1 self disentangle
+                # self 5 inference
                 x_ele, mask_prev_self, loss_h_self = self.disentangle(x_ele, mask_prev_self, seq_mask,
                                                                       decoder=self.decoder_self)
-                # 1.2 self loss
+
+                # self 6 loss
                 loss_local_self = self.energy_loss(x_ele, x_res, self.idim, seq_mask, theta_opt)
-                # 1.3 hand shake to output of model to source network
+
+                # source 1.action with inference feature that concern relation of pixel of frame
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
                                          window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
+
+                # source 2. selection of action
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
                 y_align_opt_attn = y_align_opt
             # 2. feedforward for src estimation
             y_ele, mask_prev_src, loss_h_src = self.disentangle(y_align_opt_attn, mask_prev_src, seq_mask,
                                                                 decoder=self.decoder)
-            # 3. src loss
+            # source 3. inference
             loss_local_src = self.energy_loss(y_ele, y_res, self.odim, seq_mask, theta_opt)
-            # 4. aggregate all loss
+
+            # source 4. loss
             if self.selftrain:
                 if loss_h_src is not None:
                     loss = loss_local_src.sum() + loss_local_self.sum() + loss_h_src + loss_h_self
@@ -176,7 +187,7 @@ class Net(nn.Module):
                 else:
                     loss = loss_local_src.sum()
 
-            # 5. compute residual feature
+            # compute residual feature
             y_res = (y_res - y_ele).detach()
             x_res = (x_res - x_ele).detach()
 
