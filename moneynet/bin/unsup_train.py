@@ -96,6 +96,8 @@ def get_parser():
                         help='')
     parser.add_argument('--relay-bypass', default=0, type=int,
                         help='')
+    parser.add_argument('--think-iter', default=32, type=float,
+                        help='')
 
     return parser
 
