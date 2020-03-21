@@ -153,12 +153,13 @@ class Net(nn.Module):
             y_align_opt_attn = y_align_opt * attn
 
             # self 4. reverse action
-            x_ele = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
+            x_align_opt_attn = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
 
             if self.selftrain:
                 # self 5 inference
-                x_ele, hidden_mask_self = self.inference(x_ele, hidden_mask_self,
+                x_ele, hidden_mask_self = self.inference(x_align_opt_attn, hidden_mask_self,
                                                          decoder_type='self')
+                x_ele += x_align_opt_attn
 
                 # self 6 loss
                 loss_local_self = self.criterion(x_ele, x_res, seq_mask)
@@ -170,6 +171,8 @@ class Net(nn.Module):
                 # source 2. selection of action
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
                 y_align_opt_attn = y_align_opt
+            else:
+                x_ele = x_align_opt_attn
             # 2. feedforward for src estimation
             y_ele, hidden_mask_src = self.inference(y_align_opt_attn, hidden_mask_src,
                                                     decoder_type='src')

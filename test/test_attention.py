@@ -8,6 +8,8 @@ from moneynet.utils.datasets.pikachu_dataset import Pikachu
 
 import configargparse
 
+from tqdm import tqdm
+
 
 def get_parser():
     """Get parser of training arguments."""
@@ -87,31 +89,31 @@ def set_style(ax):
     ax.autoscale(enable=True, axis='x', tight=True)
 
 
-def temp_softmax(x, T=10.0, dim=-1):
-    x = x / T
-    max_x = torch.max(x, dim=dim, keepdim=True)[0]
-    exp_x = torch.exp(x - max_x)
-    x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
-    return x
-
-
-def attention(x, y, temper, type=2):
+def attention(x, y, temper, type=2, pseudo_zero=1e-6):
+    energy = torch.pow(x, 2).sum(dim=-1, keepdim=True)
+    mask_trivial = energy < pseudo_zero
     if type == 1:
         denom = torch.norm(x, dim=-1, keepdim=True) * torch.norm(y, dim=-1, keepdim=True)
         score = x * y / denom
-        attn = temp_softmax(score, T=temper, dim=-1)
+        score = score / temper
+        max_x = torch.max(score, dim=-1, keepdim=True)[0]
+        exp_x = torch.exp(score - max_x)
+        attn = exp_x / torch.sum(exp_x, dim=-1, keepdim=True)
     if type == 2:
         score = (x * y) / (x * y).sum(dim=-1, keepdim=True)
-        score = torch.exp(1 / temper * torch.log(score + 1e-6))
+        score = torch.exp(torch.log(score) / temper)
         attn = score / score.sum(dim=-1, keepdim=True)
+    attn = attn.masked_fill(mask_trivial, 0.0)
 
     return attn
 
 
-def cosim(x, y):
-    denom = (torch.norm(x, dim=-1) * torch.norm(y, dim=-1) + 1e-6)
-    score = torch.sum(y * x, dim=-1) / denom
-    return score
+def max_variance(p, dim=-1):
+    mean = torch.max(p, dim=dim, keepdim=True)[0]  # (B, T, 1)
+    # get normalized confidence
+    numer = (mean - p).pow(2)
+    denom = p.size(dim) - 1
+    return torch.sum(numer, dim=-1) / denom
 
 
 def main():
@@ -123,11 +125,11 @@ def main():
     for x in train_dataset:
         # prepare data
         print(x['fname'])
-        x = x['input'].to('cuda').clone()
+        x = x['input'].clone()
 
         # hyperparameter
         iter = 10
-        consistency_sim_th = 0.99
+        consistency_sim_th = 0.80
         pseudo_zero = 1e-10
 
         # buffer
@@ -140,13 +142,14 @@ def main():
         for i in range(iter):
             # initialization loop variable
             j = 0
+            temper = torch.ones(x.size(0)) * 0.1
             while True:
                 # check how much data is left.
                 pow_res = torch.pow(x, 2).sum(-1) / base_denom  # (B, T)
                 mask_nontrivial = pow_res > pseudo_zero
-                mask_trivial = ~(mask_nontrivial)
-                attn = attention(x, base_x, temper=0.3, type=2)  # (B, T)
-                attn = attn.masked_fill(mask_trivial.unsqueeze(-1), 0.0)
+                attn = attention(x, base_x, temper=temper, type=2)  # (B, T)
+                var = max_variance(attn, dim=-1)
+
                 if j == 0:
                     att_init = attn
                     attnadd = attn
@@ -170,6 +173,7 @@ def main():
             attns.append(attnadd[0])
             x_res.append(x[0])
             print(i, j, float(pow_res.mean()), float(sim))
+            print(var)
             if pow_res.mean() < pseudo_zero:
                 break
 
@@ -181,11 +185,11 @@ def main():
         fig = plt.figure()
         for i, x_re in enumerate(x_res):
             ax = fig.add_subplot(iter, 2, 2 * (i + 1))
-            ax.imshow(x_re.cpu().numpy().T, aspect='auto')
+            ax.imshow(x_re.numpy().T, aspect='auto')
             set_style(ax)
         for j, attn in enumerate(attns):
             ax = fig.add_subplot(iter, 2, 2 * j + 1)
-            ax.imshow(attn.cpu().numpy().T, aspect='auto')
+            ax.imshow(attn.numpy().T, aspect='auto')
             set_style(ax)
         # fig.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0)
         plt.show()
