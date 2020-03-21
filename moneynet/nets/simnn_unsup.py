@@ -240,25 +240,25 @@ class Net(nn.Module):
             self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
             self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
 
-            # # disentangled hidden space check by attention disentangling
-            attns = torch.stack(buffs['attn'], dim=-1)
-            self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
-            self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
-            self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
-            self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
-            self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
-
-            self.reporter.report_dict['x_ele0'] = x_hyp[0, :, :, 0].detach().cpu().numpy()
-            self.reporter.report_dict['x_ele1'] = x_hyp[0, :, :, 1].detach().cpu().numpy()
-            self.reporter.report_dict['x_ele2'] = x_hyp[0, :, :, 2].detach().cpu().numpy()
-            self.reporter.report_dict['x_ele3'] = x_hyp[0, :, :, 3].detach().cpu().numpy()
-            self.reporter.report_dict['x_ele4'] = x_hyp[0, :, :, 4].detach().cpu().numpy()
-
-            self.reporter.report_dict['x_res0'] = buffs['x_res'][0][0].detach().cpu().numpy()
-            self.reporter.report_dict['x_res1'] = buffs['x_res'][1][0].detach().cpu().numpy()
-            self.reporter.report_dict['x_res2'] = buffs['x_res'][2][0].detach().cpu().numpy()
-            self.reporter.report_dict['x_res3'] = buffs['x_res'][3][0].detach().cpu().numpy()
-            self.reporter.report_dict['x_res4'] = buffs['x_res'][4][0].detach().cpu().numpy()
+            # disentangled hidden space check by attention disentangling
+            # attns = torch.stack(buffs['attn'], dim=-1)
+            # self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
+            # self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
+            # self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
+            # self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
+            # self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
+            #
+            # self.reporter.report_dict['x_ele0'] = x_hyp[0, :, :, 0].detach().cpu().numpy()
+            # self.reporter.report_dict['x_ele1'] = x_hyp[0, :, :, 1].detach().cpu().numpy()
+            # self.reporter.report_dict['x_ele2'] = x_hyp[0, :, :, 2].detach().cpu().numpy()
+            # self.reporter.report_dict['x_ele3'] = x_hyp[0, :, :, 3].detach().cpu().numpy()
+            # self.reporter.report_dict['x_ele4'] = x_hyp[0, :, :, 4].detach().cpu().numpy()
+            #
+            # self.reporter.report_dict['x_res0'] = buffs['x_res'][0][0].detach().cpu().numpy()
+            # self.reporter.report_dict['x_res1'] = buffs['x_res'][1][0].detach().cpu().numpy()
+            # self.reporter.report_dict['x_res2'] = buffs['x_res'][2][0].detach().cpu().numpy()
+            # self.reporter.report_dict['x_res3'] = buffs['x_res'][3][0].detach().cpu().numpy()
+            # self.reporter.report_dict['x_res4'] = buffs['x_res'][4][0].detach().cpu().numpy()
 
             # self.reporter.report_dict['y_res'] = buffs['y_res'][0][0].detach().cpu().numpy()
             # self.reporter.report_dict['y_res'] = buffs['y_res'][1][0].detach().cpu().numpy()
