@@ -78,6 +78,15 @@ def get_parser():
 from moneynet.nets.unsup.utils import temp_softmax
 
 
+def set_style(ax):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+
+    ax.autoscale(enable=True, axis='x', tight=True)
+
+
 def temp_softmax(x, T=10.0, dim=-1):
     x = x / T
     max_x = torch.max(x, dim=dim, keepdim=True)[0]
@@ -88,12 +97,14 @@ def temp_softmax(x, T=10.0, dim=-1):
 
 def attention(x, y, temper, type=2):
     if type == 1:
-        denom = (torch.norm(x, dim=-1, keepdim=True) * torch.norm(y, dim=-1, keepdim=True) + 1e-6)
+        denom = torch.norm(x, dim=-1, keepdim=True) * torch.norm(y, dim=-1, keepdim=True)
         score = x * y / denom
         attn = temp_softmax(score, T=temper, dim=-1)
     if type == 2:
-        attn = (x * y) / (x * y).sum(dim=-1, keepdim=True)
-    attn[torch.isnan(attn)] = 0.0
+        score = (x * y) / (x * y).sum(dim=-1, keepdim=True)
+        score = torch.exp(1 / temper * torch.log(score + 1e-6))
+        attn = score / score.sum(dim=-1, keepdim=True)
+
     return attn
 
 
@@ -117,7 +128,7 @@ def main():
         # hyperparameter
         iter = 10
         consistency_sim_th = 0.99
-        pseudo_zero = 1e-6
+        pseudo_zero = 1e-10
 
         # buffer
         attns = []
@@ -125,14 +136,17 @@ def main():
 
         # base data setting
         base_x = x.clone()
-        base_denom = torch.abs(base_x).sum(-1)
+        base_denom = torch.pow(base_x, 2).sum(-1)
         for i in range(iter):
             # initialization loop variable
             j = 0
             while True:
                 # check how much data is left.
-                pow_res = torch.abs(x).sum(-1) / base_denom  # (B, T)
-                attn = attention(x, base_x, temper=0.1)  # (B, T)
+                pow_res = torch.pow(x, 2).sum(-1) / base_denom  # (B, T)
+                mask_nontrivial = pow_res > pseudo_zero
+                mask_trivial = ~(mask_nontrivial)
+                attn = attention(x, base_x, temper=0.3, type=2)  # (B, T)
+                attn = attn.masked_fill(mask_trivial.unsqueeze(-1), 0.0)
                 if j == 0:
                     att_init = attn
                     attnadd = attn
@@ -143,10 +157,9 @@ def main():
                 x = (x - x * attn)
 
                 # check similarity of each data frame
-                mask_trivial = pow_res > pseudo_zero
                 denom = torch.norm(attn, dim=-1) * torch.norm(att_init, dim=-1)
                 sim = torch.sum(attn * att_init, dim=-1) / denom  # (B, T)
-                sim = sim.masked_select(mask_trivial).mean()
+                sim = sim.masked_select(mask_nontrivial).mean()
                 # print(mask_trivial.float().sum() / (mask_trivial.size(0) * mask_trivial.size(1)))
                 if sim < consistency_sim_th:
                     break
@@ -161,17 +174,22 @@ def main():
                 break
 
         iter = len(x_res)
-        if iter == 10:
-            break
+        # if iter == 10:
+        #     break
 
         # buffer display for evaluating
+        fig = plt.figure()
         for i, x_re in enumerate(x_res):
-            plt.subplot(iter, 2, 2 * (i + 1))
-            plt.imshow(x_re.cpu().numpy().T, aspect='auto')
+            ax = fig.add_subplot(iter, 2, 2 * (i + 1))
+            ax.imshow(x_re.cpu().numpy().T, aspect='auto')
+            set_style(ax)
         for j, attn in enumerate(attns):
-            plt.subplot(iter, 2, 2 * (j) + 1)
-            plt.imshow(attn.cpu().numpy().T, aspect='auto')
+            ax = fig.add_subplot(iter, 2, 2 * j + 1)
+            ax.imshow(attn.cpu().numpy().T, aspect='auto')
+            set_style(ax)
+        # fig.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0)
         plt.show()
+        break
 
 
 if __name__ == '__main__':

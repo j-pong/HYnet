@@ -22,4 +22,10 @@ Fully Unsupervised Learning for Continual Sequence when High Local Correlation
 - [x] Hidden space regularization without relay mask: baro
 - [x] Hidden space regularization with relay mask replace with hidden space energy loss: baro
 - [x] Hidden space regularization without relay mask, hidden space energy loss and residual: baro
-- [ ] Rollback
+- [x] Rollback
+- **Conclustion** Loss error make weird loss graph and we success recover that but don't know why
+#### Loss with energy
+- [ ] Loss with energy 
+#### Attention change
+- [ ] nan attention case check
+- [ ] Select type 1 and type 2 attention and target

@@ -3,6 +3,7 @@
 import six
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 import numpy as np
@@ -19,6 +20,7 @@ class InferenceNet(nn.Module):
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
+        self.cdim = args.cdim
 
         # next frame predictor
         self.encoder_type = args.encoder_type
@@ -40,13 +42,34 @@ class InferenceNet(nn.Module):
         x = select_with_ind(x, x_ind)  # (B, Tmax, hdim)
         return x, x_ind
 
-    def forward(self, x, seq_mask, decoder_type):
+    @staticmethod
+    def energy_pooling_mask(x, part_size):
+        energy = x.pow(2)
+        indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
+        mask = F.one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        return mask
+
+    def hidden_exclude_activation(self, h, mask_prev):
+        if mask_prev is None:
+            mask_cur = self.energy_pooling_mask(h, self.cdim)
+            mask_prev = mask_cur
+        else:
+            assert mask_prev is not None
+            h[mask_prev.bool()] = 0.0
+            mask_cur = self.energy_pooling_mask(h, self.cdim)
+            mask_prev = mask_prev + mask_cur
+        h = h.masked_fill(~(mask_cur.bool()), 0.0)
+        return h, mask_prev
+
+    def forward(self, x, mask_prev, decoder_type):
         if self.encoder_type == 'conv1d':
             x, _ = pad_for_shift(key=x, pad=self.input_extra,
                                  window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
             h = self.encoder(x)  # (B, Tmax, *, hdim)
             # max pooling along shift size
             h, h_ind = self.energy_pooling(h)
+            # max pooling along hidden size
+            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':
@@ -58,6 +81,8 @@ class InferenceNet(nn.Module):
             x = torch.stack(x_ext, dim=-1)
         elif self.encoder_type == 'linear':
             h = self.encoder(x)
+            # max pooling along hidden size
+            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':
@@ -65,7 +90,7 @@ class InferenceNet(nn.Module):
             elif decoder_type == 'src':
                 x = self.decoder_src(h)
 
-        return x
+        return x, mask_prev
 
 
 class Net(nn.Module):
@@ -78,11 +103,10 @@ class Net(nn.Module):
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
+        self.cdim = args.cdim
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
         self.selftrain = args.self_train
-
-        self.thinkiter = args.think_iter
 
         self.inference = InferenceNet(idim, odim, args)
 
@@ -114,9 +138,9 @@ class Net(nn.Module):
         # start iteration for superposition
         y_res = y.clone()
         x_res = x.clone()
-        # mask_prev_src = None
-        # mask_prev_self = None
-        for _ in six.moves.range(self.thinkiter):
+        hidden_mask_src = None
+        hidden_mask_self = None
+        for _ in six.moves.range(int(self.hdim / self.cdim)):
             # self 1. action for self feature (current version just pad action support)
             x_aug, _ = pad_for_shift(key=x_res, pad=self.odim - 1,
                                      window=self.odim)  # (B, Tmax, idim_k + idim_q - 1, idim_q)
@@ -125,7 +149,7 @@ class Net(nn.Module):
             y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
 
             # self 3. attention to target feature with selected feature
-            attn = attention(y_align_opt, y_res, temper=self.temper)
+            attn = attention(y_align_opt, y, temper=self.temper)
             y_align_opt_attn = y_align_opt * attn
 
             # self 4. reverse action
@@ -133,8 +157,8 @@ class Net(nn.Module):
 
             if self.selftrain:
                 # self 5 inference
-                x_ele = self.inference(x_ele, seq_mask,
-                                       decoder_type='self')
+                x_ele, hidden_mask_self = self.inference(x_ele, hidden_mask_self,
+                                                         decoder_type='self')
 
                 # self 6 loss
                 loss_local_self = self.criterion(x_ele, x_res, seq_mask)
@@ -147,8 +171,8 @@ class Net(nn.Module):
                 y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
                 y_align_opt_attn = y_align_opt
             # 2. feedforward for src estimation
-            y_ele = self.inference(y_align_opt_attn, seq_mask,
-                                   decoder_type='src')
+            y_ele, hidden_mask_src = self.inference(y_align_opt_attn, hidden_mask_src,
+                                                    decoder_type='src')
             # source 3. inference
             loss_local_src = self.criterion(y_ele, y_res, seq_mask)
 
