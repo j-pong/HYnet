@@ -152,20 +152,18 @@ class Net(nn.Module):
             # self 3. attention to target feature with selected feature
             attn = attention(y_align_opt, y, temper=self.temper)
             if attn_prev is not None:
-                pow_res = torch.pow(x_res, 2).sum(-1) / torch.pow(y, 2).sum(-1)  # (B, T)
-                mask_nontrivial = pow_res > 1e-6
                 # check similarity of each data frame
                 denom = torch.norm(attn, dim=-1) * torch.norm(attn_prev, dim=-1)
                 sim = torch.sum(attn * attn_prev, dim=-1) / denom  # (B, T)
-                sim = sim.masked_select(mask_nontrivial).mean()
-                # print(mask_trivial.float().sum() / (mask_trivial.size(0) * mask_trivial.size(1)))
-                if sim > 0.8:
+                assert torch.isnan(sim).sum() == 0.0
+                if sim.mean() > 0.8:
                     break
             y_align_opt_attn = y_align_opt * attn
             attn_prev = attn
 
             # self 4. reverse action
-            x_align_opt_attn = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim, theta=theta_opt)
+            x_align_opt_attn = reverse_pad_for_shift(key=y_align_opt_attn, pad=self.odim - 1, window=self.odim,
+                                                     theta=theta_opt)
 
             if self.selftrain:
                 # self 5 inference
