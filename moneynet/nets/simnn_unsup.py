@@ -69,7 +69,7 @@ class InferenceNet(nn.Module):
             # max pooling along shift size
             h, h_ind = self.energy_pooling(h)
             # max pooling along hidden size
-            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
+            # h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':
@@ -82,7 +82,7 @@ class InferenceNet(nn.Module):
         elif self.encoder_type == 'linear':
             h = self.encoder(x)
             # max pooling along hidden size
-            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
+            # h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':
@@ -150,7 +150,7 @@ class Net(nn.Module):
             y_align_opt, sim_opt, theta_opt = selector(x_aug, y_res, measurement=self.measurement)
 
             # self 3. attention to target feature with selected feature
-            attn = attention(y_align_opt, y, temper=self.temper)
+            attn = attention(y_align_opt, y_res, temper=self.temper)
             if attn_prev is not None:
                 # check similarity of each data frame
                 denom = torch.norm(attn, dim=-1) * torch.norm(attn_prev, dim=-1)

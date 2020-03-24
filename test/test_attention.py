@@ -77,9 +77,6 @@ def get_parser():
     return parser
 
 
-from moneynet.nets.unsup.utils import temp_softmax
-
-
 def set_style(ax):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -99,11 +96,13 @@ def attention(x, y, temper, type=2, pseudo_zero=1e-6):
         max_x = torch.max(score, dim=-1, keepdim=True)[0]
         exp_x = torch.exp(score - max_x)
         attn = exp_x / torch.sum(exp_x, dim=-1, keepdim=True)
+        attn = attn.masked_fill(mask_trivial, 1 / attn.size(-1))
     if type == 2:
-        score = (x * y) / (x * y).sum(dim=-1, keepdim=True)
+        score = (x * y)
+        score[score < pseudo_zero] = pseudo_zero
+        score = score / score.sum(dim=-1, keepdim=True)
         score = torch.exp(torch.log(score) / temper)
         attn = score / score.sum(dim=-1, keepdim=True)
-    attn = attn.masked_fill(mask_trivial, 0.0)
 
     return attn
 
@@ -130,7 +129,8 @@ def main():
         # hyperparameter
         iter = 10
         consistency_sim_th = 0.80
-        pseudo_zero = 1e-10
+        pseudo_zero = 1e-8
+        temper = 0.08
 
         # buffer
         attns = []
@@ -138,18 +138,16 @@ def main():
 
         # base data setting
         base_x = x.clone()
-        base_denom = torch.pow(base_x, 2).sum(-1)
+        # base_denom = torch.pow(base_x, 2).sum(-1)
         for i in range(iter):
             # initialization loop variable
             j = 0
-            temper = torch.ones(x.size(0)) * 0.1
+            x_ = x.clone()
             while True:
                 # check how much data is left.
-                pow_res = torch.pow(x, 2).sum(-1) / base_denom  # (B, T)
-                mask_nontrivial = pow_res > pseudo_zero
-                attn = attention(x, base_x, temper=temper, type=2)  # (B, T)
-                var = max_variance(attn, dim=-1)
-
+                attn = attention(x_, x_, temper=temper, type=2, pseudo_zero=pseudo_zero)  # (B, T)
+                assert torch.isnan(attn).sum() == 0.0
+                var = max_variance(attn, dim=-1)  # (B, T, 1)
                 if j == 0:
                     att_init = attn
                     attnadd = attn
@@ -157,35 +155,38 @@ def main():
                     attnadd += attn
 
                 # compute residual data
-                x = (x - x * attn)
+                x_ = (x_ - x_ * attn)
 
                 # check similarity of each data frame
                 denom = torch.norm(attn, dim=-1) * torch.norm(att_init, dim=-1)
                 sim = torch.sum(attn * att_init, dim=-1) / denom  # (B, T)
-                sim = sim.masked_select(mask_nontrivial).mean()
-                # print(mask_trivial.float().sum() / (mask_trivial.size(0) * mask_trivial.size(1)))
-                if sim < consistency_sim_th:
+                sim = sim.mean()
+                end_condition = var.mean() < 1e-5
+                if sim < consistency_sim_th or end_condition:
                     break
-                if pow_res.mean() < pseudo_zero:
-                    break
+                pow_res = torch.pow(x, 2).sum(-1)  # (B, T)
                 j += 1
 
-            attns.append(attnadd[0])
+            attns.append((attnadd * x)[0])
+            x = x_
             x_res.append(x[0])
-            print(i, j, float(pow_res.mean()), float(sim))
+            print(i, j, float(sim), var.mean(), pow_res.mean())
             print(var)
-            if pow_res.mean() < pseudo_zero:
+            if end_condition:
                 break
 
-        iter = len(x_res)
+        iter = len(x_res) + 1
         # if iter == 10:
         #     break
 
         # buffer display for evaluating
         fig = plt.figure()
+        ax = fig.add_subplot(iter, 2, 2)
+        ax.imshow(base_x[0].numpy().T, aspect='auto')
+        set_style(ax)
         for i, x_re in enumerate(x_res):
-            ax = fig.add_subplot(iter, 2, 2 * (i + 1))
-            ax.imshow(x_re.numpy().T, aspect='auto')
+            ax = fig.add_subplot(iter, 2, 2 * (i + 2))
+            ax.imshow(x_re.abs().numpy().T, aspect='auto')
             set_style(ax)
         for j, attn in enumerate(attns):
             ax = fig.add_subplot(iter, 2, 2 * j + 1)
