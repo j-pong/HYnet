@@ -172,9 +172,9 @@ class Net(nn.Module):
                 x_ele += x_align_opt_attn
 
                 # self 6 loss
-                masks = [seq_mask,
-                         torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim) > self.energy_th]
-                loss_local_self = self.criterion(x_ele, x_res, masks)
+                masks = [seq_mask.view(-1, 1),
+                         torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim).view(-1, 1) > self.energy_th]
+                loss_local_self = self.criterion(x_ele.view(-1, 1), x_res.view(-1, 1), masks)
 
                 # source 1.action with inference feature that concern relation of pixel of frame
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
@@ -189,9 +189,9 @@ class Net(nn.Module):
             y_ele, hidden_mask_src = self.inference(y_align_opt_attn, hidden_mask_src,
                                                     decoder_type='src')
             # source 3. inference
-            masks = [seq_mask,
-                     torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim) > self.energy_th]
-            loss_local_src = self.criterion(y_ele, y_res, masks)
+            masks = [seq_mask.view(-1, 1),
+                     torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim).view(-1, 1) > self.energy_th]
+            loss_local_src = self.criterion(y_ele.view(-1, 1), y_res.view(-1, 1), masks)
 
             # source 4. loss
             if self.selftrain:
@@ -221,10 +221,10 @@ class Net(nn.Module):
         y_hyp = torch.stack(buffs['y_ele'], dim=-1)
         loss_x = self.criterion(x_hyp.sum(-1).view(-1, self.idim),
                                 x.view(-1, self.idim),
-                                seq_mask.view(-1, self.odim))
+                                [seq_mask.view(-1, self.odim)])
         loss_y = self.criterion(y_hyp.sum(-1).view(-1, self.idim),
                                 y.view(-1, self.idim),
-                                seq_mask.view(-1, self.odim))
+                                [seq_mask.view(-1, self.odim)])
         self.reporter.report_dict['loss_x'] = float(loss_x)
         self.reporter.report_dict['loss_y'] = float(loss_y)
 
