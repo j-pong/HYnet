@@ -177,8 +177,6 @@ def main():
                 break
 
         iter = len(x_res) + 1
-        # if iter == 10:
-        #     break
 
         # buffer display for evaluating
         fig = plt.figure()
