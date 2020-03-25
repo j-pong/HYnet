@@ -72,7 +72,7 @@ class Pikachu(torch.utils.data.Dataset):
 
     def __len__(self):
         if self.train:
-            return int(self.num_samples / self.batch_size) * self.ngpu * self.datamper
+            return int(self.num_samples * self.datamper / self.batch_size) * self.ngpu
         else:
             return 1
 
