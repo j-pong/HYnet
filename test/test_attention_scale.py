@@ -139,24 +139,22 @@ def main():
 
         # base data setting
         base_x = x.clone()
-        # base_denom = torch.pow(base_x, 2).sum(-1)
         for i in range(iter):
             # initialization loop variable
             j = 0
-            x_ = x.clone()
             while True:
                 # check how much data is left.
-                attn = attention(x_, y, temper=temper, type=2, pseudo_zero=pseudo_zero)  # (B, T)
+                attn = attention(x, y, temper=temper, type=2, pseudo_zero=pseudo_zero)  # (B, T)
                 assert torch.isnan(attn).sum() == 0.0
                 var = max_variance(attn, dim=-1)  # (B, T, 1)
                 if j == 0:
                     att_init = attn
-                    attnadd = attn
+                    attnadd = x * attn
                 else:
-                    attnadd += attn
+                    attnadd += x * attn
 
                 # compute residual data
-                x_ = (x_ - x_ * attn)
+                x = (x - x * attn)
 
                 # check similarity of each data frame
                 denom = torch.norm(attn, dim=-1) * torch.norm(att_init, dim=-1)
@@ -168,14 +166,12 @@ def main():
                 pow_res = torch.pow(x, 2).sum(-1)  # (B, T)
                 j += 1
 
-            attns.append((attnadd * x)[0])
-            x = x_
+            attns.append(attnadd[0])
             x_res.append(x[0])
             print(i, j, float(sim), var.mean(), pow_res.mean())
             print(var)
             if end_condition:
                 break
-
         iter = len(x_res) + 1
 
         # buffer display for evaluating

@@ -172,9 +172,9 @@ class Net(nn.Module):
                 x_ele += x_align_opt_attn
 
                 # self 6 loss
-                masks = [seq_mask.view(-1, 1),
+                masks = [seq_mask.view(-1, self.idim),
                          torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim).view(-1, 1) > self.energy_th]
-                loss_local_self = self.criterion(x_ele.view(-1, 1), x_res.view(-1, 1), masks)
+                loss_local_self = self.criterion(x_ele.view(-1, self.idim), x_res.view(-1, self.idim), masks)
 
                 # source 1.action with inference feature that concern relation of pixel of frame
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
@@ -189,9 +189,9 @@ class Net(nn.Module):
             y_ele, hidden_mask_src = self.inference(y_align_opt_attn, hidden_mask_src,
                                                     decoder_type='src')
             # source 3. inference
-            masks = [seq_mask.view(-1, 1),
+            masks = [seq_mask.view(-1, self.idim),
                      torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim).view(-1, 1) > self.energy_th]
-            loss_local_src = self.criterion(y_ele.view(-1, 1), y_res.view(-1, 1), masks)
+            loss_local_src = self.criterion(y_ele.view(-1, self.idim), y_res.view(-1, self.idim), masks)
 
             # source 4. loss
             if self.selftrain:
