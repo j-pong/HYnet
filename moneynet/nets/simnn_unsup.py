@@ -11,7 +11,7 @@ import numpy as np
 from moneynet.nets.unsup.utils import pad_for_shift, reverse_pad_for_shift, selector, select_with_ind
 from moneynet.nets.unsup.attention import attention
 from moneynet.nets.unsup.initialization import initialize
-from moneynet.nets.unsup.loss import SeqLoss
+from moneynet.nets.unsup.loss import SeqLoss, SeqMultiMaskLoss
 
 
 class InferenceNet(nn.Module):
@@ -116,7 +116,7 @@ class Net(nn.Module):
         self.energy_th = args.energy_threshold
 
         # network training related
-        self.criterion = SeqLoss(criterion=nn.MSELoss(reduction='none'))
+        self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
 
         # initialize parameter
         self.reset_parameters()
@@ -172,7 +172,9 @@ class Net(nn.Module):
                 x_ele += x_align_opt_attn
 
                 # self 6 loss
-                loss_local_self = self.criterion(x_ele, x_res, seq_mask)
+                masks = [seq_mask,
+                         torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim) > self.energy_th]
+                loss_local_self = self.criterion(x_ele, x_res, masks)
 
                 # source 1.action with inference feature that concern relation of pixel of frame
                 x_aug, _ = pad_for_shift(key=x_ele, pad=self.odim - 1,
@@ -187,7 +189,9 @@ class Net(nn.Module):
             y_ele, hidden_mask_src = self.inference(y_align_opt_attn, hidden_mask_src,
                                                     decoder_type='src')
             # source 3. inference
-            loss_local_src = self.criterion(y_ele, y_res, seq_mask)
+            masks = [seq_mask,
+                     torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim) > self.energy_th]
+            loss_local_src = self.criterion(y_ele, y_res, masks)
 
             # source 4. loss
             if self.selftrain:
