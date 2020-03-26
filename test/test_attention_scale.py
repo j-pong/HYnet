@@ -130,7 +130,8 @@ def main():
         # hyperparameter
         iter = 10
         consistency_sim_th = 0.80
-        pseudo_zero = 1e-8
+        consistency_var_th = 1e-6
+        pseudo_zero = 1e-6
         temper = 0.08
 
         # buffer
@@ -142,32 +143,43 @@ def main():
         for i in range(iter):
             # initialization loop variable
             j = 0
-            while True:
+            for j in range(1000):
                 # check how much data is left.
                 attn = attention(x, y, temper=temper, type=2, pseudo_zero=pseudo_zero)  # (B, T)
                 assert torch.isnan(attn).sum() == 0.0
                 var = max_variance(attn, dim=-1)  # (B, T, 1)
                 if j == 0:
                     att_init = attn
-                    attnadd = x * attn
+                    attnadd = attn
                 else:
-                    attnadd += x * attn
-
-                # compute residual data
-                x = (x - x * attn)
+                    attnadd += attn
 
                 # check similarity of each data frame
                 denom = torch.norm(attn, dim=-1) * torch.norm(att_init, dim=-1)
                 sim = torch.sum(attn * att_init, dim=-1) / denom  # (B, T)
-                sim = sim.mean()
-                end_condition = var.mean() < 1e-5
+                sim_mask = sim > consistency_sim_th
+
+                # compute similarity with
+                var_mask = var.squeeze() > consistency_var_th
+                denom = var_mask.float().sum()
+                if denom < pseudo_zero:
+                    sim = sim.masked_select(var_mask) / denom
+                    sim = sim.sum()
+                else:
+                    sim = sim.mean()
+
+                end_condition = var.mean() < consistency_var_th
                 if sim < consistency_sim_th or end_condition:
                     break
-                pow_res = torch.pow(x, 2).sum(-1)  # (B, T)
+
+                # compute residual data
+                x = (x - x * attn * sim_mask.float().unsqueeze(-1))
                 j += 1
 
             attns.append(attnadd[0])
             x_res.append(x[0])
+            # checkout
+            pow_res = torch.pow(x, 2).sum(-1)  # (B, T)
             print(i, j, float(sim), var.mean(), pow_res.mean())
             print(var)
             if end_condition:

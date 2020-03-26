@@ -124,6 +124,14 @@ class Net(nn.Module):
     def reset_parameters(self):
         initialize(self)
 
+    @staticmethod
+    def max_variance(p, dim=-1):
+        mean = torch.max(p, dim=dim, keepdim=True)[0]  # (B, T, 1)
+        # get normalized confidence
+        numer = (mean - p).pow(2)
+        denom = p.size(dim) - 1
+        return torch.sum(numer, dim=-1) / denom
+
     def forward(self, x, y):
         # prepare data
         if np.isnan(self.ignore_out):
@@ -152,13 +160,29 @@ class Net(nn.Module):
             # self 3. attention to target feature with selected feature
             attn = attention(y_align_opt, y_res, temper=self.temper)
             if attn_prev is not None:
+                consistency_sim_th = 0.80
+                consistency_var_th = 1e-6
                 # check similarity of each data frame
                 denom = torch.norm(attn, dim=-1) * torch.norm(attn_prev, dim=-1)
                 sim = torch.sum(attn * attn_prev, dim=-1) / denom  # (B, T)
+                sim_mask = sim > consistency_sim_th
                 assert torch.isnan(sim).sum() == 0.0
-                if sim.mean() > 0.8:
+
+                # compute similarity with
+                var = self.max_variance(attn, dim=-1)
+                var_mask = var.squeeze() > consistency_var_th
+                denom = var_mask.float().sum()
+                if denom > 1e-6:
+                    sim = sim.masked_select(var_mask) / denom
+                    sim = sim.sum()
+                else:
+                    sim = sim.mean()
+
+                if sim > consistency_sim_th:
                     break
-            y_align_opt_attn = y_align_opt * attn
+                y_align_opt_attn = y_align_opt * attn * sim_mask.float().unsqueeze(-1)
+            else:
+                y_align_opt_attn = y_align_opt * attn
             attn_prev = attn
 
             # self 4. reverse action
@@ -190,10 +214,10 @@ class Net(nn.Module):
             y_ele, hidden_mask_src = self.inference(y_align_opt_attn, hidden_mask_src,
                                                     decoder_type='src')
             # source 3. inference
-            masks = [seq_mask.view(-1, self.idim),
-                     torch.abs(theta_opt - self.idim + 1).unsqueeze(-1).repeat(1, 1, self.idim).view(-1,
-                                                                                                     self.idim) > self.energy_th]
-            loss_local_src = self.criterion(y_ele.view(-1, self.idim), y_res.view(-1, self.idim), masks)
+            masks = [seq_mask.view(-1, self.odim),
+                     torch.abs(theta_opt - self.odim + 1).unsqueeze(-1).repeat(1, 1, self.odim).view(-1,
+                                                                                                     self.odim) > self.energy_th]
+            loss_local_src = self.criterion(y_ele.view(-1, self.odim), y_res.view(-1, self.odim), masks)
 
             # source 4. loss
             if self.selftrain:
