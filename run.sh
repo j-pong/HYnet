@@ -12,7 +12,7 @@ set -e
 set -u
 set -o pipefail
 
-expdir=exp/train97_conv1d_split_selftrain_cdim32_hdim1024_residual_lmcpatt0.08_attentiontargetyresnoty_eth10_varsim
+expdir=exp/train97_conv1d_split_selftrain_cdim32_hdim1024_residual_lmcpatt0.08_attentiontargetyresnoty_eth10_varsim_sim0.9
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     echo "stage 0: Feature Generation"
     python moneynet/utils/compliance/librosa/make_feats.py --indir dump --outdir ${expdir} --datadir data
