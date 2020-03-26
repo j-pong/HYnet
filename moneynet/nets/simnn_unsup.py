@@ -43,22 +43,26 @@ class InferenceNet(nn.Module):
         return x, x_ind
 
     @staticmethod
-    def energy_pooling_mask(x, part_size):
+    def energy_pooling_mask(x, part_size, share=False):
         energy = x.pow(2)
-        indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
-        mask = F.one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
-        return mask
+        if share:
+            indices = torch.topk(energy, k=part_size * 2, dim=-1)[1]  # (B, T, cdim*2)
+        else:
+            indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
+        mask = F.one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        mask_share = F.one_hot(indices[:, :, :], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        return mask, mask_share
 
     def hidden_exclude_activation(self, h, mask_prev):
         if mask_prev is None:
-            mask_cur = self.energy_pooling_mask(h, self.cdim)
+            mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
             mask_prev = mask_cur
         else:
             assert mask_prev is not None
             h[mask_prev.bool()] = 0.0
-            mask_cur = self.energy_pooling_mask(h, self.cdim)
+            mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
             mask_prev = mask_prev + mask_cur
-        h = h.masked_fill(~(mask_cur.bool()), 0.0)
+        h = h.masked_fill(~(mask_cur_share.bool()), 0.0)
         return h, mask_prev
 
     def forward(self, x, mask_prev, decoder_type):
@@ -69,7 +73,7 @@ class InferenceNet(nn.Module):
             # max pooling along shift size
             h, h_ind = self.energy_pooling(h)
             # max pooling along hidden size
-            # h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
+            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':
@@ -82,7 +86,7 @@ class InferenceNet(nn.Module):
         elif self.encoder_type == 'linear':
             h = self.encoder(x)
             # max pooling along hidden size
-            # h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
+            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':
