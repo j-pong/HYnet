@@ -39,6 +39,7 @@ class Pikachu(torch.utils.data.Dataset):
         self.ignore_in = args.ignore_in
         self.ignore_out = args.ignore_out
         self.datamper = args.datamper
+        self.num_targets = args.num_targets
         self.ram_memory = ram_memory
 
         # ram_memory is waring to small ram case
@@ -49,7 +50,7 @@ class Pikachu(torch.utils.data.Dataset):
                 feat = np.load(self.filelist[idx], allow_pickle=True)
                 self.buffer[idx] = feat  # numpy array attach to key that sample number
 
-    def _batch_with_padding(self, idx):
+    def _batch_with_padding(self, idx, num_target=1):
         if self.train:
             # sampling indexs that independent to dataloader (pytorch) idx
             index_queue = np.random.randint(0, self.num_samples, size=self.batch_size)
@@ -64,8 +65,14 @@ class Pikachu(torch.utils.data.Dataset):
                 feat = torch.from_numpy(self.buffer[idx].T)
             else:
                 feat = torch.from_numpy(np.load(self.filelist[idx], allow_pickle=True).T)
-            batch_in_feat.append(feat[:-1])
-            batch_out_feat.append(feat[1:])
+            batch_in_feat.append(feat[:-num_target])
+            if num_target > 1:
+                batch = [feat[i + 1:-num_target + i + 1] if (-num_target + i + 1) != 0 else feat[i + 1:] for i in
+                         range(num_target)]
+                batch = torch.stack(batch, dim=-2)
+            else:
+                batch = feat[num_target:]
+            batch_out_feat.append(batch)
             batch_fname.append(self.filelist[idx])
 
         return pad_list(batch_in_feat, self.ignore_in), pad_list(batch_out_feat, self.ignore_out), batch_fname
@@ -81,6 +88,6 @@ class Pikachu(torch.utils.data.Dataset):
         return np.shape(sample['input'])[-1], np.shape(sample['target'])[-1]
 
     def __getitem__(self, idx):
-        in_feats, out_feats, fnames = self._batch_with_padding(idx)  # [B, T, C], [B, T, C], [B]
+        in_feats, out_feats, fnames = self._batch_with_padding(idx, self.num_targets)  # [B, T, C], [B, T, C], [B]
         sample = {'input': in_feats, 'target': out_feats, 'fname': fnames}
         return sample
