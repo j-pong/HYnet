@@ -5,10 +5,10 @@ import torch
 import matplotlib.pyplot as plt
 
 from moneynet.utils.datasets.pikachu_dataset import Pikachu
-
+from moneynet.nets.unsup.utils import pad_for_shift, select_with_ind, reverse_pad_for_shift
 import configargparse
 
-from tqdm import tqdm
+import numpy as np
 
 
 def get_parser():
@@ -73,6 +73,8 @@ def get_parser():
                         help='')
     parser.add_argument('--relay-bypass', default=0, type=int,
                         help='')
+    parser.add_argument('--num-targets', default=8, type=int,
+                        help='')
 
     return parser
 
@@ -107,6 +109,33 @@ def attention(x, y, temper, type=2, pseudo_zero=1e-6):
     return attn
 
 
+def selector(x, y, measurement='cos'):
+    """Measuring similarity of each other tensor
+
+        :param torch.Tensor x: batch of padded source sequences (B, Tmax, * , c)
+        :param torch.Tensor y: batch of padded target sequences (B, Tmax, c)
+        :param string measurement:
+
+        :return: max similarity of x (B, Tmax, c)
+        :rtype: torch.Tensor
+        :return: max similarity value of sequence (B, Tmax)
+        :rtype: torch.Tensor
+        :return: max similarity index of sequence  (B, Tmax)
+        :rtype: torch.Tensor
+        """
+    y = y.unsqueeze(-2)
+    if measurement == 'cos':
+        # denom = (torch.norm(y, dim=-1) * torch.norm(x, dim=-1) + 1e-6)
+        sim = torch.sum(y * x, dim=-1)  # / denom  # (B, Tmax, *)
+        # sim[torch.isnan(sim)] = 0.0
+        sim_max, sim_max_idx = torch.max(sim, dim=-1)  # (B, Tmax)
+    else:
+        raise AttributeError('{} is not support yet'.format(measurement))
+    # maximum shift select
+    x = select_with_ind(x, sim_max_idx)
+    return x, sim_max, sim_max_idx
+
+
 def max_variance(p, dim=-1):
     mean = torch.max(p, dim=dim, keepdim=True)[0]  # (B, T, 1)
     # get normalized confidence
@@ -130,9 +159,10 @@ def main():
         # hyperparameter
         iter = 10
         consistency_sim_th = 0.80
-        consistency_var_th = 1e-6
+        consistency_var_th = 1e-8
         pseudo_zero = 1e-6
         temper = 0.08
+        margin = 2
 
         # buffer
         attns = []
@@ -143,9 +173,25 @@ def main():
         for i in range(iter):
             # initialization loop variable
             j = 0
-            for j in range(1000):
+            for j in range(100):
+
                 # check how much data is left.
-                attn = attention(x, y, temper=temper, type=2, pseudo_zero=pseudo_zero)  # (B, T)
+                x_aug, _ = pad_for_shift(key=x, pad=40 - 1, window=40)
+                for k in range(args.num_targets):
+                    y_align, sim_max, sim_max_idx = selector(x_aug, y[:, :, k, :])
+                    e_mask = torch.abs(sim_max_idx - 40 + 1).unsqueeze(-1) < k + margin
+                    # print(sim_max_idx - 40 + 1)
+                    if k == 0:
+                        score = reverse_pad_for_shift(y_align * y[:, :, k, :] * e_mask.float(), pad=40 - 1,
+                                                      window=40, theta=sim_max_idx)
+                    else:
+                        score += reverse_pad_for_shift(y_align * y[:, :, k, :] * e_mask.float(), pad=40 - 1,
+                                                       window=40, theta=sim_max_idx)
+                score = score / args.num_targets
+                score[score < pseudo_zero] = pseudo_zero
+                score = score / score.sum(dim=-1, keepdim=True)
+                score = torch.exp(torch.log(score) / temper)
+                attn = score / score.sum(dim=-1, keepdim=True)
                 assert torch.isnan(attn).sum() == 0.0
                 var = max_variance(attn, dim=-1)  # (B, T, 1)
                 if j == 0:
@@ -174,6 +220,7 @@ def main():
 
                 # compute residual data
                 x = (x - x * attn * sim_mask.float().unsqueeze(-1))
+                # y = (y - y * attn * sim_mask.float().unsqueeze(-1))
                 j += 1
 
             attns.append(attnadd[0])
