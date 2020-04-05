@@ -25,7 +25,7 @@ Fully Unsupervised Learning for Continual Sequence when High Local Correlation
 - [x] Rollback
 - **Conclustion** Loss error make weird loss graph and we success recover that but don't know why
 #### Loss with energy
-- [ ] Loss with energy 
+- [x] Loss with energy 
 #### Attention change
-- [ ] nan attention case check
-- [ ] Select type 1 and type 2 attention and target
+- [x] nan attention case check
+- [x] Select type 1 and type 2 attention and target

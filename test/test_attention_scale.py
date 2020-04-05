@@ -8,8 +8,6 @@ from moneynet.utils.datasets.pikachu_dataset import Pikachu
 from moneynet.nets.unsup.utils import pad_for_shift, select_with_ind, reverse_pad_for_shift
 import configargparse
 
-import numpy as np
-
 
 def get_parser():
     """Get parser of training arguments."""
@@ -174,7 +172,6 @@ def main():
             # initialization loop variable
             j = 0
             for j in range(100):
-
                 # check how much data is left.
                 x_aug, _ = pad_for_shift(key=x, pad=40 - 1, window=40)
                 for k in range(args.num_targets):
@@ -247,7 +244,8 @@ def main():
             ax.imshow(attn.numpy().T, aspect='auto')
             set_style(ax)
         # fig.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0)
-        plt.show()
+        fig.savefig("test_attention_scale.png")
+        plt.close()
         break
 
 

@@ -66,12 +66,11 @@ class Pikachu(torch.utils.data.Dataset):
             else:
                 feat = torch.from_numpy(np.load(self.filelist[idx], allow_pickle=True).T)
             batch_in_feat.append(feat[:-num_target])
-            # if num_target > 1:
+            # multi target batch mode
             batch = [feat[i + 1:-num_target + i + 1] if (-num_target + i + 1) != 0 else feat[i + 1:] for i in
                      range(num_target)]
             batch = torch.stack(batch, dim=-2)
-            # else:
-            #     batch = feat[num_target:]
+            # append all batch for aggregating
             batch_out_feat.append(batch)
             batch_fname.append(self.filelist[idx])
 
