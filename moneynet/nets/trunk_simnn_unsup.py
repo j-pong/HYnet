@@ -137,6 +137,15 @@ class Net(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
+    @staticmethod
+    def prob(x, temper, pseudo_zero=1e-6):
+        score = torch.abs(x)
+        score[score < pseudo_zero] = pseudo_zero
+        score = score / score.sum(dim=-1, keepdim=True)
+        score = torch.exp(torch.log(score) / temper)
+        p = score / score.sum(dim=-1, keepdim=True)
+        return p
+
     def forward(self, x, ys):
         """
         :parm torch.Tensor x: (B,T,C)
@@ -157,8 +166,7 @@ class Net(nn.Module):
         for _ in six.moves.range(int(self.hdim / self.cdim) - 1):
             x_aug, _ = pad_for_shift(key=x_res, pad=self.odim - 1, window=self.odim)
 
-            denom = (torch.norm(ys, dim=-1) * torch.norm(x, dim=-1) + 1e-6)
-            sim = torch.sum(y * x, dim=-1) / denom  # (B, Tmax, *)
+            sim = torch.sum(y * x, dim=-1)  # (B, Tmax, *)
             sim[torch.isnan(sim)] = 0.0
             sim_max, sim_max_idx = torch.max(sim, dim=-1)  # (B, Tmax)
 
@@ -171,7 +179,7 @@ class Net(nn.Module):
             x_res = (x_res - x_ele).detach()
 
             buffs['loss'].append(loss)
-            buffs['x_ele'].append(loss)
+            buffs['x_ele'].append(x_ele)
 
         # 5. total loss compute
         loss = torch.stack(buffs['loss'], dim=-1).mean()
