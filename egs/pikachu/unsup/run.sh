@@ -17,12 +17,3 @@ resume=
 set -e
 set -u
 set -o pipefail
-
-if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
-    echo "stage 0: Feature Generation"
-    python -m moneynet.utils.compliance.librosa.make_feats.py \
-           --indir dump \
-           --outdir ${expdir} \
-           --datadir data
-fi
-

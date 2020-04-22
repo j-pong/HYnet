@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 import numpy as np
 
-from moneynet.utils.io import load_file_list
+from moneynet.utils.depreciate.io import load_file_list
 
 
 def pad_list(xs, pad_value):
