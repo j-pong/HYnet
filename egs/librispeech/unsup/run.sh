@@ -13,11 +13,13 @@ ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
 dumpdir=dump
 resume=
+unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=conf/specaug.yaml
+preprocess_config=
 train_config=conf/train.yaml
+train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
 
 # decoding parameter
@@ -73,21 +75,21 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 1: Feature Generation"
-#    fbankdir=fbank
-#    # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
-#    for x in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
-#        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
-#            data/${x} exp/make_fbank/${x} ${fbankdir}
-#        utils/fix_data_dir.sh data/${x}
-#    done
-#
-#    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
-#    utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
-#
-#    # remove utt having more than 3000 frames
-#    # remove utt having more than 400 characters
-#    remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_set}_org data/${train_set}
-#    remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_dev}_org data/${train_dev}
+    fbankdir=fbank
+    # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
+    for x in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
+            data/${x} exp/make_fbank/${x} ${fbankdir}
+        utils/fix_data_dir.sh data/${x}
+    done
+
+    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
+    utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
+
+    # remove utt having more than 3000 frames
+    # remove utt having more than 400 characters
+    remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_set}_org data/${train_set}
+    remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_dev}_org data/${train_dev}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
@@ -141,8 +143,31 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     done
 fi
 
+unsup_expname=train_unsup_${bpemode}${nbpe}
+unsup_expdir=exp/${unsup_expname}
+mkdir -p ${unsup_expdir}
+
+if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
+    echo "stage 3: Unsupervised Training"
+    ${cuda_cmd} --gpu ${ngpu} ${unsup_expdir}/train.log \
+        unsup_train.py \
+        --config ${train_unsup_config} \
+        --ngpu ${ngpu} \
+        --backend pytorch \
+        --outdir ${unsup_expdir}/results \
+        --tensorboard-dir tensorboard/${unsup_expname} \
+        --debugmode 1 \
+        --dict ${dict} \
+        --debugdir ${unsup_expdir} \
+        --minibatches 0 \
+        --verbose 0 \
+        --resume ${unsup_resume} \
+        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
+        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+fi
+
 if [ -z ${tag} ]; then
-    expname=${train_set}_${backend}_$(basename ${train_config%.*})
+    expname=${train_set}_$(basename ${train_config%.*})
     if ${do_delta}; then
         expname=${expname}_delta
     fi
@@ -150,26 +175,26 @@ if [ -z ${tag} ]; then
         expname=${expname}_$(basename ${preprocess_config%.*})
     fi
 else
-    expname=${train_set}_${backend}_${tag}
+    expname=${train_set}_${tag}
 fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
-    echo "stage 3: Network Training"
+if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+    echo "stage 4: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
-        --backend ${backend} \
+        --backend pytorch \
         --outdir ${expdir}/results \
         --tensorboard-dir tensorboard/${expname} \
-        --debugmode ${debugmode} \
+        --debugmode 1 \
         --dict ${dict} \
         --debugdir ${expdir} \
-        --minibatches ${N} \
-        --verbose ${verbose} \
+        --minibatches 0 \
+        --verbose 0 \
         --resume ${resume} \
         --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import logging
 import six
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-import numpy as np
+import chainer
+from chainer import reporter
 
 from moneynet.nets.unsup.utils import pad_for_shift, reverse_pad_for_shift, selector, select_with_ind
 from moneynet.nets.unsup.attention import attention
@@ -14,16 +17,30 @@ from moneynet.nets.unsup.initialization import initialize
 from moneynet.nets.unsup.loss import SeqLoss, SeqMultiMaskLoss
 
 
+class Reporter(chainer.Chain):
+    """A chainer reporter wrapper."""
+
+    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss):
+        """Report at every step."""
+        reporter.report({"loss_att": loss_att}, self)
+        reporter.report({"acc": acc}, self)
+        reporter.report({"cer": cer}, self)
+        reporter.report({"wer": wer}, self)
+        logging.info("mtl loss:" + str(mtl_loss))
+        reporter.report({"loss": mtl_loss}, self)
+
+
 class InferenceNet(nn.Module):
     def __init__(self, idim, odim, args):
         super(InferenceNet, self).__init__()
+        # configuration
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
         self.cdim = args.cdim
 
         # next frame predictor
-        self.encoder_type = args.encoder_type
+        self.encoder_type = args.etype
         if self.encoder_type == 'conv1d':
             self.input_extra = idim
             self.output_extra = odim
@@ -98,26 +115,30 @@ class InferenceNet(nn.Module):
 
 
 class Net(nn.Module):
-    def __init__(self, idim, odim, args, reporter):
-        super(Net, self).__init__()
-        # utils
-        self.reporter = reporter
+    @staticmethod
+    def add_arguments(parser):
+        """Add arguments"""
+        group = parser.add_argument_group("simnn setting")
+        group.add_argument("--etype", default="conv1d", type=str)
+        group.add_argument("--hdim", default=160, type=int)
+        group.add_argument("--cdim", default=16, type=int)
 
+        return parser
+
+    def __init__(self, idim, odim, args, ignore_id=-1):
+        super(Net, self).__init__()
         # network hyperparameter
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
         self.cdim = args.cdim
-        self.ignore_in = args.ignore_in
-        self.ignore_out = args.ignore_out
-        self.selftrain = args.self_train
+        self.ignore_id = ignore_id
+        self.subsample = [1]
+
+        # reporter for monitoring
+        self.reporter = Reporter()
 
         self.inference = InferenceNet(idim, odim, args)
-
-        # training hyperparameter
-        self.measurement = args.similarity
-        self.temper = args.temperature
-        self.energy_th = args.energy_threshold
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -136,7 +157,7 @@ class Net(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
-    def forward(self, x, y):
+    def forward(self, xs_pad, ilens, ys_pad):
         # prepare data
         if np.isnan(self.ignore_out):
             seq_mask = torch.isnan(y)
@@ -246,56 +267,5 @@ class Net(nn.Module):
 
         # 5. total loss compute
         loss = torch.stack(buffs['loss'], dim=-1).mean()
-        self.reporter.report_dict['loss'] = float(loss)
-        x_hyp = torch.stack(buffs['x_ele'], dim=-1)
-        y_hyp = torch.stack(buffs['y_ele'], dim=-1)
-        loss_x = self.criterion(x_hyp.sum(-1).view(-1, self.idim),
-                                x.view(-1, self.idim),
-                                [seq_mask.view(-1, self.odim)])
-        loss_y = self.criterion(y_hyp.sum(-1).view(-1, self.idim),
-                                y.view(-1, self.idim),
-                                [seq_mask.view(-1, self.odim)])
-        self.reporter.report_dict['loss_x'] = float(loss_x)
-        self.reporter.report_dict['loss_y'] = float(loss_y)
-
-        if not self.training:
-            # appendix. for reporting some value or tensor
-            # batch side sum needs for check
-            self.reporter.report_dict['pred_x'] = x_hyp.sum(-1)[0].detach().cpu().numpy()
-            self.reporter.report_dict['pred_y'] = y_hyp.sum(-1)[0].detach().cpu().numpy()
-            self.reporter.report_dict['res_x'] = x_res[0].detach().cpu().numpy()
-            self.reporter.report_dict['target'] = y[0].detach().cpu().numpy()
-
-            # just one sample at batch should be check
-            theta_opt = torch.stack(buffs['theta_opt'], dim=-1)
-            sim_opt = torch.stack(buffs['sim_opt'], dim=-1)
-            self.reporter.report_dict['theta_opt'] = theta_opt.detach().cpu().numpy()
-            self.reporter.report_dict['sim_opt'] = sim_opt.detach().cpu().numpy()
-
-            # disentangled hidden space check by attention disentangling
-            # attns = torch.stack(buffs['attn'], dim=-1)
-            # self.reporter.report_dict['attn0'] = attns[:, :, 0].detach().cpu().numpy()
-            # self.reporter.report_dict['attn1'] = attns[:, :, 1].detach().cpu().numpy()
-            # self.reporter.report_dict['attn2'] = attns[:, :, 2].detach().cpu().numpy()
-            # self.reporter.report_dict['attn3'] = attns[:, :, 3].detach().cpu().numpy()
-            # self.reporter.report_dict['attn4'] = attns[:, :, 4].detach().cpu().numpy()
-            #
-            # self.reporter.report_dict['x_ele0'] = x_hyp[0, :, :, 0].detach().cpu().numpy()
-            # self.reporter.report_dict['x_ele1'] = x_hyp[0, :, :, 1].detach().cpu().numpy()
-            # self.reporter.report_dict['x_ele2'] = x_hyp[0, :, :, 2].detach().cpu().numpy()
-            # self.reporter.report_dict['x_ele3'] = x_hyp[0, :, :, 3].detach().cpu().numpy()
-            # self.reporter.report_dict['x_ele4'] = x_hyp[0, :, :, 4].detach().cpu().numpy()
-            #
-            # self.reporter.report_dict['x_res0'] = buffs['x_res'][0][0].detach().cpu().numpy()
-            # self.reporter.report_dict['x_res1'] = buffs['x_res'][1][0].detach().cpu().numpy()
-            # self.reporter.report_dict['x_res2'] = buffs['x_res'][2][0].detach().cpu().numpy()
-            # self.reporter.report_dict['x_res3'] = buffs['x_res'][3][0].detach().cpu().numpy()
-            # self.reporter.report_dict['x_res4'] = buffs['x_res'][4][0].detach().cpu().numpy()
-
-            # self.reporter.report_dict['y_res'] = buffs['y_res'][0][0].detach().cpu().numpy()
-            # self.reporter.report_dict['y_res'] = buffs['y_res'][1][0].detach().cpu().numpy()
-            # self.reporter.report_dict['y_res'] = buffs['y_res'][2][0].detach().cpu().numpy()
-            # self.reporter.report_dict['y_res'] = buffs['y_res'][3][0].detach().cpu().numpy()
-            # self.reporter.report_dict['y_res'] = buffs['y_res'][4][0].detach().cpu().numpy()
 
         return loss
