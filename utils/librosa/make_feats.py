@@ -8,7 +8,7 @@ import soundfile as sf
 import numpy as np
 from tqdm import tqdm
 
-from moneynet.utils.depreciate.io import load_file_list
+from moneynet.utils.pytorch_pipe.io import load_file_list
 from moneynet.bin.unsup_train import get_parser
 
 

@@ -512,7 +512,7 @@ def main(cmd_args):
     # train
     logging.info("backend = " + args.backend)
 
-    from moneynet.unsup.unsup import train
+    from moneynet.unsup.chainer_pipe.unsup_ar import train
     train(args)
 
 

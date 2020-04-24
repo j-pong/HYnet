@@ -507,12 +507,9 @@ def train(args):
         use_apex=use_apex,
     )
     trainer = training.Trainer(updater, (args.epochs, "epoch"), out=args.outdir)
-
     if use_sortagrad:
-        trainer.extend(
-            ShufflingEnabler([train_iter]),
-            trigger=(args.sortagrad if args.sortagrad != -1 else args.epochs, "epoch"),
-        )
+        trainer.extend(ShufflingEnabler([train_iter]),
+                       trigger=(args.sortagrad if args.sortagrad != -1 else args.epochs, "epoch"), )
 
     # Resume from a snapshot
     if args.resume:
@@ -521,15 +518,10 @@ def train(args):
 
     # Evaluate the model with the test dataset for each epoch
     if args.save_interval_iters > 0:
-        trainer.extend(
-            CustomEvaluator(model, {"main": valid_iter}, reporter, device, args.ngpu),
-            trigger=(args.save_interval_iters, "iteration"),
-        )
+        trainer.extend(CustomEvaluator(model, {"main": valid_iter}, reporter, device, args.ngpu),
+                       trigger=(args.save_interval_iters, "iteration"), )
     else:
-        trainer.extend(
-            CustomEvaluator(model, {"main": valid_iter}, reporter, device, args.ngpu)
-        )
-
+        trainer.extend(CustomEvaluator(model, {"main": valid_iter}, reporter, device, args.ngpu))
     # # Save attention weight each epoch
     # if args.num_save_attention > 0 and args.mtlalpha != 1.0:
     #     data = sorted(
@@ -554,24 +546,7 @@ def train(args):
     #     trainer.extend(att_reporter, trigger=(1, "epoch"))
     # else:
     att_reporter = None
-
-    trainer.extend(
-        extensions.PlotReport(
-            [
-                "main/loss",
-                "validation/main/loss",
-                "main/loss_att",
-                "validation/main/loss_att",
-            ],
-            "epoch",
-            file_name="loss.png",
-        )
-    )
-    trainer.extend(
-        extensions.PlotReport(
-            ["main/acc", "validation/main/acc"], "epoch", file_name="acc.png"
-        )
-    )
+    trainer.extend(extensions.PlotReport(["main/loss", "validation/main/loss"], "epoch", file_name="loss.png", ))
 
     # Save best models
     trainer.extend(
@@ -581,72 +556,52 @@ def train(args):
 
     # save snapshot which contains model and optimizer states
     if args.save_interval_iters > 0:
-        trainer.extend(
-            torch_snapshot(filename="snapshot.iter.{.updater.iteration}"),
-            trigger=(args.save_interval_iters, "iteration"),
-        )
+        trainer.extend(torch_snapshot(filename="snapshot.iter.{.updater.iteration}"),
+                       trigger=(args.save_interval_iters, "iteration"), )
     else:
         trainer.extend(torch_snapshot(), trigger=(1, "epoch"))
 
-    # epsilon decay in the optimizer
-    if args.opt == "adadelta":
-        if args.criterion == "acc":
-            trainer.extend(
-                restore_snapshot(
-                    model, args.outdir + "/model.acc.best", load_fn=torch_load
-                ),
-                trigger=CompareValueTrigger(
-                    "validation/main/acc",
-                    lambda best_value, current_value: best_value > current_value,
-                ),
-            )
-            trainer.extend(
-                adadelta_eps_decay(args.eps_decay),
-                trigger=CompareValueTrigger(
-                    "validation/main/acc",
-                    lambda best_value, current_value: best_value > current_value,
-                ),
-            )
+    # # epsilon decay in the optimizer
+    # if args.opt == "adadelta":
+    #     if args.criterion == "acc":
+    #         trainer.extend(
+    #             restore_snapshot(
+    #                 model, args.outdir + "/model.acc.best", load_fn=torch_load
+    #             ),
+    #             trigger=CompareValueTrigger(
+    #                 "validation/main/acc",
+    #                 lambda best_value, current_value: best_value > current_value,
+    #             ),
+    #         )
+    #         trainer.extend(
+    #             adadelta_eps_decay(args.eps_decay),
+    #             trigger=CompareValueTrigger(
+    #                 "validation/main/acc",
+    #                 lambda best_value, current_value: best_value > current_value,
+    #             ),
+    #         )
 
     # Write a log of evaluation statistics for each epoch
-    trainer.extend(
-        extensions.LogReport(trigger=(args.report_interval_iters, "iteration"))
-    )
+    trainer.extend(extensions.LogReport(trigger=(args.report_interval_iters, "iteration")))
     report_keys = [
-                      "epoch",
-                      "iteration",
-                      "main/loss",
-                      "main/loss_att",
-                      "validation/main/loss"
-                      "validation/main/loss_att",
-                      "main/acc",
-                      "validation/main/acc",
-                      "elapsed_time",
-                  ]
+        "epoch",
+        "iteration",
+        "main/loss",
+        "validation/main/loss",
+        "elapsed_time",
+    ]
     if args.opt == "adadelta":
         trainer.extend(
-            extensions.observe_value(
-                "eps",
-                lambda trainer: trainer.updater.get_optimizer("main").param_groups[0][
-                    "eps"
-                ],
-            ),
-            trigger=(args.report_interval_iters, "iteration"),
-        )
+            extensions.observe_value("eps",
+                                     lambda trainer: trainer.updater.get_optimizer("main").param_groups[0]["eps"], ),
+            trigger=(args.report_interval_iters, "iteration"), )
         report_keys.append("eps")
-    trainer.extend(
-        extensions.PrintReport(report_keys),
-        trigger=(args.report_interval_iters, "iteration"),
-    )
-
+    trainer.extend(extensions.PrintReport(report_keys), trigger=(args.report_interval_iters, "iteration"), )
     trainer.extend(extensions.ProgressBar(update_interval=args.report_interval_iters))
     set_early_stop(trainer, args)
-
     if args.tensorboard_dir is not None and args.tensorboard_dir != "":
-        trainer.extend(
-            TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
-            trigger=(args.report_interval_iters, "iteration"),
-        )
+        trainer.extend(TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
+                       trigger=(args.report_interval_iters, "iteration"), )
     # Run the training
     trainer.run()
     check_early_stop(trainer, args.epochs)

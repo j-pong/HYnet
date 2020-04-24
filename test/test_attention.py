@@ -4,11 +4,9 @@ import torch
 
 import matplotlib.pyplot as plt
 
-from moneynet.utils.datasets.pikachu_dataset import Pikachu
+from moneynet.utils.pytorch_pipe.datasets.pikachu_dataset import Pikachu
 
 import configargparse
-
-from tqdm import tqdm
 
 
 def get_parser():

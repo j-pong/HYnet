@@ -4,7 +4,7 @@ import torch
 
 import matplotlib.pyplot as plt
 
-from moneynet.utils.datasets.pikachu_dataset import Pikachu
+from moneynet.utils.pytorch_pipe.datasets.pikachu_dataset import Pikachu
 from moneynet.nets.unsup.utils import pad_for_shift, select_with_ind, reverse_pad_for_shift
 import configargparse
 
