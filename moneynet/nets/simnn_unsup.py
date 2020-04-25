@@ -79,7 +79,7 @@ class Net(nn.Module):
         xs_pad_s = xs_pad
         xs = []
         for x_pad, ilen in zip(xs_pad_s, ilens):
-            xs.append(x_pad[:ilen][self.tnum:])
+            xs.append(x_pad[:ilen][:-self.tnum])
         xs_pad_s = pad_list(xs, 0)  # B, Tmax, C
 
         xs_pad_t = xs_pad.clone()

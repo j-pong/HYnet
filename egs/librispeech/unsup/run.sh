@@ -143,7 +143,13 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     done
 fi
 
-unsup_expname=train_unsup_${bpemode}${nbpe}
+unsup_expname=${train_set}_$(basename ${train_unsup_config%.*})
+if ${do_delta}; then
+    unsup_expname=${unsup_expname}_delta
+fi
+if [ -n "${preprocess_config}" ]; then
+    unsup_expname=${unsup_expname}_$(basename ${preprocess_config%.*})
+fi
 unsup_expdir=exp/${unsup_expname}
 mkdir -p ${unsup_expdir}
 
