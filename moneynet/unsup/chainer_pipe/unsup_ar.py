@@ -391,6 +391,10 @@ def train(args):
         optimizer = get_std_opt(
             model, args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
+    elif args.opt == 'sgd':
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 

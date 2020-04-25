@@ -34,14 +34,14 @@ datadir=/export/a15/vpanayotov/data
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
+lm_url=www.openslr.org/resources/11
 
 # bpemode (unigram or bpe)
 nbpe=5000
 bpemode=unigram
 
 # exp tag
-tag= # tag for managing experiments.
-unsup_tag=
+tag="" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -49,7 +49,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_960
+train_set=train_100
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -68,11 +68,29 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
         # use underscore-separated names in data directories.
         local/data_prep.sh ${datadir}/LibriSpeech/${part} data/${part//-/_}
     done
+
+    # download the LM resources
+    local/download_lm.sh $lm_url data/local/lm
+    # when the "--stage 3" option is used below we skip the G2P steps, and use the
+    # lexicon we have already downloaded from openslr.org/11/
+    local/prepare_dict.sh --stage 3 --nj 30 --cmd "$train_cmd" \
+    data/local/lm data/local/lm data/local/dict_nosp
+    utils/prepare_lang.sh data/local/dict_nosp \
+    "<UNK>" data/local/lang_tmp_nosp data/lang_nosp
+    local/format_lms.sh --src-dir data/lang_nosp data/local/lm
+fi
+
+if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
+    # Create ConstArpaLm format language model for full 3-gram and 4-gram LMs
+    utils/build_const_arpa_lm.sh data/local/lm/lm_tglarge.arpa.gz \
+    data/lang_nosp data/lang_nosp_test_tglarge
+    utils/build_const_arpa_lm.sh data/local/lm/lm_fglarge.arpa.gz \
+    data/lang_nosp data/lang_nosp_test_fglarge
 fi
 
 feat_tr_dir=${dumpdir}/${train_set}/delta${do_delta}; mkdir -p ${feat_tr_dir}
 feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
-if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
+if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 1: Feature Generation"
@@ -84,8 +102,13 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         utils/fix_data_dir.sh data/${x}
     done
 
-    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
+    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 # data/train_clean_360 data/train_other_500
     utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
+
+    # prepare gmm training
+    utils/subset_data_dir.sh --shortest data/${train_set}_org 2000 data/train_2kshort
+    utils/subset_data_dir.sh data/${train_set}_org 5000 data/train_5k
+    utils/subset_data_dir.sh data/${train_set}_org 10000 data/train_10k
 
     # remove utt having more than 3000 frames
     # remove utt having more than 400 characters
@@ -118,12 +141,50 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     done
 fi
 
+if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+    steps/train_mono.sh --boost-silence 1.25 --nj 32 --cmd "$train_cmd" \
+                      data/train_2kshort data/lang_nosp exp/mono
+
+    # decode using the monophone model
+    (
+    utils/mkgraph.sh data/lang_nosp_test_tgsmall \
+                     exp/mono exp/mono/graph_nosp_tgsmall
+    for test in test_clean test_other dev_clean dev_other; do
+        steps/decode.sh --nj 32 --cmd "$decode_cmd" exp/mono/graph_nosp_tgsmall \
+                      data/$test exp/mono/decode_nosp_tgsmall_$test
+    done
+    )&
+fi
+
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    steps/align_si.sh --boost-silence 1.25 --nj 10 --cmd "$train_cmd" \
+                    data/train_5k data/lang_nosp exp/mono exp/mono_ali_5k
+
+    # train a first delta + delta-delta triphone system on a subset of 5000 utterances
+    steps/train_deltas.sh --boost-silence 1.25 --cmd "$train_cmd" \
+                        2000 10000 data/train_5k data/lang_nosp exp/mono_ali_5k exp/tri1
+
+    # decode using the tri1 model
+    (
+    utils/mkgraph.sh data/lang_nosp_test_tgsmall \
+                     exp/tri1 exp/tri1/graph_nosp_tgsmall
+    for test in test_clean test_other dev_clean dev_other; do
+        steps/decode.sh --nj 20 --cmd "$decode_cmd" exp/tri1/graph_nosp_tgsmall \
+                      data/$test exp/tri1/decode_nosp_tgsmall_$test
+        steps/lmrescore.sh --cmd "$decode_cmd" data/lang_nosp_test_{tgsmall,tgmed} \
+                         data/$test exp/tri1/decode_nosp_{tgsmall,tgmed}_$test
+        steps/lmrescore_const_arpa.sh \
+        --cmd "$decode_cmd" data/lang_nosp_test_{tgsmall,tglarge} \
+        data/$test exp/tri1/decode_nosp_{tgsmall,tglarge}_$test
+    done
+    )&
+fi
+
 dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
 bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
 echo "dictionary: ${dict}"
-if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
-    echo "stage 2: Dictionary and Json Data Preparation"
     mkdir -p data/lang_char/
     echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
     cut -f 2- -d" " data/${train_set}/text > data/lang_char/input.txt
@@ -144,39 +205,6 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     done
 fi
 
-if [ -z ${unsup_tag} ]; then
-    unsup_expname=${train_set}_$(basename ${train_unsup_config%.*})
-    if ${do_delta}; then
-        unsup_expname=${unsup_expname}_delta
-    fi
-    if [ -n "${preprocess_config}" ]; then
-        unsup_expname=${unsup_expname}_$(basename ${preprocess_config%.*})
-    fi
-else
-    unsup_expname=${train_set}_${unsup_tag}
-fi
-unsup_expdir=exp/${unsup_expname}
-mkdir -p ${unsup_expdir}
-
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
-    echo "stage 3: Unsupervised Training"
-    ${cuda_cmd} --gpu ${ngpu} ${unsup_expdir}/train.log \
-        unsup_train.py \
-        --config ${train_unsup_config} \
-        --ngpu ${ngpu} \
-        --backend pytorch \
-        --outdir ${unsup_expdir}/results \
-        --tensorboard-dir tensorboard/${unsup_expname} \
-        --debugmode 1 \
-        --dict ${dict} \
-        --debugdir ${unsup_expdir} \
-        --minibatches 0 \
-        --verbose 0 \
-        --resume ${unsup_resume} \
-        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
-fi
-
 if [ -z ${tag} ]; then
     expname=${train_set}_$(basename ${train_config%.*})
     if ${do_delta}; then
@@ -191,8 +219,7 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
-if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
-    echo "stage 4: Network Training"
+if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \

@@ -34,6 +34,8 @@ class Net(nn.Module):
         group.add_argument("--hdim", default=160, type=int)
         group.add_argument("--cdim", default=16, type=int)
         group.add_argument("--tnum", default=10, type=int)
+        group.add_argument("--lr", default=0.001, type=float)
+        group.add_argument("--momentum", default=0.9, type=float)
 
         return parser
 
