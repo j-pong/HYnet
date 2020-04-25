@@ -81,6 +81,7 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
 fi
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
+    echo "stage 1: Language Model"
     # Create ConstArpaLm format language model for full 3-gram and 4-gram LMs
     utils/build_const_arpa_lm.sh data/local/lm/lm_tglarge.arpa.gz \
     data/lang_nosp data/lang_nosp_test_tglarge
@@ -93,7 +94,7 @@ feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
-    echo "stage 1: Feature Generation"
+    echo "stage 2: Feature Generation"
     fbankdir=fbank
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
     for x in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
@@ -105,11 +106,6 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 # data/train_clean_360 data/train_other_500
     utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
 
-    # prepare gmm training
-    utils/subset_data_dir.sh --shortest data/${train_set}_org 2000 data/train_2kshort
-    utils/subset_data_dir.sh data/${train_set}_org 5000 data/train_5k
-    utils/subset_data_dir.sh data/${train_set}_org 10000 data/train_10k
-
     # remove utt having more than 3000 frames
     # remove utt having more than 400 characters
     remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_set}_org data/${train_set}
@@ -117,6 +113,11 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
+
+    # prepare gmm training
+    utils/subset_data_dir.sh --shortest data/${train_set} 2000 data/train_2kshort
+    utils/subset_data_dir.sh data/${train_set} 5000 data/train_5k
+    utils/subset_data_dir.sh data/${train_set} 10000 data/train_10k
 
     # dump features for training
     if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
@@ -141,7 +142,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     done
 fi
 
-if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     steps/train_mono.sh --boost-silence 1.25 --nj 32 --cmd "$train_cmd" \
                       data/train_2kshort data/lang_nosp exp/mono
 
@@ -156,7 +157,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     )&
 fi
 
-if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     steps/align_si.sh --boost-silence 1.25 --nj 10 --cmd "$train_cmd" \
                     data/train_5k data/lang_nosp exp/mono exp/mono_ali_5k
 
@@ -183,7 +184,7 @@ fi
 dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
 bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
 echo "dictionary: ${dict}"
-if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     mkdir -p data/lang_char/
     echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
@@ -219,7 +220,7 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
-if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
