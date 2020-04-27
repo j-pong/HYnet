@@ -73,24 +73,13 @@ class Net(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
-    def forward(self, xs_pad, ilens, ys_pad):
+    def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         # prepare data
-        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
-        seq_mask = make_pad_mask((ilens - self.tnum).tolist()).to(xs_pad.device)
-
-        xs_pad_s = xs_pad
-        xs = []
-        for x_pad, ilen in zip(xs_pad_s, ilens):
-            xs.append(x_pad[:ilen][:-self.tnum])
-        xs_pad_s = pad_list(xs, 0)  # B, Tmax, C
-
-        xs_pad_t = xs_pad.clone()
-        xs_pad_t.retain_grad()
-        xs = []
-        for x_pad, ilen in zip(xs_pad_t, ilens):
-            xs.append(torch.stack([x_pad[:ilen][i + 1:-self.tnum + i + 1] if (-self.tnum + i + 1) != 0 else
-                                   x_pad[:ilen][i + 1:] for i in range(self.tnum)], dim=-2))
-        xs_pad_t = pad_list(xs, 0)  # B, Tmax, tnum, C
+        xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
+        xs_pad_out = xs_pad_out[:, :max(ilens)]
+        seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
+        # print(xs_pad_in.size(), xs_pad_out.size(), seq_mask.size())
+        # exit()
 
         # monitoring buffer
         buffs = {'loss': []}
@@ -99,16 +88,17 @@ class Net(nn.Module):
         hidden_mask = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # feedforward to inference network
-            xs_ele_t, hidden_mask = self.inference(xs_pad_s, hidden_mask, decoder_type='src')
-            xs_ele_t = xs_ele_t.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
+            xs_ele_out, hidden_mask = self.inference(xs_pad_in, hidden_mask, decoder_type='src')
+            xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
 
             # compute loss of total network
             masks = [seq_mask.view(-1, 1)]
-            loss_local = self.criterion(xs_ele_t.mean(-2).view(-1, self.idim), xs_pad_t.mean(-2).view(-1, self.idim),
+            loss_local = self.criterion(xs_ele_out.mean(-2).view(-1, self.idim),
+                                        xs_pad_out.mean(-2).view(-1, self.idim),
                                         masks)
 
             # compute residual feature
-            xs_pad_t = (xs_pad_t - xs_ele_t).detach()
+            xs_pad_out = (xs_pad_out - xs_ele_out).detach()
 
             # buffering
             buffs['loss'].append(loss_local.sum())

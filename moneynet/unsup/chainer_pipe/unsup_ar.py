@@ -254,11 +254,12 @@ class CustomConverter(object):
 
     """
 
-    def __init__(self, subsampling_factor=1, dtype=torch.float32):
+    def __init__(self, tnum=1, subsampling_factor=1, dtype=torch.float32):
         """Construct a CustomConverter object."""
         self.subsampling_factor = subsampling_factor
         self.ignore_id = -1
         self.dtype = dtype
+        self.tnum = tnum
 
     def __call__(self, batch, device=torch.device("cpu")):
         """Transform a batch and send it to a device.
@@ -281,27 +282,21 @@ class CustomConverter(object):
 
         # get batch of lengths of input sequences
         ilens = np.array([x.shape[0] for x in xs])
+        xs_pad_in = pad_list(
+            [torch.from_numpy(x[:-self.tnum]).float()
+             for x in xs],
+            0
+        ).to(device, dtype=self.dtype)
+        xs_pad_out = pad_list(
+            [
+                torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
+                             if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
+                             for i in range(self.tnum)], dim=-2)
+                for x in xs],
+            0
+        ).to(device, dtype=self.dtype)
 
-        # perform padding and convert to tensor
-        # currently only support real number
-        if xs[0].dtype.kind == "c":
-            xs_pad_real = pad_list(
-                [torch.from_numpy(x.real).float() for x in xs], 0
-            ).to(device, dtype=self.dtype)
-            xs_pad_imag = pad_list(
-                [torch.from_numpy(x.imag).float() for x in xs], 0
-            ).to(device, dtype=self.dtype)
-            # Note(kamo):
-            # {'real': ..., 'imag': ...} will be changed to ComplexTensor in E2E.
-            # Don't create ComplexTensor and give it E2E here
-            # because torch.nn.DataParellel can't handle it.
-            xs_pad = {"real": xs_pad_real, "imag": xs_pad_imag}
-        else:
-            xs_pad = pad_list([torch.from_numpy(x).float() for x in xs], 0).to(
-                device, dtype=self.dtype
-            )
-
-        ilens = torch.from_numpy(ilens).to(device)
+        ilens = torch.from_numpy(ilens - self.tnum).to(device)
         # NOTE: this is for multi-output (e.g., speech translation)
         ys_pad = pad_list(
             [
@@ -313,7 +308,7 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad, ilens, ys_pad
+        return xs_pad_in, xs_pad_out, ilens, ys_pad
 
 
 def train(args):
@@ -425,7 +420,7 @@ def train(args):
     setattr(optimizer, "serialize", lambda s: reporter.serialize(s))
 
     # Setup a converter
-    converter = CustomConverter(subsampling_factor=model.subsample[0], dtype=dtype)
+    converter = CustomConverter(tnum=args.tnum, subsampling_factor=model.subsample[0], dtype=dtype)
 
     # read json data
     with open(args.train_json, "rb") as f:
@@ -564,26 +559,6 @@ def train(args):
                        trigger=(args.save_interval_iters, "iteration"), )
     else:
         trainer.extend(torch_snapshot(), trigger=(1, "epoch"))
-
-    # # epsilon decay in the optimizer
-    # if args.opt == "adadelta":
-    #     if args.criterion == "acc":
-    #         trainer.extend(
-    #             restore_snapshot(
-    #                 model, args.outdir + "/model.acc.best", load_fn=torch_load
-    #             ),
-    #             trigger=CompareValueTrigger(
-    #                 "validation/main/acc",
-    #                 lambda best_value, current_value: best_value > current_value,
-    #             ),
-    #         )
-    #         trainer.extend(
-    #             adadelta_eps_decay(args.eps_decay),
-    #             trigger=CompareValueTrigger(
-    #                 "validation/main/acc",
-    #                 lambda best_value, current_value: best_value > current_value,
-    #             ),
-    #         )
 
     # Write a log of evaluation statistics for each epoch
     trainer.extend(extensions.LogReport(trigger=(args.report_interval_iters, "iteration")))
