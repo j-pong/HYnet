@@ -173,21 +173,21 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     echo "stage 8: Get Allignment"
     # Now we compute the pronunciation and silence probabilities from training data,
     # and re-create the lang directory.
-    # steps/get_prons.sh --cmd "$train_cmd" \
-    #                 data/train_clean_100 data/lang_nosp exp/tri4b
-    # utils/dict_dir_add_pronprobs.sh --max-normalize true \
-    #                                 data/local/dict_nosp \
-    #                                 exp/tri4b/pron_counts_nowb.txt exp/tri4b/sil_counts_nowb.txt \
-    #                                 exp/tri4b/pron_bigram_counts_nowb.txt data/local/dict
+    steps/get_prons.sh --cmd "$train_cmd" \
+                    data/train_clean_100 data/lang_nosp exp/tri4b
+    utils/dict_dir_add_pronprobs.sh --max-normalize true \
+                                    data/local/dict_nosp \
+                                    exp/tri4b/pron_counts_nowb.txt exp/tri4b/sil_counts_nowb.txt \
+                                    exp/tri4b/pron_bigram_counts_nowb.txt data/local/dict
 
-    # utils/prepare_lang.sh data/local/dict \
-    #                     "<UNK>" data/local/lang_tmp data/lang
-    # local/format_lms.sh --src-dir data/lang data/local/lm
+    utils/prepare_lang.sh data/local/dict \
+                        "<UNK>" data/local/lang_tmp data/lang
+    local/format_lms.sh --src-dir data/lang data/local/lm
 
-    # utils/build_const_arpa_lm.sh \
-    # data/local/lm/lm_tglarge.arpa.gz data/lang data/lang_test_tglarge
-    # utils/build_const_arpa_lm.sh \
-    # data/local/lm/lm_fglarge.arpa.gz data/lang data/lang_test_fglarge
+    utils/build_const_arpa_lm.sh \
+    data/local/lm/lm_tglarge.arpa.gz data/lang data/lang_test_tglarge
+    utils/build_const_arpa_lm.sh \
+    data/local/lm/lm_fglarge.arpa.gz data/lang data/lang_test_fglarge
 
     # decode using the tri4b model with pronunciation and silence probabilities
     utils/mkgraph.sh \
@@ -248,26 +248,17 @@ fi
 
 dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
 bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
-echo "dictionary: ${dict}"
 if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
-    ### Task dependent. You have to check non-linguistic symbols used in the corpus.
-#    mkdir -p data/lang_char/
-#    echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
-#    cut -f 2- -d" " data/${train_set}/text > data/lang_char/input.txt
-#    spm_train --input=data/lang_char/input.txt --vocab_size=${nbpe} --model_type=${bpemode} --model_prefix=${bpemodel} --input_sentence_size=100000000
-#    spm_encode --model=${bpemodel}.model --output_format=piece < data/lang_char/input.txt | tr ' ' '\n' | sort | uniq | awk '{print $0 " " NR+1}' >> ${dict}
-#    wc -l ${dict}
+    # get alignment tokenid and filter feats.scp
+    for part in train_set train_dev recog_set; do
+        cp ${dumpdir}/${part}/delta${do_delta}/feats.scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
+        local/utt2tokenid.py \
+        --data_dir data/${part} \
+        --ali_dir exp/tri4b_ali_train_clean_100/ali.*.gz \
+        --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats.scp}/feats_org.scp
 
-    # make json labels
-    data2json.sh --feat ${feat_tr_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_set} ${dict} > ${feat_tr_dir}/data_${bpemode}${nbpe}.json
-    data2json.sh --feat ${feat_dt_dir}/feats.scp --bpecode ${bpemodel}.model \
-        data/${train_dev} ${dict} > ${feat_dt_dir}/data_${bpemode}${nbpe}.json
-
-    for rtask in ${recog_set}; do
-        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        data2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
-            data/${rtask} ${dict} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+        local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp/feats.scp \
+            data/${part} > ${dumpdir}/${part}/delta${do_delta}/feats.scp/data_${bpemode}${nbpe}.json
     done
 fi
 

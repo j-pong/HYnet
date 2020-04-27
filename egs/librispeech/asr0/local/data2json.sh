@@ -25,8 +25,8 @@ text=""
 multilingual=false
 
 help_message=$(cat << EOF
-Usage: $0 <data-dir> <dict>
-e.g. $0 data/train data/lang_1char/train_units.txt
+Usage: $0 <data-dir>
+e.g. $0 data/train
 Options:
   --nj <nj>                                        # number of parallel jobs
   --cmd (utils/run.pl|utils/queue.pl <queue opts>) # how to run jobs.
@@ -50,7 +50,7 @@ set -euo pipefail
 dir=$1
 dic=$2
 tmpdir=$(mktemp -d ${dir}/tmp-XXXXX)
-trap 'rm -rf ${tmpdir}' EXIT
+#trap 'rm -rf ${tmpdir}' EXIT
 
 if [ -z ${text} ]; then
     text=${dir}/text
@@ -84,27 +84,12 @@ if [ -n "${feat}" ]; then
 fi
 
 # 2. Create scp files for outputs
-mkdir -p ${tmpdir}/output
-if [ -n "${bpecode}" ]; then
-    if [ ${multilingual} = true ]; then
-        # remove a space before the language ID
-        paste -d " " <(awk '{print $1}' ${text}) <(cut -f 2- -d" " ${text} \
-            | spm_encode --model=${bpecode} --output_format=piece | cut -f 2- -d" ") \
-            > ${tmpdir}/output/token.scp
-    else
-        paste -d " " <(awk '{print $1}' ${text}) <(cut -f 2- -d" " ${text} \
-            | spm_encode --model=${bpecode} --output_format=piece) \
-            > ${tmpdir}/output/token.scp
-    fi
-elif [ -n "${nlsyms}" ]; then
-    text2token.py -s 1 -n 1 -l ${nlsyms} ${text} --trans_type ${trans_type} > ${tmpdir}/output/token.scp
-else
-    text2token.py -s 1 -n 1 ${text} --trans_type ${trans_type} > ${tmpdir}/output/token.scp
-fi
-< ${tmpdir}/output/token.scp utils/sym2int.pl --map-oov ${oov} -f 2- ${dic} > ${tmpdir}/output/tokenid.scp
-# +2 comes from CTC blank and EOS
-vocsize=$(tail -n 1 ${dic} | awk '{print $2}')
-odim=$(echo "$vocsize + 2" | bc)
+# TODO: get alignment directory as argument
+if [[ ! -f exp/tri4b/graph_tgsmall/num_pdfs ]]; then
+    echo "exp/tri4b/graph_tgsmall/num_pdfs does not exist!"
+    exit 1;
+vocsize=$(cat exp/tri4b/graph_tgsmall/num_pdfs)
+odim=$(echo "$vocsize" | bc)
 < ${tmpdir}/output/tokenid.scp awk -v odim=${odim} '{print $1 " " NF-1 "," odim}' > ${tmpdir}/output/shape.scp
 
 cat ${text} > ${tmpdir}/output/text.scp
