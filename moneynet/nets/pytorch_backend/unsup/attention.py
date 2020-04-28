@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 import torch
 
-from moneynet.nets.unsup.utils import temp_softmax
-
 
 def attention(x, y, temper, pseudo_zero=1e-6):
     score = (x * y)

@@ -12,7 +12,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 
-from moneynet.nets.simnn_unsup import Net
+from moneynet.nets.pytorch_backend.ar_unsup_simnn import Net
 from moneynet.utils.pytorch_pipe.datasets.pikachu_dataset import Pikachu
 
 

@@ -1,8 +1,7 @@
 import torch
-import torch.nn.functional as F
 from torch import nn
 
-from moneynet.nets.unsup.utils import pad_for_shift, select_with_ind
+from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind
 
 
 class InferenceNet(nn.Module):

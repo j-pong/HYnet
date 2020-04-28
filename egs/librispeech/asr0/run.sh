@@ -246,19 +246,38 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     done
 fi
 
-dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
-bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
+# get alignment sequence index
 if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
-    # get alignment tokenid and filter feats.scp
-    for part in train_set train_dev recog_set; do
-        cp ${dumpdir}/${part}/delta${do_delta}/feats.scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
+    # for part in ${train_set} ${train_dev} ${recog_set}; do
+        # cp ${dumpdir}/${part}/delta${do_delta}/feats.scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
+        # cp data/${part}/text data/${part}/text_org
+        # cp data/${part}/utt2spk data/${part}/utt2spk_org
+
+        # mkdir -p ./test/${part}
+        # cp ${dumpdir}/${part}/delta${do_delta}/feats.scp ./test/${part}/feats_org.scp
+        # cp data/${part}/text ./test/${part}/text_org
+        # cp data/${part}/utt2spk ./test/${part}/utt2spk_org
+    # done
+
+    # make tokenid.scp, json file and filter recipes
+    for part in ${train_set} ${recog_set}; do
+        local/utt2tokenid.py\
+        --data_dir data/${part} \
+        --ali_dir exp/tri4b_ali_${part} \
+        --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
+
+        local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
+            data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
+    done
+
+    for part in ${train_dev}; do
         local/utt2tokenid.py \
         --data_dir data/${part} \
-        --ali_dir exp/tri4b_ali_train_clean_100/ali.*.gz \
-        --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats.scp}/feats_org.scp
+        --ali_dir exp/tri4b_ali_dev_clean exp/tri4b_ali_data/dev_other \
+        --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
 
-        local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp/feats.scp \
-            data/${part} > ${dumpdir}/${part}/delta${do_delta}/feats.scp/data_${bpemode}${nbpe}.json
+        local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
+            data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
     done
 fi
 
@@ -278,7 +297,7 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train.py \
+        asr_hyb_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \

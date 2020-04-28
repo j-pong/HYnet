@@ -4,7 +4,7 @@ import torch
 
 import matplotlib.pyplot as plt
 
-from moneynet.nets.unsup.utils import pad_for_shift, reverse_pad_for_shift, select_with_ind
+from moneynet.nets.pytorch_backend.unsup import pad_for_shift, reverse_pad_for_shift, select_with_ind
 
 
 def main():

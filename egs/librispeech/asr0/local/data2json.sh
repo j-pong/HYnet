@@ -40,7 +40,7 @@ EOF
 )
 . utils/parse_options.sh
 
-if [ $# != 2 ]; then
+if [ $# != 1 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
@@ -48,9 +48,8 @@ fi
 set -euo pipefail
 
 dir=$1
-dic=$2
 tmpdir=$(mktemp -d ${dir}/tmp-XXXXX)
-#trap 'rm -rf ${tmpdir}' EXIT
+trap 'rm -rf ${tmpdir}' EXIT
 
 if [ -z ${text} ]; then
     text=${dir}/text
@@ -85,9 +84,13 @@ fi
 
 # 2. Create scp files for outputs
 # TODO: get alignment directory as argument
+mkdir -p ${tmpdir}/output
+sort < data/train_clean_100/tokenid.scp > ${tmpdir}/output/tokenid.scp
+
 if [[ ! -f exp/tri4b/graph_tgsmall/num_pdfs ]]; then
     echo "exp/tri4b/graph_tgsmall/num_pdfs does not exist!"
     exit 1;
+fi
 vocsize=$(cat exp/tri4b/graph_tgsmall/num_pdfs)
 odim=$(echo "$vocsize" | bc)
 < ${tmpdir}/output/tokenid.scp awk -v odim=${odim} '{print $1 " " NF-1 "," odim}' > ${tmpdir}/output/shape.scp
