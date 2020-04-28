@@ -83,9 +83,8 @@ if [ -n "${feat}" ]; then
 fi
 
 # 2. Create scp files for outputs
-# TODO: get alignment directory as argument
 mkdir -p ${tmpdir}/output
-sort < data/train_clean_100/tokenid.scp > ${tmpdir}/output/tokenid.scp
+sort < ${dir}/tokenid.scp > ${tmpdir}/output/tokenid.scp
 
 if [[ ! -f exp/tri4b/graph_tgsmall/num_pdfs ]]; then
     echo "exp/tri4b/graph_tgsmall/num_pdfs does not exist!"

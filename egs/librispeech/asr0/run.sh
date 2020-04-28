@@ -160,12 +160,12 @@ if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
     echo "stage 7: tri4b Triphone Training"
     # align the entire train_clean_100 subset using the tri3b model
     steps/align_fmllr.sh --nj ${nj} --cmd "$train_cmd" \
-    data/train_clean_100 data/lang_nosp \
+    data/${train_set} data/lang_nosp \
     exp/tri3b exp/tri3b_ali_clean_100
 
     # train another LDA+MLLT+SAT system on the entire 100 hour subset
     steps/train_sat.sh  --cmd "$train_cmd" 4200 40000 \
-                        data/train_clean_100 data/lang_nosp \
+                        data/${train_set} data/lang_nosp \
                         exp/tri3b_ali_clean_100 exp/tri4b
 fi
 
@@ -174,7 +174,7 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     # Now we compute the pronunciation and silence probabilities from training data,
     # and re-create the lang directory.
     steps/get_prons.sh --cmd "$train_cmd" \
-                    data/train_clean_100 data/lang_nosp exp/tri4b
+                    data/${train_set} data/lang_nosp exp/tri4b
     utils/dict_dir_add_pronprobs.sh --max-normalize true \
                                     data/local/dict_nosp \
                                     exp/tri4b/pron_counts_nowb.txt exp/tri4b/sil_counts_nowb.txt \
@@ -192,7 +192,7 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     # decode using the tri4b model with pronunciation and silence probabilities
     utils/mkgraph.sh \
         data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
-    mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
+    mkdir exp/tri4b/decode_tgsmall_${train_set} && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_${train_set}/
     for test in dev_clean dev_other test_clean test_other; do
         steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
                             exp/tri4b/graph_tgsmall data/$test \
@@ -228,6 +228,7 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
 
     utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 # data/train_clean_360 data/train_other_500
     utils/combine_data.sh --extra_files utt2num_frames data/${train_dev} data/dev_clean data/dev_other
+    # TODO: more smart way
     rm -rf data/train_clean_100; mkdir data/train_clean_100; cp data/${train_set}_org/* data/train_clean_100
 
     # compute global CMVN
@@ -248,37 +249,19 @@ fi
 
 # get alignment sequence index
 if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
-    # for part in ${train_set} ${train_dev} ${recog_set}; do
-        # cp ${dumpdir}/${part}/delta${do_delta}/feats.scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
-        # cp data/${part}/text data/${part}/text_org
-        # cp data/${part}/utt2spk data/${part}/utt2spk_org
-
-        # mkdir -p ./test/${part}
-        # cp ${dumpdir}/${part}/delta${do_delta}/feats.scp ./test/${part}/feats_org.scp
-        # cp data/${part}/text ./test/${part}/text_org
-        # cp data/${part}/utt2spk ./test/${part}/utt2spk_org
-    # done
-
+    echo "stage 9: Tokenid.scp Generation"
     # make tokenid.scp, json file and filter recipes
-    for part in ${train_set} ${recog_set}; do
-        local/utt2tokenid.py\
-        --data_dir data/${part} \
-        --ali_dir exp/tri4b_ali_${part} \
-        --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
+    for part in train_clean_100 dev_clean dev_other test_clean test_other; do
+        KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
+            --data_dir data/${part} \
+            --ali_dir exp/tri4b_ali_${part} \
+            --ali_mdl exp/tri4b/final.mdl \
+            --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
 
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
     done
 
-    for part in ${train_dev}; do
-        local/utt2tokenid.py \
-        --data_dir data/${part} \
-        --ali_dir exp/tri4b_ali_dev_clean exp/tri4b_ali_data/dev_other \
-        --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
-
-        local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
-            data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
-    done
 fi
 
 if [ -z ${tag} ]; then
@@ -305,7 +288,6 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
         --outdir ${expdir}/results \
         --tensorboard-dir tensorboard/${expname} \
         --debugmode 1 \
-        --dict ${dict} \
         --debugdir ${expdir} \
         --minibatches 0 \
         --verbose 0 \
