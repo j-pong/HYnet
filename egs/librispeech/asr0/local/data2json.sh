@@ -85,12 +85,8 @@ fi
 # 2. Create scp files for outputs
 mkdir -p ${tmpdir}/output
 sort < ${dir}/tokenid.scp > ${tmpdir}/output/tokenid.scp
-
-if [[ ! -f exp/tri4b/graph_tgsmall/num_pdfs ]]; then
-    echo "exp/tri4b/graph_tgsmall/num_pdfs does not exist!"
-    exit 1;
-fi
-vocsize=$(cat exp/tri4b/graph_tgsmall/num_pdfs)
+pdfs=exp/tri4b/graph_tgsmall/num_pdfs
+vocsize=$(cat ${pdfs})
 odim=$(echo "$vocsize" | bc)
 < ${tmpdir}/output/tokenid.scp awk -v odim=${odim} '{print $1 " " NF-1 "," odim}' > ${tmpdir}/output/shape.scp
 
@@ -152,6 +148,6 @@ fi
 if [ -n "${out}" ]; then
     opts+="-O ${out}"
 fi
-merge_scp2json.py --verbose ${verbose} ${opts}
+local/merge_scp2json.py --verbose ${verbose} ${opts}
 
 rm -fr ${tmpdir}

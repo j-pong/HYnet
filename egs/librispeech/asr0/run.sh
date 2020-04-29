@@ -37,8 +37,8 @@ data_url=www.openslr.org/resources/12
 lm_url=www.openslr.org/resources/11
 
 # bpemode (unigram or bpe)
-nbpe=5000
-bpemode=unigram
+nbpe=0
+bpemode=triphone
 
 # exp tag
 tag="" # tag for managing experiments.
@@ -56,7 +56,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_clean_100
+train_set=train_100
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -114,9 +114,9 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     # easier to align the data from a flat start.
 
     # prepare gmm curriculum training
-    utils/subset_data_dir.sh --shortest data/${train_set} 2000 data/train_2kshort
-    utils/subset_data_dir.sh data/${train_set} 5000 data/train_5k
-    utils/subset_data_dir.sh data/${train_set} 10000 data/train_10k
+    utils/subset_data_dir.sh --shortest data/train_clean_100 2000 data/train_2kshort
+    utils/subset_data_dir.sh data/train_clean_100 5000 data/train_5k
+    utils/subset_data_dir.sh data/train_clean_100 10000 data/train_10k
 
     # train a monophone system
     steps/train_mono.sh --boost-silence 1.25 --nj ${nj} --cmd "$train_cmd" \
@@ -160,21 +160,21 @@ if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
     echo "stage 7: tri4b Triphone Training"
     # align the entire train_clean_100 subset using the tri3b model
     steps/align_fmllr.sh --nj ${nj} --cmd "$train_cmd" \
-    data/${train_set} data/lang_nosp \
+    data/train_clean_100 data/lang_nosp \
     exp/tri3b exp/tri3b_ali_clean_100
 
     # train another LDA+MLLT+SAT system on the entire 100 hour subset
     steps/train_sat.sh  --cmd "$train_cmd" 4200 40000 \
-                        data/${train_set} data/lang_nosp \
+                        data/train_clean_100 data/lang_nosp \
                         exp/tri3b_ali_clean_100 exp/tri4b
 fi
 
 if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
-    echo "stage 8: Get Allignment"
+    echo "stage 8: tri4b Triphone Decoding"
     # Now we compute the pronunciation and silence probabilities from training data,
     # and re-create the lang directory.
     steps/get_prons.sh --cmd "$train_cmd" \
-                    data/${train_set} data/lang_nosp exp/tri4b
+                    data/train_clean_100 data/lang_nosp exp/tri4b
     utils/dict_dir_add_pronprobs.sh --max-normalize true \
                                     data/local/dict_nosp \
                                     exp/tri4b/pron_counts_nowb.txt exp/tri4b/sil_counts_nowb.txt \
@@ -192,7 +192,7 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     # decode using the tri4b model with pronunciation and silence probabilities
     utils/mkgraph.sh \
         data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
-    mkdir exp/tri4b/decode_tgsmall_${train_set} && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_${train_set}/
+    mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
     for test in dev_clean dev_other test_clean test_other; do
         steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
                             exp/tri4b/graph_tgsmall data/$test \
@@ -206,30 +206,43 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
         --cmd "$decode_cmd" data/lang_test_{tgsmall,fglarge} \
         data/$test exp/tri4b/decode_{tgsmall,fglarge}_$test
     done
+fi
+
+if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
+    echo "stage 9: Get Alignment"
 
     # align the train, test, dev set using the tri4b model
     for part in train_clean_100 dev_clean dev_other test_clean test_other; do
         steps/align_fmllr.sh --nj ${nj} data/${part} data/lang exp/tri4b exp/tri4b_ali_${part}
+
+        KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
+            --data_dir data/${part} \
+            --ali_dir exp/tri4b_ali_${part} \
+            --ali_mdl exp/tri4b/final.mdl
     done
 fi
 
 feat_tr_dir=${dumpdir}/${train_set}/delta${do_delta}; mkdir -p ${feat_tr_dir}
 feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
-if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
+if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
-    echo "stage 9: Fbank Feature Generation"
+    echo "stage 10: Fbank Feature Generation For Network Training"
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
-    for x in dev_clean test_clean dev_other test_other train_clean_100; do
+    for x in train_clean_100 dev_clean dev_other test_clean test_other; do
+        mkdir -p data/${x}_fbank
+        cp -r data/${x}/* data/${x}_fbank
         steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} ${fbankdir}
-        utils/fix_data_dir.sh data/${x}
+            data/${x}_fbank exp/make_fbank/${x} ${fbankdir}
+        utils/fix_data_dir.sh data/${x}_fbank
     done
 
-    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 # data/train_clean_360 data/train_other_500
-    utils/combine_data.sh --extra_files utt2num_frames data/${train_dev} data/dev_clean data/dev_other
-    # TODO: more smart way
-    rm -rf data/train_clean_100; mkdir data/train_clean_100; cp data/${train_set}_org/* data/train_clean_100
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fbank # data/train_clean_360 data/train_other_500
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fbank data/dev_other_fbank
+    mkdir -p data/${train_set}
+    mkdir -p data/${train_dev}
+    cp -r data/${train_set}_org/* data/${train_set}
+    cp -r data/${train_dev}_org/* data/${train_dev}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
@@ -248,20 +261,18 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
 fi
 
 # get alignment sequence index
-if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
-    echo "stage 9: Tokenid.scp Generation"
+if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
+    echo "stage 11: Json"
     # make tokenid.scp, json file and filter recipes
-    for part in train_clean_100 dev_clean dev_other test_clean test_other; do
-        KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
-            --data_dir data/${part} \
-            --ali_dir exp/tri4b_ali_${part} \
-            --ali_mdl exp/tri4b/final.mdl \
-            --fea_scp ${dumpdir}/${part}/delta${do_delta}/feats_org.scp
-
+    for part in ${train_set} ${train_dev}; do
+        local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
+            data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
+        exit 1
+    done
+    for part in ${recog_set}; do
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
     done
-
 fi
 
 if [ -z ${tag} ]; then
@@ -278,7 +289,7 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
-if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
+if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_hyb_train.py \
         --config ${train_config} \
