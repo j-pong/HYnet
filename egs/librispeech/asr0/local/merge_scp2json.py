@@ -229,7 +229,7 @@ if __name__ == '__main__':
 
         entry = {}
         for inout, _lines, _infos in [('input', input_lines, input_infos),
-                                      ('output', output_lines + cur_lines, output_infos + cur_infos),
+                                      ('output', [sum(output_lines + cur_lines, [])], [sum(output_infos + cur_infos, [])]),
                                       ('other', lines, infos)]:
 
             lis = []
