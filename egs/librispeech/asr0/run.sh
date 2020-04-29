@@ -268,6 +268,7 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
     done
+    # TODO: fix me!
     for part in ${recog_set}; do
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
