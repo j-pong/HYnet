@@ -267,7 +267,6 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
     for part in ${train_set} ${train_dev}; do
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
-        exit 1
     done
     for part in ${recog_set}; do
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \

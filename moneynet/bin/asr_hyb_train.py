@@ -73,7 +73,7 @@ def get_parser(parser=None, required=True):
         "--outdir", type=str, required=required, help="Output directory"
     )
     parser.add_argument("--debugmode", default=1, type=int, help="Debugmode")
-    parser.add_argument("--dict", required=required, help="Dictionary")
+    parser.add_argument("--dict", help="Dictionary")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--debugdir", type=str, help="Output directory for debugging")
     parser.add_argument(
@@ -595,8 +595,6 @@ def main(cmd_args):
         args.char_list = None
 
     # train
-    logging.info("backend = " + args.backend)
-
     from moneynet.asr.pytorch_backend.asr import train
 
     train(args)

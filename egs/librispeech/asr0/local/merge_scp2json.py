@@ -11,6 +11,7 @@ from io import open
 import json
 import logging
 import sys
+import warnings
 
 from espnet.utils.cli_utils import get_commandline_args
 
@@ -127,11 +128,24 @@ if __name__ == '__main__':
                 lis.append((key, scp, type_func, key_scp, type_func_str))
             lis_list.append(lis)
 
-    # Open  scp files
+    cur_infos = [[]]
+    output_infos_temp = [[]]
+    for il in output_infos:
+        for i in il:
+            if 'tokenid.scp' in i[1] or 'shape.scp' in i[1]:
+                cur_infos[0].append(i)
+            else:
+                output_infos_temp[0].append(i)
+    output_infos = output_infos_temp
+    # Open scp files
     input_fscps = [[open(i[1], 'r', encoding='utf-8')
                     for i in il] for il in input_infos]
+    # Currency of keys for filtering key of other scps
+    # and cur_fscp keys is smaller than others
     output_fscps = [[open(i[1], 'r', encoding='utf-8') for i in il]
                     for il in output_infos]
+    cur_fscps = [[open(i[1], 'r', encoding='utf-8') for i in il]
+                 for il in cur_infos]
     fscps = [[open(i[1], 'r', encoding='utf-8') for i in il] for il in infos]
 
     # Note(kamo): What is done here?
@@ -146,31 +160,41 @@ if __name__ == '__main__':
     #
     # To reduce memory usage, reading the input text files for each lines
     # and writing JSON elements per samples.
-    print([[f.readlines() if 'tokenid.scp' in f.name else None for f in fl] for fl in output_fscps])
-    exit()
     if args.out is None:
         out = sys.stdout
     else:
         out = open(args.out, 'w', encoding='utf-8')
     out.write('{\n    "utts": {\n')
     nutt = 0
+    mis_flag = False
     while True:
         nutt += 1
         # List[List[str]]
-        input_lines = [[f.readline() for f in fl] for fl in input_fscps]
-        output_lines = [[f.readline() for f in fl] for fl in output_fscps]
-        lines = [[f.readline() for f in fl] for fl in fscps]
+        if mis_flag:
+            mis_flag = False
+            input_lines = [[f.readline() for f in fl] for fl in input_fscps]
+            output_lines = [[f.readline() for f in fl] for fl in output_fscps]
+            lines = [[f.readline() for f in fl] for fl in fscps]
+        else:
+            input_lines = [[f.readline() for f in fl] for fl in input_fscps]
+            output_lines = [[f.readline() for f in fl] for fl in output_fscps]
+            lines = [[f.readline() for f in fl] for fl in fscps]
+            cur_lines = [[f.readline() for f in fl] for fl in cur_fscps]
 
         # Get the first line
-        concat = sum(input_lines + output_lines + lines, [])
+        concat = sum(input_lines + output_lines + cur_lines + lines, [])
         if len(concat) == 0:
             break
         first = concat[0]
 
         # Sanity check: Must be sorted by the first column and have same keys
         count = 0
-        for ls_list in (input_lines, output_lines, lines):
+        for ls_list in (input_lines, output_lines, cur_lines, lines):
+            if mis_flag:
+                break
             for ls in ls_list:
+                if mis_flag:
+                    break
                 for line in ls:
                     if line == '' or first == '':
                         if line != first:
@@ -179,16 +203,21 @@ if __name__ == '__main__':
                             raise RuntimeError(
                                 'The number of lines mismatch '
                                 'between: "{}" and "{}"'
-                                .format(concat[0][1], concat[count][1]))
+                                    .format(concat[0][1], concat[count][1]))
 
                     elif line.split()[0] != first.split()[0]:
-                        concat = sum(input_infos + output_infos + infos, [])
-                        raise RuntimeError(
-                            'The keys are mismatch at {}th line '
-                            'between "{}" and "{}":\n>>> {}\n>>> {}'
-                            .format(nutt, concat[0][1], concat[count][1],
-                                    first.rstrip(), line.rstrip()))
+                        concat = sum(input_infos + output_infos + cur_infos + infos, [])
+                        mis_flag = True
+                        # warnings.warn(
+                        #     'The keys are mismatch at {}th line '
+                        #     'between "{}" and "{}":\n>>> {}\n>>> {}'
+                        #         .format(nutt, concat[0][1], concat[count][1],
+                        #                 first.rstrip(), line.rstrip()))
+                        break
+
                     count += 1
+        if mis_flag:
+            continue
 
         # The end of file
         if first == '':
@@ -200,7 +229,7 @@ if __name__ == '__main__':
 
         entry = {}
         for inout, _lines, _infos in [('input', input_lines, input_infos),
-                                      ('output', output_lines, output_infos),
+                                      ('output', output_lines + cur_lines, output_infos + cur_infos),
                                       ('other', lines, infos)]:
 
             lis = []
@@ -222,7 +251,7 @@ if __name__ == '__main__':
                             raise RuntimeError(
                                 'Format error {}th line in {}: '
                                 ' Expecting "<key> <value>":\n>>> {}'
-                                .format(nutt, info[1], line))
+                                    .format(nutt, info[1], line))
                         uttid = sps[0]
                         value = ''
                     else:
