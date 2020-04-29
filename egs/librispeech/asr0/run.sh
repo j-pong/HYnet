@@ -255,7 +255,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
         dump.sh --cmd "$train_cmd" --nj ${nj} --do_delta ${do_delta} \
-            data/${rtask}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
+            data/${rtask}_fbank/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
 fi
@@ -268,7 +268,7 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
     done
-    # TODO: fix me!
+    
     for part in ${recog_set}; do
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
             data/${part} > ${dumpdir}/${part}/delta${do_delta}/data_${bpemode}${nbpe}.json
