@@ -290,6 +290,7 @@ expdir=exp/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
+    echo "stage 12: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_hyb_train.py \
         --config ${train_config} \
