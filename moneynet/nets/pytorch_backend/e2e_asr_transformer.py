@@ -24,15 +24,16 @@ from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.rnn.decoders import CTC_SCORING_RATIO
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
-from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
-from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import (
-    LabelSmoothingLoss,  # noqa: H301
-)
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.scorers.ctc import CTCPrefixScorer
+
+from moneynet.nets.pytorch_backend.transformer.encoder import Encoder
+from moneynet.nets.pytorch_backend.transformer.label_smoothing_loss import (
+    LabelSmoothingLoss,  # noqa: H301
+)
 
 
 class E2E(ASRInterface, torch.nn.Module):
@@ -106,7 +107,7 @@ class E2E(ASRInterface, torch.nn.Module):
             default=4,
             type=int,
             help="Number of encoder layers (for shared recognition part "
-            "in multi-speaker asr mode)",
+                 "in multi-speaker asr mode)",
         )
         group.add_argument(
             "--eunits",
@@ -163,6 +164,8 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate,
         )
+        self.oversampling = 4
+        self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -218,20 +221,30 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: accuracy in attention decoder
         :rtype: float
         """
-        # 1. forward encoder
+        # 1. forward Transformer encoder
         xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
+        if xs_pad.size(1) != ys_pad.size(1):
+            if xs_pad.size(1) < ys_pad.size(1):
+                ys_pad = ys_pad[:, :xs_pad.size(1)].contiguous()
+            else:
+                raise ValueError("target size {} is smaller than input size {}".format(ys_pad.size(1), xs_pad.size(1)))
         src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
-        pred_pad, hs_mask = self.encoder(xs_pad, src_mask)
-        self.pred_pad = pred_pad
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
 
-        # # 2. forward decoder
-        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-        # ys_mask = target_mask(ys_in_pad, self.ignore_id)
+        # 2. post-processing layer for target dimension
+        pred_pad = self.poster(hs_pad)
+        pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
+        self.pred_pad = pred_pad
+        if pred_pad.size(1) != ys_pad.size(1):
+            if pred_pad.size(1) < ys_pad.size(1):
+                ys_pad = ys_pad[:, :pred_pad.size(1)].contiguous()
+            else:
+                raise ValueError("target size {} and pred size {} is mismatch".format(ys_pad.size(1), pred_pad.size(1)))
 
         # 3. compute attention loss
-        loss_att = self.criterion(pred_pad, ys_out_pad)
+        loss_att = self.criterion(pred_pad, ys_pad)
         self.acc = th_accuracy(
-            pred_pad.view(-1, self.odim), ys_out_pad, ignore_label=self.ignore_id
+            pred_pad.view(-1, self.odim), ys_pad, ignore_label=self.ignore_id
         )
 
         # TODO(karita) show predicted text
@@ -247,7 +260,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 ys_hat = self.ctc.argmax(pred_pad.view(batch_size, -1, self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
-        # 5. compute cer/wer
+        # 3. compute cer/wer
         if self.training or self.error_calculator is None:
             cer, wer = None, None
         else:

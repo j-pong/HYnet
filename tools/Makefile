@@ -74,14 +74,16 @@ venv: miniconda.sh
 	. venv/bin/activate && conda info -a
 espnet.done: venv
 	. venv/bin/activate && conda install -y $(CONDA_PYTORCH) -c pytorch
-	. venv/bin/activate && pip install -e ..
-	touch moneynet.done
 	rm -rf espnet; \
 	git clone https://github.com/espnet/espnet; \
 	cd espnet/tools; . ../../venv/bin/activate; pip install -e ..
 	cd ../../
 	touch espnet.done
 endif
+
+moneynet.done: espnet.done
+	. venv/bin/activate && pip install -e ..
+	touch moneynet.done
 
 cupy.done: espnet.done
 ifneq ($(strip $(CUPY_VERSION)),)
