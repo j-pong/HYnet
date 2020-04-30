@@ -149,16 +149,16 @@ class CustomUpdater(StandardUpdater):
     """
 
     def __init__(
-        self,
-        model,
-        grad_clip_threshold,
-        train_iter,
-        optimizer,
-        device,
-        ngpu,
-        grad_noise=False,
-        accum_grad=1,
-        use_apex=False,
+            self,
+            model,
+            grad_clip_threshold,
+            train_iter,
+            optimizer,
+            device,
+            ngpu,
+            grad_noise=False,
+            accum_grad=1,
+            use_apex=False,
     ):
         super(CustomUpdater, self).__init__(train_iter, optimizer)
         self.model = model
@@ -197,7 +197,7 @@ class CustomUpdater(StandardUpdater):
         else:
             # apex does not support torch.nn.DataParallel
             loss = (
-                data_parallel(self.model, x, range(self.ngpu)).mean() / self.accum_grad
+                    data_parallel(self.model, x, range(self.ngpu)).mean() / self.accum_grad
             )
         if self.use_apex:
             from apex import amp
@@ -666,11 +666,11 @@ def train(args):
     # Make a plot for training and validation values
     if args.num_encs > 1:
         report_keys_loss_ctc = [
-            "main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)
-        ] + ["validation/main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)]
+                                   "main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)
+                               ] + ["validation/main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)]
         report_keys_cer_ctc = [
-            "main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)
-        ] + ["validation/main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)]
+                                  "main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)
+                              ] + ["validation/main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)]
     trainer.extend(
         extensions.PlotReport(
             [
@@ -762,20 +762,20 @@ def train(args):
         extensions.LogReport(trigger=(args.report_interval_iters, "iteration"))
     )
     report_keys = [
-        "epoch",
-        "iteration",
-        "main/loss",
-        "main/loss_ctc",
-        "main/loss_att",
-        "validation/main/loss",
-        "validation/main/loss_ctc",
-        "validation/main/loss_att",
-        "main/acc",
-        "validation/main/acc",
-        "main/cer_ctc",
-        "validation/main/cer_ctc",
-        "elapsed_time",
-    ] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
+                      "epoch",
+                      "iteration",
+                      "main/loss",
+                      "main/loss_ctc",
+                      "main/loss_att",
+                      "validation/main/loss",
+                      "validation/main/loss_ctc",
+                      "validation/main/loss_att",
+                      "main/acc",
+                      "validation/main/acc",
+                      "main/cer_ctc",
+                      "validation/main/cer_ctc",
+                      "elapsed_time",
+                  ] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
     if args.opt == "adadelta":
         trainer.extend(
             extensions.observe_value(
@@ -807,4 +807,3 @@ def train(args):
     # Run the training
     trainer.run()
     check_early_stop(trainer, args.epochs)
-
