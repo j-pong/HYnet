@@ -166,6 +166,7 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         self.oversampling = 4
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
+        # self.outer = torch.nn.Linear(odim + idim, odim)
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -232,6 +233,15 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
 
         # 2. post-processing layer for target dimension
+        # post_pad = self.poster(hs_pad)
+        # post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
+        # if post_pad.size(1) != xs_pad.size(1):
+        #     if post_pad.size(1) < xs_pad.size(1):
+        #         xs_pad = xs_pad[:, :post_pad.size(1)].contiguous()
+        #     else:
+        #         raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
+        # post_pad = torch.cat(post_pad, xs_pad, dim=-1)
+        # pred_pad = self.outer(post_pad)
         pred_pad = self.poster(hs_pad)
         pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
         self.pred_pad = pred_pad
@@ -288,7 +298,8 @@ class E2E(ASRInterface, torch.nn.Module):
                 loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data
             )
         else:
-            logging.warning("loss (=%f) is not correct", loss_data)
+            pass
+            # logging.warning("loss (=%f) is not correct", loss_data)
         return self.loss
 
     def scorers(self):
