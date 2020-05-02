@@ -340,21 +340,21 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         #### use CPU for decoding
         ngpu=0
 
-    #     # set batchsize 0 to disable batch decoding
-    #     # TODO: change to api v1
-    #     ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-    #         KALDI_ROOT=${KALDI_ROOT} asr_recog.py \
-    #         --config ${decode_config} \
-    #         --ngpu ${ngpu} \
-    #         --backend pytorch \
-    #         --batchsize 0 \
-    #         --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-    #         --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
-    #         --model ${expdir}/results/${recog_model}  \
-    #         --api v1
+        # set batchsize 0 to disable batch decoding
+        # TODO: change to api v1
+        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            KALDI_ROOT=${KALDI_ROOT} asr_recog.py \
+            --config ${decode_config} \
+            --ngpu ${ngpu} \
+            --backend pytorch \
+            --batchsize 0 \
+            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
+            --model ${expdir}/results/${recog_model}  \
+            --api v1
 
-    #     # get decoded results
-    #     local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
+        # get decoded results
+        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
         local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}
         local/check_res_dec.sh ${expdir}/${decode_dir}
         # score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
