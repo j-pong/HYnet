@@ -356,9 +356,9 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         # get decoded results
         local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
         local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}
-        local/check_res_dec.sh ${expdir}/${decode_dir}
-        # score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
-
+        for x in ${expdir}/${decode_dir}; do 
+            [ -d $x ] && echo $x | grep "${1:-.*}" >/dev/null && grep WER $x/wer_* 2>/dev/null | utils/best_wer.sh; 
+        done
     ) &
     pids+=($!) # store background pids
     done
