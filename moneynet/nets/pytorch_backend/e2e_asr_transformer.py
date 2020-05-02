@@ -166,7 +166,7 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         self.oversampling = 4
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
-        # self.outer = torch.nn.Linear(odim + idim, odim)
+        self.outer = torch.nn.Linear(odim + idim, odim)
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -233,17 +233,17 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
 
         # 2. post-processing layer for target dimension
-        # post_pad = self.poster(hs_pad)
-        # post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
-        # if post_pad.size(1) != xs_pad.size(1):
-        #     if post_pad.size(1) < xs_pad.size(1):
-        #         xs_pad = xs_pad[:, :post_pad.size(1)].contiguous()
-        #     else:
-        #         raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
-        # post_pad = torch.cat(post_pad, xs_pad, dim=-1)
-        # pred_pad = self.outer(post_pad)
-        pred_pad = self.poster(hs_pad)
-        pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
+        post_pad = self.poster(hs_pad)
+        post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
+        if post_pad.size(1) != xs_pad.size(1):
+            if post_pad.size(1) < xs_pad.size(1):
+                xs_pad = xs_pad[:, :post_pad.size(1)].contiguous()
+            else:
+                raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
+        post_pad = torch.cat([post_pad, xs_pad], dim=-1)
+        pred_pad = self.outer(post_pad)
+        # pred_pad = self.poster(hs_pad)
+        # pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
         self.pred_pad = pred_pad
         if pred_pad.size(1) != ys_pad.size(1):
             if pred_pad.size(1) < ys_pad.size(1):
@@ -329,7 +329,10 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: list
         """
         enc_output = self.encode(x).unsqueeze(0)
-        hyps = enc_output.squeeze(0)
+        enc_output = enc_output.squeeze(0)
+
+        hyps = self.poster(enc_output)
+        hyps = hyps.view(hyps.size(0), -1, self.odim)
 
         logging.info("input lengths: " + str(hyps.size(0)))
 
