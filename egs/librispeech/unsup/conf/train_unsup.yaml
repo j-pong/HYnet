@@ -1,5 +1,5 @@
 # model name for training
-model-module: "moneynet.nets.simnn_unsup:Net"
+model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:Net"
 
 # minibatch related
 batch-size: 10

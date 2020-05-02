@@ -15,7 +15,6 @@ INSTALL_WARPCTC :=
 endif
 # Use a prebuild Kaldi to omit the installation
 KALDI :=
-ESPNET := ../../espnet
 WGET := wget --tries=3
 
 # Both Miniconda2/3 can install any Python versions
@@ -25,10 +24,10 @@ GCC_VERSION := $(shell gcc -dumpversion)
 
 
 ifneq ($(shell which nvidia-smi),) # 'nvcc' found
-CONDA_PYTORCH := pytorch=$(TH_VERSION) cudatoolkit=$(CUDA_VERSION)
+CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cudatoolkit=$(CUDA_VERSION)
 CUDA_DEPS := cupy.done
 else
-CONDA_PYTORCH := pytorch-cpu=$(TH_VERSION)
+CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cpuonly
 CUDA_DEPS :=
 endif
 

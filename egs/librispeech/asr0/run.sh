@@ -17,7 +17,7 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=
+preprocess_config=conf/specaug.yaml
 train_config=conf/train.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
@@ -306,4 +306,63 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
         --resume ${resume} \
         --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+fi
+
+expdir=/home/jpong/Workspace/moneynet/egs/librispeech/asr0/exp/train_100_inputlayerxconv2d_batchbinsx2
+if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
+    echo "stage 13: Decoding"
+    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
+        # Average ASR models
+        if ${use_valbest_average}; then
+            recog_model=model.val${n_average}.avg.best
+            opt="--log ${expdir}/results/log"
+        else
+            recog_model=model.last${n_average}.avg.best
+            opt="--log"
+        fi
+        average_checkpoints.py \
+            ${opt} \
+            --backend ${backend} \
+            --snapshots ${expdir}/results/snapshot.ep.* \
+            --out ${expdir}/results/${recog_model} \
+            --num ${n_average}
+    fi
+
+    pids=() # initialize pids
+    for rtask in ${recog_set}; do
+    (
+        decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})
+        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+
+        # split data
+        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+
+        #### use CPU for decoding
+        ngpu=0
+
+    #     # set batchsize 0 to disable batch decoding
+    #     # TODO: change to api v1
+    #     ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+    #         KALDI_ROOT=${KALDI_ROOT} asr_recog.py \
+    #         --config ${decode_config} \
+    #         --ngpu ${ngpu} \
+    #         --backend pytorch \
+    #         --batchsize 0 \
+    #         --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+    #         --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
+    #         --model ${expdir}/results/${recog_model}  \
+    #         --api v1
+
+    #     # get decoded results
+    #     local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
+        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}
+        local/check_res_dec.sh ${expdir}/${decode_dir}
+        # score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
+
+    ) &
+    pids+=($!) # store background pids
+    done
+    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+    echo "Finished"
 fi

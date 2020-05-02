@@ -329,7 +329,10 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: list
         """
         enc_output = self.encode(x).unsqueeze(0)
-        hyps = enc_output.squeeze(0)
+        enc_output = enc_output.squeeze(0)
+
+        hyps = self.poster(enc_output)
+        hyps = hyps.view(hyps.size(0), -1, self.odim)
 
         logging.info("input lengths: " + str(hyps.size(0)))
 
