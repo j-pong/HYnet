@@ -129,12 +129,12 @@ class E2E(ASRInterface, torch.nn.Module):
             type=int,
             help="Number of heads for multi head attention",
         )
-        # Decoder
+        # output
         group.add_argument(
-            "--dlayers", default=1, type=int, help="Number of decoder layers"
+            "--oversampling", default=4, type=int, help=""
         )
         group.add_argument(
-            "--dunits", default=320, type=int, help="Number of decoder hidden units"
+            "--outer", default=1, type=int, help=""
         )
         return parser
 
@@ -164,9 +164,10 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate,
         )
-        self.oversampling = 4
+        self.oversampling = args.oversampling
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
-        # self.outer = torch.nn.Linear(odim + idim, odim)
+        if args.oversampling:
+            self.outer = torch.nn.Linear(odim + idim, odim)
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -233,17 +234,19 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
 
         # 2. post-processing layer for target dimension
-        # post_pad = self.poster(hs_pad)
-        # post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
-        # if post_pad.size(1) != xs_pad.size(1):
-        #     if post_pad.size(1) < xs_pad.size(1):
-        #         xs_pad = xs_pad[:, :post_pad.size(1)].contiguous()
-        #     else:
-        #         raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
-        # post_pad = torch.cat(post_pad, xs_pad, dim=-1)
-        # pred_pad = self.outer(post_pad)
-        pred_pad = self.poster(hs_pad)
-        pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
+        if isinstance(self.outer, torch.nn.Module):
+            post_pad = self.poster(hs_pad)
+            post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
+            if post_pad.size(1) != xs_pad.size(1):
+                if post_pad.size(1) < xs_pad.size(1):
+                    xs_pad = xs_pad[:, :post_pad.size(1)].contiguous()
+                else:
+                    raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
+            post_pad = torch.cat([post_pad, xs_pad], dim=-1)
+            pred_pad = self.outer(post_pad)
+        else:
+            pred_pad = self.poster(hs_pad)
+            pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
         self.pred_pad = pred_pad
         if pred_pad.size(1) != ys_pad.size(1):
             if pred_pad.size(1) < ys_pad.size(1):
