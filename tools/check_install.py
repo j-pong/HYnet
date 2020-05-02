@@ -21,7 +21,7 @@ def main(args):
     # you should add the libraries which are not included in setup.py
     MANUALLY_INSTALLED_LIBRARIES = [
         ('espnet', None),
-        ('kaldiio', None),
+        ('kaldi_io', None),
         ('matplotlib', None),
         ('torch', ("0.4.1",
                    "1.0.0", 
