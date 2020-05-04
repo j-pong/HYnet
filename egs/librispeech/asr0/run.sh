@@ -327,6 +327,8 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --num ${n_average}
     fi
 
+    nj=5
+
     pids=() # initialize pids
     for rtask in ${recog_set}; do
     (

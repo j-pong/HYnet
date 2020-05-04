@@ -137,7 +137,7 @@ class E2E(ASRInterface, torch.nn.Module):
             "--outer", default=1, type=int, help=""
         )
         group.add_argument(
-            "--residual", default=1, type=int, help=""
+            "--residual", default=0, type=int, help=""
         )
         return parser
 
@@ -170,13 +170,14 @@ class E2E(ASRInterface, torch.nn.Module):
         # target matching system organization
         self.oversampling = args.oversampling
         self.residual = args.residual
+        self.outer = args.outer
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
         if self.outer:
             if self.residual:
-                self.matcher = torch.nn.Linear(idim, odim)
-                self.outer = torch.nn.Linear(odim, odim)
+                self.matcher_res = torch.nn.Linear(idim, odim)
+                self.matcher = torch.nn.Linear(odim, odim)
             else:
-                self.outer = torch.nn.Linear(odim + idim, odim)
+                self.matcher = torch.nn.Linear(odim + idim, odim)
 
         self.sos = odim - 1
         self.eos = odim - 1
@@ -244,7 +245,7 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
 
         # 2. post-processing layer for target dimension
-        if isinstance(self.outer, torch.nn.Module):
+        if self.outer:
             post_pad = self.poster(hs_pad)
             post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
             if post_pad.size(1) != xs_pad.size(1):
@@ -253,10 +254,10 @@ class E2E(ASRInterface, torch.nn.Module):
                 else:
                     raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
             if self.residual:
-                post_pad = post_pad + self.matcher(xs_pad)
+                post_pad = post_pad + self.matcher_res(xs_pad)
             else:
                 post_pad = torch.cat([post_pad, xs_pad], dim=-1)
-            pred_pad = self.outer(post_pad)
+            pred_pad = self.matcher(post_pad)
         else:
             pred_pad = self.poster(hs_pad)
             pred_pad = pred_pad.view(pred_pad.size(0), -1, self.odim)
