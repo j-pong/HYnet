@@ -340,7 +340,6 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
-        # TODO: change to api v1
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
             --config ${decode_config} \
