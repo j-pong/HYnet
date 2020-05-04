@@ -351,7 +351,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
             --model ${expdir}/results/${recog_model}  \
             --api v1
-
+        
         # get decoded results
         local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
         local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}

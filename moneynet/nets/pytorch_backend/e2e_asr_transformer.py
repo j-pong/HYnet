@@ -139,6 +139,9 @@ class E2E(ASRInterface, torch.nn.Module):
         group.add_argument(
             "--residual", default=0, type=int, help=""
         )
+        group.add_argument(
+            "--residual", default=0, type=int, help=""
+        )
         return parser
 
     @property
