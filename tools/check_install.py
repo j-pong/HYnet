@@ -22,6 +22,7 @@ def main(args):
     MANUALLY_INSTALLED_LIBRARIES = [
         ('espnet', None),
         ('kaldi_io', None),
+        ('kaldiio', None),
         ('matplotlib', None),
         ('torch', ("0.4.1",
                    "1.0.0", 

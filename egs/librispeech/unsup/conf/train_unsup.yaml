@@ -11,4 +11,4 @@ grad-clip: 5
 
 # scheduling related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
-epochs: 10
+epochs: 120

@@ -134,7 +134,10 @@ class E2E(ASRInterface, torch.nn.Module):
             "--oversampling", default=4, type=int, help=""
         )
         group.add_argument(
-            "--outer", default=1, type=int, help=""
+            "--outer", default=0, type=int, help=""
+        )
+        group.add_argument(
+            "--residual", default=0, type=int, help=""
         )
         return parser
 
@@ -165,9 +168,14 @@ class E2E(ASRInterface, torch.nn.Module):
             attention_dropout_rate=args.transformer_attn_dropout_rate,
         )
         self.oversampling = args.oversampling
+        self.residual = args.residual
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
         if args.oversampling:
-            self.outer = torch.nn.Linear(odim + idim, odim)
+            if self.residual:
+                self.matcher = torch.nn.Linear(idim, odim)
+                self.outer = torch.nn.Linear(odim, odim)
+            else:
+                self.outer = torch.nn.Linear(odim + idim, odim)
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -242,7 +250,10 @@ class E2E(ASRInterface, torch.nn.Module):
                     xs_pad = xs_pad[:, :post_pad.size(1)].contiguous()
                 else:
                     raise ValueError("target size {} and pred size {} is mismatch".format(xs_pad.size(1), post_pad.size(1)))
-            post_pad = torch.cat([post_pad, xs_pad], dim=-1)
+            if self.residual:
+                post_pad = post_pad + self.matcher(xs_pad)
+            else:
+                post_pad = torch.cat([post_pad, xs_pad], dim=-1)
             pred_pad = self.outer(post_pad)
         else:
             pred_pad = self.poster(hs_pad)
@@ -335,7 +346,7 @@ class E2E(ASRInterface, torch.nn.Module):
         enc_output = enc_output.squeeze(0)
 
         hyps = self.poster(enc_output)
-        hyps = hyps.view(hyps.size(0), -1, self.odim)
+        hyps = hyps.view(-1, self.odim)
 
         logging.info("input lengths: " + str(hyps.size(0)))
 
