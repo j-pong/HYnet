@@ -35,7 +35,7 @@ endif
 
 all: kaldi.done python check_install
 
-python: venv $(CUDA_DEPS) warp-ctc.done warp-transducer.done chainer_ctc.done
+python: venv $(CUDA_DEPS) moneynet.done warp-ctc.done warp-transducer.done chainer_ctc.done
 
 extra: nkf.done moses.done mwerSegmenter.done pesq
 
