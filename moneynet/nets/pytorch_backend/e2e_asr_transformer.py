@@ -168,7 +168,7 @@ class E2E(ASRInterface, torch.nn.Module):
             attention_dropout_rate=args.transformer_attn_dropout_rate,
         )
         # target matching system organization
-        self.oversampling = 4
+        self.oversampling = args.oversampling
         self.residual = args.residual
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
         if self.outer:

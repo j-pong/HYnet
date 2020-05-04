@@ -3,6 +3,12 @@ import os
 from setuptools import find_packages
 from setuptools import setup
 
+requirements = {
+    "install": [
+        "kaldi_io",
+    ],
+}
+install_requires = requirements["install"]
 dirname = os.path.dirname(__file__)
 setup(name='moneynet',
       version='0.0.3',
@@ -11,6 +17,7 @@ setup(name='moneynet',
       description='moneynet',
       license='Apache Software License',
       packages=find_packages(include=['moneynet*']),
+      install_requires=install_requires,
       classifiers=[
           'Programming Language :: Python',
           'Programming Language :: Python :: 3',
