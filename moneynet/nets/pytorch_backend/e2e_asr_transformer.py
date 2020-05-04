@@ -167,15 +167,15 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate,
         )
-        self.oversampling = 4
-        self.residual = 0
+        self.oversampling = args.oversampling
+        self.residual = args.residual
         self.poster = torch.nn.Linear(args.adim, odim * self.oversampling)
-        # if args.oversampling:
-        #     if self.residual:
-        #         self.matcher = torch.nn.Linear(idim, odim)
-        #         self.outer = torch.nn.Linear(odim, odim)
-        #     else:
-        #         self.outer = torch.nn.Linear(odim + idim, odim)
+        if args.oversampling:
+            if self.residual:
+                self.matcher = torch.nn.Linear(idim, odim)
+                self.outer = torch.nn.Linear(odim, odim)
+            else:
+                self.outer = torch.nn.Linear(odim + idim, odim)
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
