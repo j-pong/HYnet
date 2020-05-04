@@ -826,60 +826,13 @@ def recog(args):
         raise NotImplementedError("streaming mode for transformer is not implemented")
 
     # read rnnlm
-    if args.rnnlm:
-        rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
-        if getattr(rnnlm_args, "model_module", "default") != "default":
-            raise ValueError(
-                "use '--api v2' option to decode with non-default language model"
-            )
-        rnnlm = lm_pytorch.ClassifierWithState(
-            lm_pytorch.RNNLM(
-                len(train_args.char_list),
-                rnnlm_args.layer,
-                rnnlm_args.unit,
-                getattr(rnnlm_args, "embed_unit", None),  # for backward compatibility
-            )
-        )
-        torch_load(args.rnnlm, rnnlm)
-        rnnlm.eval()
-    else:
-        rnnlm = None
-
-    if args.word_rnnlm:
-        rnnlm_args = get_model_conf(args.word_rnnlm, args.word_rnnlm_conf)
-        word_dict = rnnlm_args.char_list_dict
-        char_dict = {x: i for i, x in enumerate(train_args.char_list)}
-        word_rnnlm = lm_pytorch.ClassifierWithState(
-            lm_pytorch.RNNLM(
-                len(word_dict),
-                rnnlm_args.layer,
-                rnnlm_args.unit,
-                getattr(rnnlm_args, "embed_unit", None),  # for backward compatibility
-            )
-        )
-        torch_load(args.word_rnnlm, word_rnnlm)
-        word_rnnlm.eval()
-
-        if rnnlm is not None:
-            rnnlm = lm_pytorch.ClassifierWithState(
-                extlm_pytorch.MultiLevelLM(
-                    word_rnnlm.predictor, rnnlm.predictor, word_dict, char_dict
-                )
-            )
-        else:
-            rnnlm = lm_pytorch.ClassifierWithState(
-                extlm_pytorch.LookAheadWordLM(
-                    word_rnnlm.predictor, word_dict, char_dict
-                )
-            )
+    rnnlm = None
 
     # gpu
     if args.ngpu == 1:
         gpu_id = list(range(args.ngpu))
         logging.info("gpu id: " + str(gpu_id))
         model.cuda()
-        if rnnlm:
-            rnnlm.cuda()
 
     # read json data
     with open(args.recog_json, "rb") as f:
@@ -908,118 +861,10 @@ def recog(args):
                     if args.num_encs == 1
                     else [feat[idx][0] for idx in range(model.num_encs)]
                 )
-                if args.streaming_mode == "window" and args.num_encs == 1:
-                    logging.info(
-                        "Using streaming recognizer with window size %d frames",
-                        args.streaming_window,
-                    )
-                    se2e = WindowStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
-                    for i in range(0, feat.shape[0], args.streaming_window):
-                        logging.info(
-                            "Feeding frames %d - %d", i, i + args.streaming_window
-                        )
-                        se2e.accept_input(feat[i : i + args.streaming_window])
-                    logging.info("Running offline attention decoder")
-                    se2e.decode_with_attention_offline()
-                    logging.info("Offline attention decoder finished")
-                    nbest_hyps = se2e.retrieve_recognition()
-                elif args.streaming_mode == "segment" and args.num_encs == 1:
-                    logging.info(
-                        "Using streaming recognizer with threshold value %d",
-                        args.streaming_min_blank_dur,
-                    )
-                    nbest_hyps = []
-                    for n in range(args.nbest):
-                        nbest_hyps.append({"yseq": [], "score": 0.0})
-                    se2e = SegmentStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
-                    r = np.prod(model.subsample)
-                    for i in range(0, feat.shape[0], r):
-                        hyps = se2e.accept_input(feat[i : i + r])
-                        if hyps is not None:
-                            text = "".join(
-                                [
-                                    train_args.char_list[int(x)]
-                                    for x in hyps[0]["yseq"][1:-1]
-                                    if int(x) != -1
-                                ]
-                            )
-                            text = text.replace(
-                                "\u2581", " "
-                            ).strip()  # for SentencePiece
-                            text = text.replace(model.space, " ")
-                            text = text.replace(model.blank, "")
-                            logging.info(text)
-                            for n in range(args.nbest):
-                                nbest_hyps[n]["yseq"].extend(hyps[n]["yseq"])
-                                nbest_hyps[n]["score"] += hyps[n]["score"]
-                else:
-                    
-                    hyps = model.recognize(
-                        feat, args, train_args.char_list, rnnlm
-                    )
+                hyps = model.recognize(
+                    feat, args, train_args.char_list, rnnlm
+                )
                 # TODO: is there any way to overwrite decoding results into new js?
+                hyps = hyps.squeeze(1)
                 hyps = hyps.data.numpy()
                 write_mat(ark_file, hyps, key=name)
-
-    else:
-
-        def grouper(n, iterable, fillvalue=None):
-            kargs = [iter(iterable)] * n
-            return zip_longest(*kargs, fillvalue=fillvalue)
-
-        # sort data if batchsize > 1
-        keys = list(js.keys())
-        if args.batchsize > 1:
-            feat_lens = [js[key]["input"][0]["shape"][0] for key in keys]
-            sorted_index = sorted(range(len(feat_lens)), key=lambda i: -feat_lens[i])
-            keys = [keys[i] for i in sorted_index]
-
-        with torch.no_grad():
-            for names in grouper(args.batchsize, keys, None):
-                names = [name for name in names if name]
-                batch = [(name, js[name]) for name in names]
-                feats = (
-                    load_inputs_and_targets(batch)[0]
-                    if args.num_encs == 1
-                    else load_inputs_and_targets(batch)
-                )
-                if args.streaming_mode == "window" and args.num_encs == 1:
-                    raise NotImplementedError
-                elif args.streaming_mode == "segment" and args.num_encs == 1:
-                    if args.batchsize > 1:
-                        raise NotImplementedError
-                    feat = feats[0]
-                    nbest_hyps = []
-                    for n in range(args.nbest):
-                        nbest_hyps.append({"yseq": [], "score": 0.0})
-                    se2e = SegmentStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
-                    r = np.prod(model.subsample)
-                    for i in range(0, feat.shape[0], r):
-                        hyps = se2e.accept_input(feat[i : i + r])
-                        if hyps is not None:
-                            text = "".join(
-                                [
-                                    train_args.char_list[int(x)]
-                                    for x in hyps[0]["yseq"][1:-1]
-                                    if int(x) != -1
-                                ]
-                            )
-                            text = text.replace(
-                                "\u2581", " "
-                            ).strip()  # for SentencePiece
-                            text = text.replace(model.space, " ")
-                            text = text.replace(model.blank, "")
-                            logging.info(text)
-                            for n in range(args.nbest):
-                                nbest_hyps[n]["yseq"].extend(hyps[n]["yseq"])
-                                nbest_hyps[n]["score"] += hyps[n]["score"]
-                    nbest_hyps = [nbest_hyps]
-                else:
-                    hyps = model.recognize_batch(
-                        feats, args, train_args.char_list, rnnlm=rnnlm
-                    )
-
-                for i, hyp in enumerate(hyps):
-                    name = names[i]
-                    hyps = hyps.data.numpy()
-                    write_mat(ark_file, hyp, key=name)

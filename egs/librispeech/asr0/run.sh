@@ -308,7 +308,6 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
 
-expdir=/home/jpong/Workspace/moneynet/egs/librispeech/asr0/exp/train_100_inputlayerxconv2d_batchbinsx2
 if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
     echo "stage 13: Decoding"
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
@@ -322,7 +321,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         fi
         average_checkpoints.py \
             ${opt} \
-            --backend ${backend} \
+            --backend pytorch \
             --snapshots ${expdir}/results/snapshot.ep.* \
             --out ${expdir}/results/${recog_model} \
             --num ${n_average}
@@ -343,7 +342,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         # set batchsize 0 to disable batch decoding
         # TODO: change to api v1
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-            KALDI_ROOT=${KALDI_ROOT} asr_recog.py \
+            KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
             --config ${decode_config} \
             --ngpu ${ngpu} \
             --backend pytorch \
@@ -352,7 +351,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
             --model ${expdir}/results/${recog_model}  \
             --api v1
-
+        
         # get decoded results
         local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
         local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}
