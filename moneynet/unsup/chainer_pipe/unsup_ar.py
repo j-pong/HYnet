@@ -584,3 +584,6 @@ def train(args):
     # Run the training
     trainer.run()
     check_early_stop(trainer, args.epochs)
+
+def recog():
+    pass

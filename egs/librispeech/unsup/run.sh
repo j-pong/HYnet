@@ -177,36 +177,55 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
 
-if [ -z ${tag} ]; then
-    expname=${train_set}_$(basename ${train_config%.*})
-    if ${do_delta}; then
-        expname=${expname}_delta
-    fi
-    if [ -n "${preprocess_config}" ]; then
-        expname=${expname}_$(basename ${preprocess_config%.*})
-    fi
-else
-    expname=${train_set}_${tag}
-fi
-expdir=exp/${expname}
-mkdir -p ${expdir}
-
-if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
-    echo "stage 4: Network Training"
-    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train.py \
-        --config ${train_config} \
-        --preprocess-conf ${preprocess_config} \
+if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
+    echo "stage 4: Unsupervised Feature Generation"
+    ${cuda_cmd} --gpu ${ngpu} ${unsup_expdir}/train.log \
+        unsup_train.py \
+        --config ${train_unsup_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
-        --outdir ${expdir}/results \
-        --tensorboard-dir tensorboard/${expname} \
+        --outdir ${unsup_expdir}/results \
+        --tensorboard-dir tensorboard/${unsup_expname} \
         --debugmode 1 \
         --dict ${dict} \
-        --debugdir ${expdir} \
+        --debugdir ${unsup_expdir} \
         --minibatches 0 \
         --verbose 0 \
-        --resume ${resume} \
+        --resume ${unsup_resume} \
         --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
+
+#if [ -z ${tag} ]; then
+#    expname=${train_set}_$(basename ${train_config%.*})
+#    if ${do_delta}; then
+#        expname=${expname}_delta
+#    fi
+#    if [ -n "${preprocess_config}" ]; then
+#        expname=${expname}_$(basename ${preprocess_config%.*})
+#    fi
+#else
+#    expname=${train_set}_${tag}
+#fi
+#expdir=exp/${expname}
+#mkdir -p ${expdir}
+#
+#if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+#    echo "stage 4: Network Training"
+#    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+#        asr_train.py \
+#        --config ${train_config} \
+#        --preprocess-conf ${preprocess_config} \
+#        --ngpu ${ngpu} \
+#        --backend pytorch \
+#        --outdir ${expdir}/results \
+#        --tensorboard-dir tensorboard/${expname} \
+#        --debugmode 1 \
+#        --dict ${dict} \
+#        --debugdir ${expdir} \
+#        --minibatches 0 \
+#        --verbose 0 \
+#        --resume ${resume} \
+#        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
+#        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+#fi
