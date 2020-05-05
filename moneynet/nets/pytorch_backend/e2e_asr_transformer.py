@@ -333,7 +333,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
         enc_output, _ = self.encoder(x, None)
-        return enc_output.squeeze(0)
+        return enc_output, x
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         """Recognize input speech.
@@ -345,10 +345,25 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0)
-        enc_output = enc_output.squeeze(0)
+        enc_output, x = self.encode(x)  # (1, T, D)
 
-        hyps = self.poster(enc_output)
+        if self.outer:
+            post_pad = self.poster(enc_output)
+            post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
+            if post_pad.size(1) != x.size(1):
+                if post_pad.size(1) < x.size(1):
+                    x = x[:, :post_pad.size(1)]
+                else:
+                    raise ValueError(
+                        "target size {} and pred size {} is mismatch".format(x.size(1), post_pad.size(1)))
+            if self.residual:
+                post_pad = post_pad + self.matcher_res(x)
+            else:
+                post_pad = torch.cat([post_pad, x], dim=-1)
+            hyps = self.matcher(post_pad)
+        else:
+            pred_pad = self.poster(enc_output)
+            hyps = pred_pad.view(pred_pad.size(0), -1, self.odim)
         hyps = hyps.view(-1, self.odim)
 
         logging.info("input lengths: " + str(hyps.size(0)))
