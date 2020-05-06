@@ -17,10 +17,15 @@ from chainer import reporter as reporter_module
 from chainer import training
 from chainer.training import extensions
 from chainer.training.updater import StandardUpdater
+
 import numpy as np
+
 from tensorboardX import SummaryWriter
+
 import torch
 from torch.nn.parallel import data_parallel
+
+from kaldi_io import write_mat
 
 from espnet.asr.asr_utils import adadelta_eps_decay
 # from espnet.asr.asr_utils import add_results_to_json
@@ -33,7 +38,7 @@ from espnet.asr.asr_utils import snapshot_object
 from espnet.asr.asr_utils import torch_load
 from espnet.asr.asr_utils import torch_resume
 from espnet.asr.asr_utils import torch_snapshot
-# from espnet.asr.pytorch_backend.asr_init import load_trained_model
+from espnet.asr.pytorch_backend.asr_init import load_trained_model
 # from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 # import espnet.lm.pytorch_backend.extlm as extlm_pytorch
 # from espnet.nets.asr_interface import ASRInterface
@@ -585,5 +590,58 @@ def train(args):
     trainer.run()
     check_early_stop(trainer, args.epochs)
 
-def recog():
-    pass
+
+def recog(args):
+    set_deterministic_pytorch(args)
+
+    # from espnet.asr.asr_utils import get_model_conf, torch_load
+    # idim, odim, train_args = get_model_conf(
+    #     args.model, os.path.join(os.path.dirname(args.model), "model.json")
+    # )
+    # model_module = train_args.model_module
+    # model_class = dynamic_import(model_module)
+    # print(idim, odim)
+    # exit()
+    # model = model_class(idim, odim, train_args)
+    #
+    # torch_load(args.model, model)
+    # exit()
+    model, train_args = load_trained_model(args.model)
+    model.recog_args = args
+
+    # gpu
+    if args.ngpu == 1:
+        gpu_id = list(range(args.ngpu))
+        logging.info("gpu id: " + str(gpu_id))
+        model.cuda()
+
+    # read json data
+    with open(args.recog_json, "rb") as f:
+        js = json.load(f)["utts"]
+
+    load_inputs_and_targets = LoadInputsAndTargets(
+        mode="asr",
+        load_output=False,
+        sort_in_input_length=False,
+        preprocess_conf=None,
+        preprocess_args={"train": False},
+    )
+
+    ark_file = open(args.result_ark, 'wb')
+    if args.batchsize == 0:
+        with torch.no_grad():
+            for idx, name in enumerate(js.keys(), 1):
+                logging.info("(%d/%d) decoding " + name, idx, len(js.keys()))
+                batch = [(name, js[name])]
+                feat = load_inputs_and_targets(batch)
+                feat = (
+                    feat[0][0]
+                )
+
+                hyps = model.recognize(
+                    feat
+                )
+                # TODO: is there any way to overwrite decoding results into new js?
+                hyps = hyps.squeeze(1)
+                hyps = hyps.data.numpy()
+                write_mat(ark_file, hyps, key=name)

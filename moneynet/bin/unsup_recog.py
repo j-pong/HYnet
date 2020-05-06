@@ -64,21 +64,6 @@ def get_parser():
         default=1,
         help="Batch size for beam search (0: means no batch processing)",
     )
-    parser.add_argument(
-        "--preprocess-conf",
-        type=str,
-        default=None,
-        help="The configuration file for the pre-processing",
-    )
-    parser.add_argument(
-        "--api",
-        default="v1",
-        choices=["v1", "v2"],
-        help="Beam search APIs "
-        "v1: Default API. It only supports the ASRInterface.recognize method "
-        "and DefaultRNNLM. "
-        "v2: Experimental API. It supports any models that implements ScorerInterface.",
-    )
     # task related
     parser.add_argument(
         "--recog-json", type=str, help="Filename of recognition data (json)"
@@ -102,101 +87,7 @@ def get_parser():
     parser.add_argument(
         "--model-conf", type=str, default=None, help="Model config file"
     )
-    parser.add_argument(
-        "--num-spkrs",
-        type=int,
-        default=1,
-        choices=[1, 2],
-        help="Number of speakers in the speech",
-    )
-    parser.add_argument(
-        "--num-encs", default=1, type=int, help="Number of encoders in the model."
-    )
-    # search related
-    parser.add_argument("--nbest", type=int, default=1, help="Output N-best hypotheses")
-    parser.add_argument("--beam-size", type=int, default=1, help="Beam size")
-    parser.add_argument("--penalty", type=float, default=0.0, help="Incertion penalty")
-    parser.add_argument(
-        "--maxlenratio",
-        type=float,
-        default=0.0,
-        help="""Input length ratio to obtain max output length.
-                        If maxlenratio=0.0 (default), it uses a end-detect function
-                        to automatically find maximum hypothesis lengths""",
-    )
-    parser.add_argument(
-        "--minlenratio",
-        type=float,
-        default=0.0,
-        help="Input length ratio to obtain min output length",
-    )
-    parser.add_argument(
-        "--ctc-weight", type=float, default=0.0, help="CTC weight in joint decoding"
-    )
-    parser.add_argument(
-        "--weights-ctc-dec",
-        type=float,
-        action="append",
-        help="ctc weight assigned to each encoder during decoding."
-        "[in multi-encoder mode only]",
-    )
-    parser.add_argument(
-        "--ctc-window-margin",
-        type=int,
-        default=0,
-        help="""Use CTC window with margin parameter to accelerate
-                        CTC/attention decoding especially on GPU. Smaller magin
-                        makes decoding faster, but may increase search errors.
-                        If margin=0 (default), this function is disabled""",
-    )
-    # transducer related
-    parser.add_argument(
-        "--score-norm-transducer",
-        type=strtobool,
-        nargs="?",
-        default=True,
-        help="Normalize transducer scores by length",
-    )
-    # rnnlm related
-    parser.add_argument(
-        "--rnnlm", type=str, default=None, help="RNNLM model file to read"
-    )
-    parser.add_argument(
-        "--rnnlm-conf", type=str, default=None, help="RNNLM model config file to read"
-    )
-    parser.add_argument(
-        "--word-rnnlm", type=str, default=None, help="Word RNNLM model file to read"
-    )
-    parser.add_argument(
-        "--word-rnnlm-conf",
-        type=str,
-        default=None,
-        help="Word RNNLM model config file to read",
-    )
-    parser.add_argument("--word-dict", type=str, default=None, help="Word list to read")
-    parser.add_argument("--lm-weight", type=float, default=0.1, help="RNNLM weight")
-    # streaming related
-    parser.add_argument(
-        "--streaming-mode",
-        type=str,
-        default=None,
-        choices=["window", "segment"],
-        help="""Use streaming recognizer for inference.
-                        `--batchsize` must be set to 0 to enable this mode""",
-    )
-    parser.add_argument("--streaming-window", type=int, default=10, help="Window size")
-    parser.add_argument(
-        "--streaming-min-blank-dur",
-        type=int,
-        default=10,
-        help="Minimum blank duration threshold",
-    )
-    parser.add_argument(
-        "--streaming-onset-margin", type=int, default=1, help="Onset margin"
-    )
-    parser.add_argument(
-        "--streaming-offset-margin", type=int, default=1, help="Offset margin"
-    )
+
     return parser
 
 
@@ -248,15 +139,6 @@ def main(args):
     np.random.seed(args.seed)
     logging.info("set random seed = %d" % args.seed)
 
-    # validate rnn options
-    if args.rnnlm is not None and args.word_rnnlm is not None:
-        logging.error(
-            "It seems that both --rnnlm and --word-rnnlm are specified. "
-            "Please use either option."
-        )
-        sys.exit(1)
-
-    # recog
     logging.info("backend = " + args.backend)
     if args.backend == "pytorch":
         from moneynet.unsup.chainer_pipe.unsup_ar import recog

@@ -42,7 +42,7 @@ class Net(nn.Module):
         super(Net, self).__init__()
         # network hyperparameter
         self.idim = idim
-        self.odim = odim
+        self.odim = idim
         self.hdim = args.hdim
         self.cdim = args.cdim
         self.tnum = args.tnum
@@ -53,7 +53,7 @@ class Net(nn.Module):
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.inference = InferenceNet(idim, odim, args)
+        self.inference = InferenceNet(idim, idim, args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -113,3 +113,13 @@ class Net(nn.Module):
             logging.warning("loss (=%f) is not correct", float(loss))
 
         return loss
+
+    def recognize(self, x):
+        self.eval()
+        x = torch.as_tensor(x).unsqueeze(0)
+
+        # Todo(j-pong): implementation of the model, currently just bypass
+
+        y = x.view(-1, self.odim)
+
+        return y

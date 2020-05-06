@@ -132,24 +132,6 @@ def get_parser(parser=None, required=True):
     )
 
     # loss related
-    parser.add_argument(
-        "--mtlalpha",
-        default=0.0,
-        type=float,
-        help="Multitask learning coefficient, "
-        "alpha: alpha*ctc_loss + (1-alpha)*att_loss ",
-    )
-    parser.add_argument(
-        "--lsm-weight", default=0.0, type=float, help="Label smoothing weight"
-    )
-    parser.add_argument(
-        "--minlenratio",
-        default=0.0,
-        type=float,
-        help="Input length ratio to obtain min output length",
-    )
-    parser.add_argument("--sym-space", default="<space>", type=str, help="Space symbol")
-    parser.add_argument("--sym-blank", default="<blank>", type=str, help="Blank symbol")
     # minibatch related
     parser.add_argument(
         "--sortagrad",
@@ -250,9 +232,9 @@ def get_parser(parser=None, required=True):
     )
     parser.add_argument(
         "--criterion",
-        default="acc",
+        default="loss",
         type=str,
-        choices=["loss", "acc"],
+        choices=["loss"],
         help="Criterion to perform epsilon decay",
     )
     parser.add_argument(
@@ -299,97 +281,6 @@ def get_parser(parser=None, required=True):
         help="The flag to switch to use frontend system.",
     )
 
-    # WPE related
-    parser.add_argument(
-        "--use-wpe",
-        type=strtobool,
-        default=False,
-        help="Apply Weighted Prediction Error",
-    )
-    parser.add_argument(
-        "--wtype",
-        default="blstmp",
-        type=str,
-        choices=[
-            "lstm",
-            "blstm",
-            "lstmp",
-            "blstmp",
-            "vgglstmp",
-            "vggblstmp",
-            "vgglstm",
-            "vggblstm",
-            "gru",
-            "bgru",
-            "grup",
-            "bgrup",
-            "vgggrup",
-            "vggbgrup",
-            "vgggru",
-            "vggbgru",
-        ],
-        help="Type of encoder network architecture "
-        "of the mask estimator for WPE. "
-        "",
-    )
-    parser.add_argument("--wlayers", type=int, default=2, help="")
-    parser.add_argument("--wunits", type=int, default=300, help="")
-    parser.add_argument("--wprojs", type=int, default=300, help="")
-    parser.add_argument("--wdropout-rate", type=float, default=0.0, help="")
-    parser.add_argument("--wpe-taps", type=int, default=5, help="")
-    parser.add_argument("--wpe-delay", type=int, default=3, help="")
-    parser.add_argument(
-        "--use-dnn-mask-for-wpe",
-        type=strtobool,
-        default=False,
-        help="Use DNN to estimate the power spectrogram. "
-        "This option is experimental.",
-    )
-    # Beamformer related
-    parser.add_argument("--use-beamformer", type=strtobool, default=True, help="")
-    parser.add_argument(
-        "--btype",
-        default="blstmp",
-        type=str,
-        choices=[
-            "lstm",
-            "blstm",
-            "lstmp",
-            "blstmp",
-            "vgglstmp",
-            "vggblstmp",
-            "vgglstm",
-            "vggblstm",
-            "gru",
-            "bgru",
-            "grup",
-            "bgrup",
-            "vgggrup",
-            "vggbgrup",
-            "vgggru",
-            "vggbgru",
-        ],
-        help="Type of encoder network architecture "
-        "of the mask estimator for Beamformer.",
-    )
-    parser.add_argument("--blayers", type=int, default=2, help="")
-    parser.add_argument("--bunits", type=int, default=300, help="")
-    parser.add_argument("--bprojs", type=int, default=300, help="")
-    parser.add_argument("--badim", type=int, default=320, help="")
-    parser.add_argument(
-        "--bnmask",
-        type=int,
-        default=2,
-        help="Number of beamforming masks, " "default is 2 for [speech, noise].",
-    )
-    parser.add_argument(
-        "--ref-channel",
-        type=int,
-        default=-1,
-        help="The reference channel used for beamformer. "
-        "By default, the channel is estimated by DNN.",
-    )
-    parser.add_argument("--bdropout-rate", type=float, default=0.0, help="")
     # Feature transform: Normalization
     parser.add_argument(
         "--stats-file",

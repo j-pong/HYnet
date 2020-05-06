@@ -22,9 +22,6 @@ train_config=conf/train.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
 
-# decoding parameter
-recog_model=model.acc.best  # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
-
 # model average realted (only for transformer)
 n_average=5                  # the number of ASR models to be averaged
 use_valbest_average=true     # if true, the validation `n_average`-best ASR models will be averaged.
@@ -177,55 +174,30 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
 
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
+recog_model=model.loss.best  # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
+if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Unsupervised Feature Generation"
-    ${cuda_cmd} --gpu ${ngpu} ${unsup_expdir}/train.log \
-        unsup_train.py \
-        --config ${train_unsup_config} \
-        --ngpu ${ngpu} \
-        --backend pytorch \
-        --outdir ${unsup_expdir}/results \
-        --tensorboard-dir tensorboard/${unsup_expname} \
-        --debugmode 1 \
-        --dict ${dict} \
-        --debugdir ${unsup_expdir} \
-        --minibatches 0 \
-        --verbose 0 \
-        --resume ${unsup_resume} \
-        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
-fi
+    pids=() # initialize pids
+    for rtask in ${train_set}; do
+    (
+        decode_dir=decode_${rtask}_${recog_model}
+        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
-#if [ -z ${tag} ]; then
-#    expname=${train_set}_$(basename ${train_config%.*})
-#    if ${do_delta}; then
-#        expname=${expname}_delta
-#    fi
-#    if [ -n "${preprocess_config}" ]; then
-#        expname=${expname}_$(basename ${preprocess_config%.*})
-#    fi
-#else
-#    expname=${train_set}_${tag}
-#fi
-#expdir=exp/${expname}
-#mkdir -p ${expdir}
-#
-#if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
-#    echo "stage 4: Network Training"
-#    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-#        asr_train.py \
-#        --config ${train_config} \
-#        --preprocess-conf ${preprocess_config} \
-#        --ngpu ${ngpu} \
-#        --backend pytorch \
-#        --outdir ${expdir}/results \
-#        --tensorboard-dir tensorboard/${expname} \
-#        --debugmode 1 \
-#        --dict ${dict} \
-#        --debugdir ${expdir} \
-#        --minibatches 0 \
-#        --verbose 0 \
-#        --resume ${resume} \
-#        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
-#        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
-#fi
+        # split data
+        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+
+        ${decode_cmd} JOB=1:28 ${unsup_expdir}/${decode_dir}/log/feature.JOB.log \
+            KALDI_ROOT=${KALDI_ROOT} unsup_recog.py \
+            --config ${decode_config} \
+            --ngpu 0 \
+            --backend pytorch \
+            --batchsize 0 \
+            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-ark ${unsup_expdir}/${decode_dir}/data.JOB.ark \
+            --model ${unsup_expdir}/results/${recog_model}
+    ) &
+    pids+=($!) # store background pids
+    done
+    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+fi
