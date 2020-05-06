@@ -134,7 +134,7 @@ class E2E(ASRInterface, torch.nn.Module):
             "--oversampling", default=4, type=int, help=""
         )
         group.add_argument(
-            "--outer", default=1, type=int, help=""
+            "--outer", default=0, type=int, help=""
         )
         group.add_argument(
             "--residual", default=0, type=int, help=""
