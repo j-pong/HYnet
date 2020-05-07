@@ -85,4 +85,4 @@ class InferenceNet(nn.Module):
             elif decoder_type == 'src':
                 x = self.decoder_src(h)
 
-        return x, mask_prev
+        return x, h, mask_prev

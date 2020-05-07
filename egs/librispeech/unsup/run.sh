@@ -7,12 +7,16 @@
 . ./cmd.sh || exit 1;
 
 # general configuration
+backend=pytorch
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
-dumpdir=dump
-resume=
+debugmode=1
+dumpdir=dump   # directory to dump full features
+N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
+verbose=0      # verbose option
+resume=        # Resume the training from snapshot
 unsup_resume=
 
 # feature configuration
@@ -177,16 +181,18 @@ fi
 recog_model=model.loss.best  # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Unsupervised Feature Generation"
+    nj=28
     pids=() # initialize pids
     for rtask in ${train_set}; do
     (
         decode_dir=decode_${rtask}_${recog_model}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+        feat_dump_dir=${dumpdir}/${rtask}/embed; mkdir -p ${feat_dump_dir}
 
         # split data
         splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
-        ${decode_cmd} JOB=1:28 ${unsup_expdir}/${decode_dir}/log/feature.JOB.log \
+        ${decode_cmd} JOB=1:${nj} ${unsup_expdir}/${decode_dir}/log/feature.JOB.log \
             KALDI_ROOT=${KALDI_ROOT} unsup_recog.py \
             --config ${decode_config} \
             --ngpu 0 \
@@ -195,9 +201,44 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
             --result-ark ${unsup_expdir}/${decode_dir}/data.JOB.ark \
             --model ${unsup_expdir}/results/${recog_model}
+
+        local/dump.sh --cmd "$train_cmd" --nj ${nj} \
+        ${unsup_expdir}/${decode_dir} exp/dump_embed_feats/${rtask} ${feat_dump_dir}
     ) &
     pids+=($!) # store background pids
     done
     i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
     [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+fi
+
+nj=32
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    echo "stage 5: Unsupervised Representation Json Data Preparation"
+    # make json labels
+    for rtask in ${train_set}; do
+        feat_recog_dir=${dumpdir}/${rtask}/embed
+        data2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
+            data/${rtask} ${dict} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+    done
+fi
+
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    echo "stage 6: ASR training"
+    # make json labels
+    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+        asr_train.py \
+        --config ${train_config} \
+        --preprocess-conf ${preprocess_config} \
+        --ngpu ${ngpu} \
+        --backend ${backend} \
+        --outdir ${expdir}/results \
+        --tensorboard-dir tensorboard/${expname} \
+        --debugmode ${debugmode} \
+        --dict ${dict} \
+        --debugdir ${expdir} \
+        --minibatches ${N} \
+        --verbose ${verbose} \
+        --resume ${resume} \
+        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
+        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi

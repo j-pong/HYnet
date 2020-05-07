@@ -87,7 +87,7 @@ class Net(nn.Module):
         hidden_mask = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
             # feedforward to inference network
-            xs_ele_out, hidden_mask = self.inference(xs_pad_in, hidden_mask, decoder_type='src')
+            xs_ele_out, _, hidden_mask = self.inference(xs_pad_in, hidden_mask, decoder_type='src')
             xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
 
             # compute loss of total network
@@ -109,7 +109,6 @@ class Net(nn.Module):
             self.reporter.report(float(loss))
         else:
             print("loss (=%f) is not correct", float(loss))
-            exit()
             logging.warning("loss (=%f) is not correct", float(loss))
 
         return loss
@@ -118,7 +117,7 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        # Todo(j-pong): implementation of the model, currently just bypass
+        x, _, hidden_mask = self.inference(x, None, decoder_type='src')
 
         y = x.view(-1, self.odim)
 

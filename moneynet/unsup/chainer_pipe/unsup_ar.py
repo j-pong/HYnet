@@ -633,15 +633,12 @@ def recog(args):
             for idx, name in enumerate(js.keys(), 1):
                 logging.info("(%d/%d) decoding " + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
-                feat = load_inputs_and_targets(batch)
-                feat = (
-                    feat[0][0]
-                )
 
-                hyps = model.recognize(
-                    feat
-                )
-                # TODO: is there any way to overwrite decoding results into new js?
+                feat = load_inputs_and_targets(batch)
+                feat = (feat[0][0])
+
+                hyps = model.recognize(feat)
                 hyps = hyps.squeeze(1)
                 hyps = hyps.data.numpy()
+
                 write_mat(ark_file, hyps, key=name)
