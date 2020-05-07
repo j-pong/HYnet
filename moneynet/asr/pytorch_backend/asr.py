@@ -489,6 +489,8 @@ def train(args):
         optimizer = get_std_opt(
             model, args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
+    elif args.opt == "rmsprop":
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
@@ -640,7 +642,7 @@ def train(args):
         )
 
     # Save attention weight each epoch
-    if args.num_save_attention > 0 and args.mtlalpha != 1.0:
+    if args.num_save_attention > 0 and args.mtlalpha != 1.0 and "transformer" in args.model_module:
         data = sorted(
             list(valid_json.items())[: args.num_save_attention],
             key=lambda x: int(x[1]["input"][0]["shape"][1]),
