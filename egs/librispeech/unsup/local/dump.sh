@@ -39,7 +39,7 @@ else
 fi
 
 # dump features
-${cmd} JOB=1:${nj} ${logdir}/dump_embed_feature.JOB.log \
+${cmd} JOB=1:${nj} ${logdir}/dump_unsup_feature.JOB.log \
     copy-feats.py --verbose ${verbose} --out-filetype ${filetype} \
         --compress=${compress} --compression-method=2 ${write_num_frames_opt} \
         ark:${arkdir}/data.JOB.ark ark,scp:${dumpdir}/feats.JOB.ark,${dumpdir}/feats.JOB.scp \
