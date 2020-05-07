@@ -21,10 +21,13 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=
-train_config=conf/train.yaml
+
 train_unsup_config=conf/train_unsup.yaml
-decode_config=conf/decode.yaml
+
+preprocess_config=conf/specaug.yaml
+train_config=conf/tuning/train_rnn.yaml
+
+decode_config=conf/tuning/decode_rnn.yaml
 
 # model average realted (only for transformer)
 n_average=5                  # the number of ASR models to be averaged
@@ -41,7 +44,7 @@ nbpe=5000
 bpemode=unigram
 
 # exp tag
-tag= # tag for managing experiments.
+tag="" # tag for managing experiments.
 unsup_tag=
 
 . utils/parse_options.sh || exit 1;
@@ -150,9 +153,6 @@ if [ -z ${unsup_tag} ]; then
     if ${do_delta}; then
         unsup_expname=${unsup_expname}_delta
     fi
-    if [ -n "${preprocess_config}" ]; then
-        unsup_expname=${unsup_expname}_$(basename ${preprocess_config%.*})
-    fi
 else
     unsup_expname=${train_set}_${unsup_tag}
 fi
@@ -168,11 +168,11 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --backend pytorch \
         --outdir ${unsup_expdir}/results \
         --tensorboard-dir tensorboard/${unsup_expname} \
-        --debugmode 1 \
+        --debugmode ${debugmode} \
         --dict ${dict} \
         --debugdir ${unsup_expdir} \
-        --minibatches 0 \
-        --verbose 0 \
+        --minibatches ${N} \
+        --verbose ${verbose} \
         --resume ${unsup_resume} \
         --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
@@ -222,6 +222,20 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     done
 fi
 
+if [ -z ${tag} ]; then
+    expname=${train_set}_${backend}_$(basename ${train_config%.*})
+    if ${do_delta}; then
+        expname=${expname}_delta
+    fi
+    if [ -n "${preprocess_config}" ]; then
+        expname=${expname}_$(basename ${preprocess_config%.*})
+    fi
+else
+    expname=${train_set}_${backend}_${tag}
+fi
+expdir=exp/${expname}
+mkdir -p ${expdir}
+
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     echo "stage 6: ASR training"
     # make json labels
@@ -239,6 +253,6 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         --minibatches ${N} \
         --verbose ${verbose} \
         --resume ${resume} \
-        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+        --train-json ${dumpdir}/${train_set}/embed/data_${bpemode}${nbpe}.json \
+        --valid-json ${dumpdir}/${train_set}/embed/data_${bpemode}${nbpe}.json
 fi

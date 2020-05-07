@@ -194,7 +194,7 @@ clean: clean_extra
 clean_python:
 	rm -rf venv warp-ctc warp-transducer chainer_ctc
 	rm -f miniconda.sh
-	rm -f warp-ctc.done chainer_ctc.done espnet.done pytorch_complex pytorch_complex.done
+	rm -f warp-ctc.done chainer_ctc.done espnet.done pytorch_complex pytorch_complex.done moneynet.done
 	find . -iname "*.pyc" -delete
 
 clean_extra:
