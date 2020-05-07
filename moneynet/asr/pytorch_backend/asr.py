@@ -489,6 +489,8 @@ def train(args):
         optimizer = get_std_opt(
             model, args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
+    elif args.opt == "rmsprop":
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
