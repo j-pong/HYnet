@@ -21,10 +21,13 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=
-train_config=conf/train.yaml
+
 train_unsup_config=conf/train_unsup.yaml
-decode_config=conf/decode.yaml
+
+preprocess_config=conf/specaug.yaml
+train_config=conf/tuning/train_rnn.yaml
+
+decode_config=conf/tuning/decode_rnn.yaml
 
 # model average realted (only for transformer)
 n_average=5                  # the number of ASR models to be averaged
@@ -41,7 +44,7 @@ nbpe=5000
 bpemode=unigram
 
 # exp tag
-tag= # tag for managing experiments.
+tag="" # tag for managing experiments.
 unsup_tag=
 
 . utils/parse_options.sh || exit 1;
@@ -50,7 +53,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_100
+train_set=train_960
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -146,64 +149,59 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 fi
 
 if [ -z ${unsup_tag} ]; then
-    unsup_expname=${train_set}_$(basename ${train_unsup_config%.*})
-    if ${do_delta}; then
-        unsup_expname=${unsup_expname}_delta
-    fi
-    if [ -n "${preprocess_config}" ]; then
-        unsup_expname=${unsup_expname}_$(basename ${preprocess_config%.*})
-    fi
+    expname=${train_set}_$(basename ${train_unsup_config%.*})
 else
-    unsup_expname=${train_set}_${unsup_tag}
+    expname=${train_set}_${unsup_tag}
 fi
-unsup_expdir=exp/${unsup_expname}
-mkdir -p ${unsup_expdir}
+expdir=exp/${expname}
+mkdir -p ${expdir}
 
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Unsupervised Training"
-    ${cuda_cmd} --gpu ${ngpu} ${unsup_expdir}/train.log \
-        unsup_train.py \
+    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+        KALDI_ROOT=${KALDI_ROOT} unsup_train.py \
         --config ${train_unsup_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
-        --outdir ${unsup_expdir}/results \
-        --tensorboard-dir tensorboard/${unsup_expname} \
-        --debugmode 1 \
+        --outdir ${expdir}/results \
+        --tensorboard-dir tensorboard/${expname} \
+        --debugmode ${debugmode} \
         --dict ${dict} \
-        --debugdir ${unsup_expdir} \
-        --minibatches 0 \
-        --verbose 0 \
+        --debugdir ${expdir} \
+        --minibatches ${N} \
+        --verbose ${verbose} \
         --resume ${unsup_resume} \
         --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
 
+train_set=train_100
 recog_model=model.loss.best  # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Unsupervised Feature Generation"
-    nj=28
+    nj=4
     pids=() # initialize pids
-    for rtask in ${train_set}; do
+    for rtask in ${train_set} ${train_dev} dev_clean test_clean dev_other test_other ; do
     (
         decode_dir=decode_${rtask}_${recog_model}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        feat_dump_dir=${dumpdir}/${rtask}/embed; mkdir -p ${feat_dump_dir}
+        feat_dump_dir=${dumpdir}/${rtask}/unsup; mkdir -p ${feat_dump_dir}
 
         # split data
         splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
-        ${decode_cmd} JOB=1:${nj} ${unsup_expdir}/${decode_dir}/log/feature.JOB.log \
+        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/feature.JOB.log \
             KALDI_ROOT=${KALDI_ROOT} unsup_recog.py \
             --config ${decode_config} \
             --ngpu 0 \
             --backend pytorch \
             --batchsize 0 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-            --result-ark ${unsup_expdir}/${decode_dir}/data.JOB.ark \
-            --model ${unsup_expdir}/results/${recog_model}
+            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
+            --model ${expdir}/results/${recog_model}
 
         local/dump.sh --cmd "$train_cmd" --nj ${nj} \
-        ${unsup_expdir}/${decode_dir} exp/dump_embed_feats/${rtask} ${feat_dump_dir}
+        ${expdir}/${decode_dir} exp/dump_unsup_feats/${rtask} ${feat_dump_dir}
     ) &
     pids+=($!) # store background pids
     done
@@ -215,15 +213,29 @@ nj=32
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Unsupervised Representation Json Data Preparation"
     # make json labels
-    for rtask in ${train_set}; do
-        feat_recog_dir=${dumpdir}/${rtask}/embed
+    for rtask in ${train_set} ${train_dev} dev_clean test_clean dev_other test_other; do
+        feat_recog_dir=${dumpdir}/${rtask}/unsup
         data2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
             data/${rtask} ${dict} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
     done
 fi
 
+if [ -z ${tag} ]; then
+    expname=${train_set}_${backend}_$(basename ${train_config%.*})
+    if ${do_delta}; then
+        expname=${expname}_delta
+    fi
+    if [ -n "${preprocess_config}" ]; then
+        expname=${expname}_$(basename ${preprocess_config%.*})
+    fi
+else
+    expname=${train_set}_${backend}_${tag}
+fi
+expdir=exp/${expname}
+mkdir -p ${expdir}
+
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
-    echo "stage 6: ASR training"
+    echo "stage 6: E2E ASR training"
     # make json labels
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
@@ -239,6 +251,6 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         --minibatches ${N} \
         --verbose ${verbose} \
         --resume ${resume} \
-        --train-json ${feat_tr_dir}/data_${bpemode}${nbpe}.json \
-        --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
+        --train-json ${dumpdir}/${train_set}/unsup/data_${bpemode}${nbpe}.json \
+        --valid-json ${dumpdir}/${train_dev}/unsup/data_${bpemode}${nbpe}.json
 fi

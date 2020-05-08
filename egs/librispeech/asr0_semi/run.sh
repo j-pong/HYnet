@@ -30,7 +30,7 @@ n_average=5                  # the number of ASR models to be averaged
 use_valbest_average=true     # if true, the validation `n_average`-best ASR models will be averaged.
                              # if false, the last `n_average` ASR models will be averaged.
 
-datadir=/DB/librispeech
+datadir=/export/a15/vpanayotov/data
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -56,7 +56,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_960
+train_set=train_100
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -100,7 +100,7 @@ fi
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "stage 2: MFCC Feature Generation"
     # MFCC feature extraction
-    for part in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+    for part in train_clean_100 dev_clean test_clean dev_other test_other; do
         steps/make_mfcc.sh --cmd "$train_cmd" --nj ${nj} data/$part exp/make_mfcc/$part $mfccdir
         steps/compute_cmvn_stats.sh data/$part exp/make_mfcc/$part $mfccdir
     done
@@ -212,7 +212,7 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     echo "stage 9: Get Alignment"
 
     # align the train, test, dev set using the tri4b model
-    for part in train_clean_500 train_clean_360 train_clean_100 dev_clean dev_other test_clean test_other; do
+    for part in train_clean_100 dev_clean dev_other test_clean test_other; do
         steps/align_fmllr.sh --nj ${nj} data/${part} data/lang exp/tri4b exp/tri4b_ali_${part}
 
         KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
@@ -237,7 +237,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
         utils/fix_data_dir.sh data/${x}_fbank
     done
 
-    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fbank data/train_clean_360 data/train_other_500
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fbank # data/train_clean_360 data/train_other_500
     utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fbank data/dev_other_fbank
     mkdir -p data/${train_set}
     mkdir -p data/${train_dev}
@@ -310,20 +310,22 @@ fi
 
 if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
     echo "stage 13: Decoding"
-    # Average ASR models
-    if ${use_valbest_average}; then
-        recog_model=model.val${n_average}.avg.best
-        opt="--log ${expdir}/results/log"
-    else
-        recog_model=model.last${n_average}.avg.best
-        opt="--log"
+    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
+        # Average ASR models
+        if ${use_valbest_average}; then
+            recog_model=model.val${n_average}.avg.best
+            opt="--log ${expdir}/results/log"
+        else
+            recog_model=model.last${n_average}.avg.best
+            opt="--log"
+        fi
+        average_checkpoints.py \
+            ${opt} \
+            --backend pytorch \
+            --snapshots ${expdir}/results/snapshot.ep.* \
+            --out ${expdir}/results/${recog_model} \
+            --num ${n_average}
     fi
-    average_checkpoints.py \
-        ${opt} \
-        --backend pytorch \
-        --snapshots ${expdir}/results/snapshot.ep.* \
-        --out ${expdir}/results/${recog_model} \
-        --num ${n_average}
 
     nj=7
 

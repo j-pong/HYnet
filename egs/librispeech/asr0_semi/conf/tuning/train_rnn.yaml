@@ -15,7 +15,7 @@ aconv-chans: 10
 aconv-filts: 100
 
 # hybrid CTC/attention
-mtlalpha: 0.0
+mtlalpha: 0.5
 
 # minibatch related
 batch-size: 20
