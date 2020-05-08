@@ -212,7 +212,7 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     echo "stage 9: Get Alignment"
 
     # align the train, test, dev set using the tri4b model
-    for part in train_clean_500 train_clean_360 train_clean_100 dev_clean dev_other test_clean test_other; do
+    for part in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
         steps/align_fmllr.sh --nj ${nj} data/${part} data/lang exp/tri4b exp/tri4b_ali_${part}
 
         KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
@@ -229,7 +229,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 10: Fbank Feature Generation For Network Training"
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
-    for x in train_clean_100 dev_clean dev_other test_clean test_other; do
+    for x in train_clean_100 train_clean_360 train_other_500 dev_clean dev_other test_clean test_other; do
         mkdir -p data/${x}_fbank
         cp -r data/${x}/* data/${x}_fbank
         steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
@@ -237,8 +237,10 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
         utils/fix_data_dir.sh data/${x}_fbank
     done
 
-    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fbank data/train_clean_360 data/train_other_500
-    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fbank data/dev_other_fbank
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fbank \
+        data/train_clean_360_fbank data/train_other_500_fbank
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fbank \
+        data/dev_other_fbank
     mkdir -p data/${train_set}
     mkdir -p data/${train_dev}
     cp -r data/${train_set}_org/* data/${train_set}
