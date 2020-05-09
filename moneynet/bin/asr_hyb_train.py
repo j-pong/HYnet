@@ -277,7 +277,7 @@ def get_parser(parser=None, required=True):
         "--opt",
         default="adadelta",
         type=str,
-        choices=["adadelta", "adam", "noam"],
+        choices=["adadelta", "adam", "noam", "rmsprop"],
         help="Optimizer",
     )
     parser.add_argument(
