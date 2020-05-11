@@ -28,8 +28,6 @@ from espnet.nets.pytorch_backend.frontends.feature_transform import (
     feature_transform_for,  # noqa: H301
 )
 from espnet.nets.pytorch_backend.frontends.frontend import frontend_for
-from espnet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
-from espnet.nets.pytorch_backend.initialization import set_forget_bias_to_one
 from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.nets_utils import get_subsample
 from espnet.nets.pytorch_backend.nets_utils import pad_list
@@ -38,6 +36,9 @@ from espnet.nets.pytorch_backend.nets_utils import to_torch_tensor
 from espnet.nets.pytorch_backend.rnn.attentions import att_for
 from espnet.nets.scorers.ctc import CTCPrefixScorer
 
+from moneynet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
+from moneynet.nets.pytorch_backend.initialization import orthogonal_init_parameters
+from moneynet.nets.pytorch_backend.initialization import set_forget_bias_to_one
 from moneynet.nets.pytorch_backend.rnn.encoders import encoder_for
 
 CTC_LOSS_THRESHOLD = 10000
@@ -218,7 +219,14 @@ class E2E(ASRInterface, torch.nn.Module):
         self.ctc = ctc_for(args, odim)
 
         # weight initialization
-        self.init_like_chainer()
+        if args.initializer == "lecun":
+            self.init_like_chainer()
+        elif args.initializer == "orthogonal":
+            self.init_orthogonal()
+        else:
+            raise NotImplementedError(
+                "unknown initializer: " + args.initializer
+            )
 
         if args.report_cer or args.report_wer:
             self.error_calculator = ErrorCalculator(
@@ -250,6 +258,13 @@ class E2E(ASRInterface, torch.nn.Module):
         # embed weight ~ Normal(0, 1)
         # forget-bias = 1.0
         # https://discuss.pytorch.org/t/set-forget-gate-bias-of-lstm/1745
+
+    def init_orthogonal(self):
+        """Initialize weight orthogonal
+        initiate bias to zero
+        initiate linear weight orthogonal
+        """
+        orthogonal_init_parameters(self)
 
     def forward(self, xs_pad, ilens, ys_pad):
         """E2E forward.

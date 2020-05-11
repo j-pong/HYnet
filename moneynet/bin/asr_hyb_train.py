@@ -290,6 +290,9 @@ def get_parser(parser=None, required=True):
         "--eps-decay", default=0.01, type=float, help="Decaying ratio of epsilon"
     )
     parser.add_argument(
+        "--lr-decay", default=0.5, type=float, help="Decaying ratio of learning rate"
+    )
+    parser.add_argument(
         "--weight-decay", default=0.0, type=float, help="Weight decay ratio"
     )
     parser.add_argument(
@@ -352,6 +355,12 @@ def get_parser(parser=None, required=True):
         help="The flag to switch to use context vector residual in the decoder network",
     )
     # finetuning related
+    parser.add_argument(
+        "--initializer",
+        default="lecun",
+        type=str,
+        help="ASR model initializer",
+    )
     parser.add_argument(
         "--enc-init",
         default=None,
