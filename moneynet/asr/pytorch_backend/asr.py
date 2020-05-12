@@ -23,17 +23,17 @@ import torch
 from torch.nn.parallel import data_parallel
 from kaldi_io import write_mat
 
-from espnet.asr.asr_utils import adadelta_eps_decay
-from espnet.asr.asr_utils import add_results_to_json
-from espnet.asr.asr_utils import CompareValueTrigger
-from espnet.asr.asr_utils import format_mulenc_args
-from espnet.asr.asr_utils import get_model_conf
-from espnet.asr.asr_utils import plot_spectrogram
-from espnet.asr.asr_utils import restore_snapshot
-from espnet.asr.asr_utils import snapshot_object
-from espnet.asr.asr_utils import torch_load
-from espnet.asr.asr_utils import torch_resume
-from espnet.asr.asr_utils import torch_snapshot
+from moneynet.asr.asr_utils import adadelta_eps_decay, rmsprop_lr_decay
+from moneynet.asr.asr_utils import add_results_to_json
+from moneynet.asr.asr_utils import CompareValueTrigger
+from moneynet.asr.asr_utils import format_mulenc_args
+from moneynet.asr.asr_utils import get_model_conf
+from moneynet.asr.asr_utils import plot_spectrogram
+from moneynet.asr.asr_utils import restore_snapshot
+from moneynet.asr.asr_utils import snapshot_object
+from moneynet.asr.asr_utils import torch_load
+from moneynet.asr.asr_utils import torch_resume
+from moneynet.asr.asr_utils import torch_snapshot
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 import espnet.lm.pytorch_backend.extlm as extlm_pytorch
@@ -754,6 +754,43 @@ def train(args):
             )
             trainer.extend(
                 adadelta_eps_decay(args.eps_decay),
+                trigger=CompareValueTrigger(
+                    "validation/main/loss",
+                    lambda best_value, current_value: best_value < current_value,
+                ),
+            )
+
+    # lr decay in rmsprop
+    if args.opt == "rmsprop":
+        if args.criterion == "acc" and mtl_mode != "ctc":
+            trainer.extend(
+                restore_snapshot(
+                    model, args.outdir + "/model.acc.best", load_fn=torch_load
+                ),
+                trigger=CompareValueTrigger(
+                    "validation/main/acc",
+                    lambda best_value, current_value: best_value > current_value,
+                ),
+            )
+            trainer.extend(
+                rmsprop_lr_decay(args.lr_decay),
+                trigger=CompareValueTrigger(
+                    "validation/main/acc",
+                    lambda best_value, current_value: best_value > current_value,
+                ),
+            )
+        elif args.criterion == "loss":
+            trainer.extend(
+                restore_snapshot(
+                    model, args.outdir + "/model.loss.best", load_fn=torch_load
+                ),
+                trigger=CompareValueTrigger(
+                    "validation/main/loss",
+                    lambda best_value, current_value: best_value < current_value,
+                ),
+            )
+            trainer.extend(
+                rmsprop_lr_decay(args.lr_decay),
                 trigger=CompareValueTrigger(
                     "validation/main/loss",
                     lambda best_value, current_value: best_value < current_value,
