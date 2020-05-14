@@ -335,23 +335,23 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
-#        # split data
-#        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
-#
-#        #### use CPU for decoding
-#        ngpu=0
-#
-#        # set batchsize 0 to disable batch decoding
-#        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-#            KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
-#            --config ${decode_config} \
-#            --ngpu ${ngpu} \
-#            --backend pytorch \
-#            --batchsize 0 \
-#            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-#            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
-#            --model ${expdir}/results/${recog_model}  \
-#            --api v1
+        # split data
+        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+
+        #### use CPU for decoding
+        ngpu=0
+
+        # set batchsize 0 to disable batch decoding
+        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
+            --config ${decode_config} \
+            --ngpu ${ngpu} \
+            --backend pytorch \
+            --batchsize 0 \
+            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
+            --model ${expdir}/results/${recog_model}  \
+            --api v1
         
         # get decoded results
         local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1
