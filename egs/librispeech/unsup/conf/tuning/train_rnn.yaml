@@ -15,7 +15,7 @@ aconv-chans: 10
 aconv-filts: 100
 
 # hybrid CTC/attention
-mtlalpha: 0.0
+mtlalpha: 0.5
 
 # minibatch related
 batch-size: 20
@@ -28,7 +28,7 @@ dropout-rate: 0.2
 # optimization related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
 opt: adadelta
-epochs: 10
+epochs: 96
 patience: 3
 
 # scheduled sampling option

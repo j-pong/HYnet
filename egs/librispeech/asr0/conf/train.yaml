@@ -24,4 +24,4 @@ transformer-warmup-steps: 25000
 
 oversampling: 4
 outer : 1
-residual: 1
+residual: 0
