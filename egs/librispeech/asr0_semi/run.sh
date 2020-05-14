@@ -9,17 +9,16 @@
 # general configuration
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
-ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=32
+ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=8
 dumpdir=dump
 resume=
-unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=conf/specaug.yaml
+preprocess_config=
 train_config=conf/train.yaml
-train_unsup_config=conf/train_unsup.yaml
+semi_config=conf/ICT.yaml
 decode_config=conf/decode.yaml
 
 # decoding parameter
@@ -30,7 +29,7 @@ n_average=5                  # the number of ASR models to be averaged
 use_valbest_average=true     # if true, the validation `n_average`-best ASR models will be averaged.
                              # if false, the last `n_average` ASR models will be averaged.
 
-datadir=/export/a15/vpanayotov/data
+datadir=/DB/librispeech
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -62,7 +61,7 @@ recog_set="test_clean test_other dev_clean dev_other"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
-    for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
+    for part in dev-clean test-clean dev-other test-other train-clean-100; do
         local/download_and_untar.sh ${datadir} ${data_url} ${part}
     done
 
@@ -74,7 +73,7 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     ### Task dependent. You have to make data the following preparation part by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 0: Data preparation"
-    for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
+    for part in dev-clean test-clean dev-other test-other train-clean-100; do
         # use underscore-separated names in data directories.
         local/data_prep.sh ${datadir}/LibriSpeech/${part} data/${part//-/_}
     done
@@ -292,8 +291,9 @@ mkdir -p ${expdir}
 if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     echo "stage 12: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_hyb_train.py \
+        asr_ICT_train.py \
         --config ${train_config} \
+        --config2 ${semi_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
