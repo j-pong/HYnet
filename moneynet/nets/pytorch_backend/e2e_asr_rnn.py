@@ -35,6 +35,7 @@ from espnet.nets.pytorch_backend.nets_utils import to_device
 from espnet.nets.pytorch_backend.nets_utils import to_torch_tensor
 from espnet.nets.pytorch_backend.rnn.attentions import att_for
 from espnet.nets.scorers.ctc import CTCPrefixScorer
+from espnet.utils.cli_utils import strtobool
 
 from moneynet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
 from moneynet.nets.pytorch_backend.initialization import orthogonal_init_parameters
@@ -122,6 +123,9 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         group.add_argument(
             "--dropout-rate", default=None, type=float, help="dropout in rnn layers. use --dropout-rate if None is set"
+        )
+        group.add_argument(
+            "--lnorm", default=False, type=strtobool, help="boolean option to use layer normalization"
         )
         group.add_argument(
             "--subsample",

@@ -28,6 +28,14 @@ class InferenceNet(nn.Module):
             self.decoder_self = nn.Linear(self.hdim, idim)
 
     @staticmethod
+    def one_hot(y, num_classes):
+        scatter_dim = len(y.size())
+        y_tensor = y.view(*y.size(), -1)
+        zeros = torch.zeros(*y.size(), num_classes, dtype=y.dtype).to(y_tensor.device)
+
+        return zeros.scatter(scatter_dim, y_tensor, 1)
+
+    @staticmethod
     def energy_pooling(x, dim=-1):
         energy = x.pow(2).sum(dim)
         x_ind = torch.max(energy, dim=-1)[1]  # (B, Tmax, *)
@@ -40,8 +48,8 @@ class InferenceNet(nn.Module):
             indices = torch.topk(energy, k=part_size * 2, dim=-1)[1]  # (B, T, cdim*2)
         else:
             indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
-        mask = F.one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
-        mask_share = F.one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        mask = self.one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        mask_share = self.one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
         return mask, mask_share
 
     def hidden_exclude_activation(self, h, mask_prev):
@@ -50,10 +58,10 @@ class InferenceNet(nn.Module):
             mask_prev = mask_cur
         else:
             assert mask_prev is not None
-            h[mask_prev.bool()] = 0.0
+            h[mask_prev.byte()] = 0.0
             mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
             mask_prev = mask_prev + mask_cur
-        h = h.masked_fill(~(mask_cur_share.bool()), 0.0)
+        h = h.masked_fill(~(mask_cur_share.byte()), 0.0)
         return h, mask_prev
 
     def forward(self, x, mask_prev, decoder_type):
