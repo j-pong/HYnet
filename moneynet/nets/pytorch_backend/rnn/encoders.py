@@ -1,5 +1,6 @@
 import logging
 import six
+from distutils.util import strtobool
 
 import numpy as np
 import torch
@@ -24,7 +25,7 @@ class RNNP(torch.nn.Module):
     :param str typ: The RNN type
     """
 
-    def __init__(self, idim, elayers, cdim, hdim, subsample, dropout, typ="blstm"):
+    def __init__(self, idim, elayers, cdim, hdim, subsample, dropout, lnorm, typ="blstm"):
         super(RNNP, self).__init__()
         bidir = typ[0] == "b"
         for i in six.moves.range(elayers):
@@ -86,6 +87,9 @@ class RNNP(torch.nn.Module):
             xs_pad = projected.view(ys_pad.size(0), ys_pad.size(1), -1)
             if layer < self.elayers - 1:
                 xs_pad = torch.tanh(F.dropout(xs_pad, p=self.dropout))
+            if self.lnorm:
+                layer_norm = getattr(self, "ln%d" % layer)
+                xs_pad = layer_norm(xs_pad)
 
         return xs_pad, ilens, elayer_states  # x: utt list of frame x dim
 
@@ -101,7 +105,7 @@ class RNN(torch.nn.Module):
     :param str typ: The RNN type
     """
 
-    def __init__(self, idim, elayers, cdim, hdim, dropout, typ="blstm"):
+    def __init__(self, idim, elayers, cdim, hdim, dropout, lnorm, typ="blstm"):
         super(RNN, self).__init__()
         bidir = typ[0] == "b"
         self.nbrnn = (
@@ -127,7 +131,13 @@ class RNN(torch.nn.Module):
             self.l_last = torch.nn.Linear(cdim * 2, hdim)
         else:
             self.l_last = torch.nn.Linear(cdim, hdim)
+
+        # Layer Normalization
+        if lnorm:
+            self.layer_norm = torch.nn.LayerNorm(hdim)
+
         self.typ = typ
+        self.lnorm = lnorm
 
     def forward(self, xs_pad, ilens, prev_state=None):
         """RNN forward
@@ -155,6 +165,8 @@ class RNN(torch.nn.Module):
             self.l_last(ys_pad.contiguous().view(-1, ys_pad.size(2)))
         )
         xs_pad = projected.view(ys_pad.size(0), ys_pad.size(1), -1)
+        if self.lnorm:
+            xs_pad = self.layer_norm(xs_pad)
         return xs_pad, ilens, states  # x: utt list of frame x dim
 
 
@@ -247,7 +259,7 @@ class Encoder(torch.nn.Module):
     """
 
     def __init__(
-        self, etype, idim, elayers, eunits, eprojs, subsample, dropout, in_channel=1
+        self, etype, idim, elayers, eunits, eprojs, subsample, dropout, lnorm, in_channel=1
     ):
         super(Encoder, self).__init__()
         typ = etype.lstrip("vgg").rstrip("p")
@@ -281,6 +293,7 @@ class Encoder(torch.nn.Module):
                             eunits,
                             eprojs,
                             dropout,
+                            lnorm,
                             typ=typ,
                         ),
                     ]
@@ -289,12 +302,12 @@ class Encoder(torch.nn.Module):
         else:
             if etype[-1] == "p":
                 self.enc = torch.nn.ModuleList(
-                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, typ=typ)]
+                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, lnorm, typ=typ)]
                 )
                 logging.info(typ.upper() + " with every-layer projection for encoder")
             else:
                 self.enc = torch.nn.ModuleList(
-                    [RNN(idim, elayers, eunits, eprojs, dropout, typ=typ)]
+                    [RNN(idim, elayers, eunits, eprojs, dropout, lnorm, typ=typ)]
                 )
                 logging.info(typ.upper() + " without projection for encoder")
 
@@ -345,6 +358,7 @@ def encoder_for(args, idim, subsample):
             args.eprojs,
             subsample,
             args.dropout_rate,
+            args.lnorm
         )
     elif num_encs >= 1:
         enc_list = torch.nn.ModuleList()
@@ -357,6 +371,7 @@ def encoder_for(args, idim, subsample):
                 args.eprojs,
                 subsample[idx],
                 args.dropout_rate[idx],
+                args.lnorm[idx]
             )
             enc_list.append(enc)
         return enc_list
