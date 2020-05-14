@@ -30,7 +30,7 @@ n_average=5                  # the number of ASR models to be averaged
 use_valbest_average=true     # if true, the validation `n_average`-best ASR models will be averaged.
                              # if false, the last `n_average` ASR models will be averaged.
 
-datadir=/export/a15/vpanayotov/data
+datadir=/DB/librispeech
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -312,22 +312,20 @@ fi
 
 if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
     echo "stage 13: Decoding"
-    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
-        # Average ASR models
-        if ${use_valbest_average}; then
-            recog_model=model.val${n_average}.avg.best
-            opt="--log ${expdir}/results/log"
-        else
-            recog_model=model.last${n_average}.avg.best
-            opt="--log"
-        fi
-        average_checkpoints.py \
-            ${opt} \
-            --backend pytorch \
-            --snapshots ${expdir}/results/snapshot.ep.* \
-            --out ${expdir}/results/${recog_model} \
-            --num ${n_average}
+    # Average ASR models
+    if ${use_valbest_average}; then
+        recog_model=model.val${n_average}.avg.best
+        opt="--log ${expdir}/results/log"
+    else
+        recog_model=model.last${n_average}.avg.best
+        opt="--log"
     fi
+    average_checkpoints.py \
+        ${opt} \
+        --backend pytorch \
+        --snapshots ${expdir}/results/snapshot.ep.* \
+        --out ${expdir}/results/${recog_model} \
+        --num ${n_average}
 
     nj=7
 

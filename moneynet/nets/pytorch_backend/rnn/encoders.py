@@ -47,12 +47,17 @@ class RNNP(torch.nn.Module):
             else:
                 setattr(self, "bt%d" % i, torch.nn.Linear(cdim, hdim))
 
+            # Layer Normalization
+            if lnorm:
+                setattr(self, "ln%d" % i, torch.nn.LayerNorm(hdim))
+
         self.elayers = elayers
         self.cdim = cdim
         self.subsample = subsample
         self.typ = typ
         self.bidir = bidir
         self.dropout = dropout
+        self.lnorm = lnorm
 
     def forward(self, xs_pad, ilens, prev_state=None):
         """RNNP forward

@@ -125,6 +125,9 @@ class E2E(ASRInterface, torch.nn.Module):
             "--dropout-rate", default=None, type=float, help="dropout in rnn layers. use --dropout-rate if None is set"
         )
         group.add_argument(
+            "--lnorm", default=False, type=strtobool, help="boolean option to use layer normalization"
+        )
+        group.add_argument(
             "--subsample",
             default="1",
             type=str,
@@ -220,7 +223,14 @@ class E2E(ASRInterface, torch.nn.Module):
         self.ctc = ctc_for(args, odim)
 
         # weight initialization
-        self.init_like_chainer()
+        if args.initializer == "lecun":
+            self.init_like_chainer()
+        elif args.initializer == "orthogonal":
+            self.init_orthogonal()
+        else:
+            raise NotImplementedError(
+                "unknown initializer: " + args.initializer
+            )
 
         if args.report_cer or args.report_wer:
             self.error_calculator = ErrorCalculator(
