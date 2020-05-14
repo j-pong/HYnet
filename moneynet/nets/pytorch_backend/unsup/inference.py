@@ -31,7 +31,7 @@ class InferenceNet(nn.Module):
     def one_hot(y, num_classes):
         scatter_dim = len(y.size())
         y_tensor = y.view(*y.size(), -1)
-        zeros = torch.zeros(*y.size(), num_classes, dtype=y.dtype)
+        zeros = torch.zeros(*y.size(), num_classes, dtype=y.dtype).to(y_tensor.device)
 
         return zeros.scatter(scatter_dim, y_tensor, 1)
 
@@ -58,10 +58,10 @@ class InferenceNet(nn.Module):
             mask_prev = mask_cur
         else:
             assert mask_prev is not None
-            h[mask_prev.bool()] = 0.0
+            h[mask_prev.byte()] = 0.0
             mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
             mask_prev = mask_prev + mask_cur
-        h = h.masked_fill(~(mask_cur_share.bool()), 0.0)
+        h = h.masked_fill(~(mask_cur_share.byte()), 0.0)
         return h, mask_prev
 
     def forward(self, x, mask_prev, decoder_type):
@@ -69,10 +69,10 @@ class InferenceNet(nn.Module):
             x, _ = pad_for_shift(key=x, pad=self.input_extra,
                                  window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
             h = self.encoder(x)  # (B, Tmax, *, hdim)
-            # # max pooling along shift size
+            # max pooling along shift size
             h, h_ind = self.energy_pooling(h)
-            # # max pooling along hidden size
-            # h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
+            # max pooling along hidden size
+            h, mask_prev = self.hidden_exclude_activation(h, mask_prev)
             # feedforward decoder
             assert self.idim == self.odim
             if decoder_type == 'self':

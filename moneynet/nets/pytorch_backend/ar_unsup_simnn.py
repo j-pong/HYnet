@@ -29,7 +29,7 @@ class Net(nn.Module):
     def add_arguments(parser):
         """Add arguments"""
         group = parser.add_argument_group("simnn setting")
-        group.add_argument("--etype", default="conv1d", type=str)
+        group.add_argument("--etype", default="linear", type=str)
         group.add_argument("--hdim", default=160, type=int)
         group.add_argument("--cdim", default=16, type=int)
         group.add_argument("--tnum", default=10, type=int)

@@ -17,7 +17,7 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=conf/specaug.yaml
+preprocess_config= #conf/specaug.yaml
 train_config=conf/train.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
@@ -192,7 +192,7 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     # decode using the tri4b model with pronunciation and silence probabilities
     utils/mkgraph.sh \
         data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
-    mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
+#    mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
     for test in dev_clean dev_other test_clean test_other; do
         steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
                             exp/tri4b/graph_tgsmall data/$test \
@@ -337,30 +337,34 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
-        # split data
-        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
-
-        #### use CPU for decoding
-        ngpu=0
-
-        # set batchsize 0 to disable batch decoding
-        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-            KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
-            --config ${decode_config} \
-            --ngpu ${ngpu} \
-            --backend pytorch \
-            --batchsize 0 \
-            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
-            --model ${expdir}/results/${recog_model}  \
-            --api v1
+#        # split data
+#        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+#
+#        #### use CPU for decoding
+#        ngpu=0
+#
+#        # set batchsize 0 to disable batch decoding
+#        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+#            KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
+#            --config ${decode_config} \
+#            --ngpu ${ngpu} \
+#            --backend pytorch \
+#            --batchsize 0 \
+#            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+#            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
+#            --model ${expdir}/results/${recog_model}  \
+#            --api v1
         
         # get decoded results
-        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
-        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}
+        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1
+        steps/lmrescore_const_arpa.sh \
+            --cmd "$decode_cmd" data/lang_test_{tgsmall,fglarge} \
+            data/${rtask} ${expdir}/${decode_dir} ${expdir}/${decode_dir}_fglarge
+        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir} || exit 1
         for x in ${expdir}/${decode_dir}; do
             [ -d $x ] && echo $x | grep "${1:-.*}" >/dev/null && grep WER $x/wer_* 2>/dev/null | utils/best_wer.sh;
         done
+#        rm -rf ${expdir}/${decode_dir}/data.*.ark
     ) &
     pids+=($!) # store background pids
     done
