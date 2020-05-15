@@ -9,14 +9,14 @@
 # general configuration
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
-ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=32
+ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=8
 dumpdir=dump
 resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=conf/specaug.yaml
+preprocess_config=
 train_config=conf/train.yaml
 semi_config=conf/ICT.yaml
 decode_config=conf/decode.yaml
