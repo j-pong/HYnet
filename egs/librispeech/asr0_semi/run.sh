@@ -9,8 +9,8 @@
 # general configuration
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
-ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=8
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=32
 dumpdir=dump
 resume=
 
