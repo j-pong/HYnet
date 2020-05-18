@@ -25,10 +25,10 @@ def mixup_data(x, y, ilens, alpha):
         y_b[i, :ilens[i]] = y[i, index[i]]
 
     mixed_x = torch.Tensor(lam * x + (1 - lam) * x_b)
-    mixed_x = mixed_x.cuda(x_device)
+    mixed_x = mixed_x.to(x_device)
 
-    y_b = torch.Tensor(y_b).long().cuda(y_device)
-    y = torch.Tensor(y).long().cuda(y_device)
+    y_b = torch.Tensor(y_b).to(y_device).long()
+    y = torch.Tensor(y).to(y_device).long()
     return mixed_x, y, y_b, index, lam
 
 def mixup_logit(y, ilens, index, lam):
@@ -42,7 +42,7 @@ def mixup_logit(y, ilens, index, lam):
     for i in range(batch_size):
         y_b[i, :ilens[i]] = y[i, index[i]]
     mixed_y = torch.Tensor(lam * y + (1 - lam) * y_b)
-    mixed_y = mixed_y.cuda(device)
+    mixed_y = mixed_y.to(device)
     return mixed_y
 
 def get_current_consistency_weight(final_consistency_weight, epoch, step_in_epoch,
