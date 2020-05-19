@@ -9,8 +9,8 @@
 # general configuration
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
-ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=8
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=32
 dumpdir=dump
 resume=
 
@@ -354,8 +354,8 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --api v1
         
         # get decoded results
-        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir}
-        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir}
+        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1;
+        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir} || exit 1;
         for x in ${expdir}/${decode_dir}; do
             [ -d $x ] && echo $x | grep "${1:-.*}" >/dev/null && grep WER $x/wer_* 2>/dev/null | utils/best_wer.sh;
         done
