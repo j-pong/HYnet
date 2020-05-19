@@ -117,8 +117,8 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        x, _, hidden_mask = self.inference(x, None, decoder_type='src')
+        _, h, hidden_mask = self.inference(x, None, decoder_type='src')
 
-        y = x.view(-1, self.odim)
+        h = h.view(-1, h.size(-1))
 
-        return y
+        return h

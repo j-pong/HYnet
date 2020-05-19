@@ -53,6 +53,7 @@ class InferenceNet(nn.Module):
         return mask, mask_share
 
     def hidden_exclude_activation(self, h, mask_prev):
+        # byte tensor is not good choice
         if mask_prev is None:
             mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
             mask_prev = mask_cur
