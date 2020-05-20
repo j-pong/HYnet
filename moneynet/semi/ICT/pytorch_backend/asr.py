@@ -761,7 +761,7 @@ def train(args):
     )
     trainer.extend(
         snapshot_object(model, "model.acc.best"),
-        trigger=training.triggers.MaxValueTrigger("validation/main/teacher_acc"),
+        trigger=training.triggers.MaxValueTrigger("validation/main/student_acc"),
     )
 
     # save snapshot which contains model and optimizer states
