@@ -304,16 +304,22 @@ class E2E(ASRInterface, torch.nn.Module):
             self.stu_acc = None
 
         # 1. Mixup feature
-        hs_pad, ys_pad, ys_pad_b, _, lam = mixup_data(hs_pad, ys_pad, hlens, self.mixup_alpha)
-        ul_hs_pad_mixed, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha)
+        if self.mixup_alpha > 0.0:
+            hs_pad, ys_pad, ys_pad_b, _, lam = mixup_data(hs_pad, ys_pad, hlens, self.mixup_alpha)
+            ul_hs_pad_mixed, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha)
 
         # 2. RNN Encoder
         pred_pad, hlens, _ = self.enc(hs_pad, hlens)
-        ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad_mixed, ul_hlens)
+        if self.mixup_alpha > 0.0:
+            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad_mixed, ul_hlens)
+        else:
+            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad, ul_hlens)
         ema_ul_pred_pad, ema_ul_hlens, _ = self.ema_enc(ul_hs_pad, ul_hlens)
 
         # 3. post-processing layer for target dimension
         pred_pad, ys_pad = self.match_pad(pred_pad, ys_pad)
+        if self.mixup_alpha > 0.0:
+            pred_pad, ys_pad_b = self.match_pad(pred_pad, ys_pad_b)
         ul_pred_pad, ul_ys_pad = self.match_pad(ul_pred_pad, ul_ys_pad)
         ema_ul_pred_pad, ul_ys_pad = self.match_pad(ema_ul_pred_pad, ul_ys_pad)
 
@@ -322,26 +328,35 @@ class E2E(ASRInterface, torch.nn.Module):
         self.ema_acc = th_accuracy(
             ema_ul_pred_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
         )
-        ema_ul_pred_pad = mixup_logit(ema_ul_pred_pad, ul_hlens, ul_shuf_idx, ul_lam)
+        if self.mixup_alpha > 0.0:
+            ema_ul_pred_pad = mixup_logit(ema_ul_pred_pad, ul_hlens, ul_shuf_idx, ul_lam)
 
         # 5. Supervised loss
         if LooseVersion(torch.__version__) < LooseVersion("1.0"):
             reduction_str = "elementwise_mean"
         else:
             reduction_str = "mean"
-        loss_ce_a = F.cross_entropy(
-            pred_pad.view(-1, self.odim),
-            ys_pad.view(-1),
-            ignore_index=self.ignore_id,
-            reduction=reduction_str,
-        )
-        loss_ce_b = F.cross_entropy(
-            pred_pad.view(-1, self.odim),
-            ys_pad_b.view(-1),
-            ignore_index=self.ignore_id,
-            reduction=reduction_str,
-        )
-        self.loss_ce = lam * loss_ce_a + (1 - lam) * loss_ce_b
+        if self.mixup_alpha > 0.0:
+            loss_ce_a = F.cross_entropy(
+                pred_pad.view(-1, self.odim),
+                ys_pad.view(-1),
+                ignore_index=self.ignore_id,
+                reduction=reduction_str,
+            )
+            loss_ce_b = F.cross_entropy(
+                pred_pad.view(-1, self.odim),
+                ys_pad_b.view(-1),
+                ignore_index=self.ignore_id,
+                reduction=reduction_str,
+            )
+            self.loss_ce = lam * loss_ce_a + (1 - lam) * loss_ce_b
+        else:
+            self.loss_ce = F.cross_entropy(
+                pred_pad.view(-1, self.odim),
+                ys_pad.view(-1),
+                ignore_index=self.ignore_id,
+                reduction=reduction_str,
+            )
 
         # 6. Consistency loss
         self.loss_mse = F.mse_loss(

@@ -10,7 +10,7 @@ subsample: "1_2_2_1_1" # skip every n frame from input to nth layers
 mtlalpha: 0.0
 
 # minibatch related
-batch-size: 80
+batch-size: 60
 maxlen-in: 800  # if input length  > maxlen_in, batchsize is automatically reduced
 maxlen-out: 150 # if output length > maxlen_out, batchsize is automatically reduced
 
@@ -18,10 +18,10 @@ maxlen-out: 150 # if output length > maxlen_out, batchsize is automatically redu
 dropout-rate: 0.2
 
 # optimization related
-sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
+sortagrad: -1 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
 opt: sgd
 epochs: 30
-patience: 3
+patience: 0
 
 # scheduled sampling option
 sampling-probability: 0.0

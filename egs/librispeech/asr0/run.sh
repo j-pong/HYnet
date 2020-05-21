@@ -9,15 +9,15 @@
 # general configuration
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
-ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
-nj=8
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+nj=32
 dumpdir=dump
 resume=
 unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config= #conf/specaug.yaml
+preprocess_config=conf/specaug.yaml
 train_config=conf/train.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
@@ -56,7 +56,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_100
+train_set=train_960
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -190,22 +190,24 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     data/local/lm/lm_fglarge.arpa.gz data/lang data/lang_test_fglarge
 
     # decode using the tri4b model with pronunciation and silence probabilities
-    utils/mkgraph.sh \
-        data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
-#    mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
-    for test in dev_clean dev_other test_clean test_other; do
-        steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
-                            exp/tri4b/graph_tgsmall data/$test \
-                            exp/tri4b/decode_tgsmall_$test
-        steps/lmrescore.sh --cmd "$decode_cmd" data/lang_test_{tgsmall,tgmed} \
-                        data/$test exp/tri4b/decode_{tgsmall,tgmed}_$test
-        steps/lmrescore_const_arpa.sh \
-        --cmd "$decode_cmd" data/lang_test_{tgsmall,tglarge} \
-        data/$test exp/tri4b/decode_{tgsmall,tglarge}_$test
-        steps/lmrescore_const_arpa.sh \
-        --cmd "$decode_cmd" data/lang_test_{tgsmall,fglarge} \
-        data/$test exp/tri4b/decode_{tgsmall,fglarge}_$test
-    done
+    {
+        utils/mkgraph.sh \
+            data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
+#        mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
+        for test in dev_clean dev_other test_clean test_other; do
+            steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
+                                exp/tri4b/graph_tgsmall data/$test \
+                                exp/tri4b/decode_tgsmall_$test
+            steps/lmrescore.sh --cmd "$decode_cmd" data/lang_test_{tgsmall,tgmed} \
+                            data/$test exp/tri4b/decode_{tgsmall,tgmed}_$test
+            steps/lmrescore_const_arpa.sh \
+            --cmd "$decode_cmd" data/lang_test_{tgsmall,tglarge} \
+            data/$test exp/tri4b/decode_{tgsmall,tglarge}_$test
+            steps/lmrescore_const_arpa.sh \
+            --cmd "$decode_cmd" data/lang_test_{tgsmall,fglarge} \
+            data/$test exp/tri4b/decode_{tgsmall,fglarge}_$test
+        done
+    }&
 fi
 
 if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
@@ -352,14 +354,13 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
             --model ${expdir}/results/${recog_model}  \
             --api v1
-        
+
         # get decoded results
         local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1
         steps/lmrescore_const_arpa.sh \
-            --cmd "$decode_cmd" data/lang_test_{tgsmall,fglarge} \
-            data/${rtask} ${expdir}/${decode_dir} ${expdir}/${decode_dir}_fglarge
-        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir} || exit 1
-        for x in ${expdir}/${decode_dir}; do
+            --cmd "$decode_cmd"  data/lang_test_{tgsmall,fglarge} \
+            data/${rtask} ${expdir}/${decode_dir} ${expdir}/${decode_dir}_fglarge || exit 1
+        for x in ${expdir}/${decode_dir}_fglarge; do
             [ -d $x ] && echo $x | grep "${1:-.*}" >/dev/null && grep WER $x/wer_* 2>/dev/null | utils/best_wer.sh;
         done
 #        rm -rf ${expdir}/${decode_dir}/data.*.ark

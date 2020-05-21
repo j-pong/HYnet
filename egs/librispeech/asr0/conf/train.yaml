@@ -11,7 +11,7 @@ eunits: 2048
 grad-clip: 5
 lsm-weight: 0.1
 model-module: moneynet.nets.pytorch_backend.e2e_asr_transformer:E2E
-mtlalpha: 0.0
+mtlalpha: 0.3
 opt: noam
 patience: 0
 sortagrad: 0

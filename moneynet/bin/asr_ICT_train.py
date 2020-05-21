@@ -521,6 +521,10 @@ def get_parser(parser=None, required=True):
                         help="specific epoch to start consistency weight rampup")
     parser.add_argument("--consistency-rampup-ends", type=int, default=0,
                         help="specific epoch to end consistency weight rampup")
+    parser.add_argument("--cosine-rampdown-starts", type=int, default=1000,
+                        help="specific epoch to start consistency weight rampup")
+    parser.add_argument("--cosine-rampdown-ends", type=int, default=1000,
+                        help="specific epoch to end consistency weight rampup")
     parser.add_argument("--ema-pre-decay", type=float, default=0.9,
                         help="ema decay parameter before consistency rampup ends")
     parser.add_argument("--ema-post-decay", type=float, default=0.999,
