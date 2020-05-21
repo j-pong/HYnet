@@ -277,7 +277,7 @@ class Encoder(torch.nn.Module):
     """
 
     def __init__(
-        self, etype, idim, elayers, eunits, eprojs, subsample, dropout, lnorm, in_channel=1
+        self, etype, idim, elayers, eunits, eprojs, subsample, dropout, lnorm, bnorm, in_channel=1
     ):
         super(Encoder, self).__init__()
         typ = etype.lstrip("vgg").rstrip("p")
@@ -296,6 +296,8 @@ class Encoder(torch.nn.Module):
                             eprojs,
                             subsample,
                             dropout,
+                            lnorm,
+                            bnorm,
                             typ=typ,
                         ),
                     ]
@@ -312,6 +314,7 @@ class Encoder(torch.nn.Module):
                             eprojs,
                             dropout,
                             lnorm,
+                            bnorm,
                             typ=typ,
                         ),
                     ]
@@ -320,12 +323,12 @@ class Encoder(torch.nn.Module):
         else:
             if etype[-1] == "p":
                 self.enc = torch.nn.ModuleList(
-                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, lnorm, typ=typ)]
+                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, lnorm, bnorm, typ=typ)]
                 )
                 logging.info(typ.upper() + " with every-layer projection for encoder")
             else:
                 self.enc = torch.nn.ModuleList(
-                    [RNN(idim, elayers, eunits, eprojs, dropout, lnorm, typ=typ)]
+                    [RNN(idim, elayers, eunits, eprojs, dropout, lnorm, bnorm, typ=typ)]
                 )
                 logging.info(typ.upper() + " without projection for encoder")
 
