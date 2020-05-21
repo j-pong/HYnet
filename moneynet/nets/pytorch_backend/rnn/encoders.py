@@ -25,7 +25,7 @@ class RNNP(torch.nn.Module):
     :param str typ: The RNN type
     """
 
-    def __init__(self, idim, elayers, cdim, hdim, subsample, dropout, lnorm, bnorm=True, typ="blstm"):
+    def __init__(self, idim, elayers, cdim, hdim, subsample, dropout, lnorm, bnorm, typ="blstm"):
         super(RNNP, self).__init__()
         bidir = typ[0] == "b"
         for i in six.moves.range(elayers):
@@ -118,7 +118,7 @@ class RNN(torch.nn.Module):
     :param str typ: The RNN type
     """
 
-    def __init__(self, idim, elayers, cdim, hdim, dropout, lnorm, bnorm=True, typ="blstm"):
+    def __init__(self, idim, elayers, cdim, hdim, dropout, lnorm, bnorm, typ="blstm"):
         super(RNN, self).__init__()
         bidir = typ[0] == "b"
         self.nbrnn = (
@@ -376,7 +376,8 @@ def encoder_for(args, idim, subsample):
             args.eprojs,
             subsample,
             args.dropout_rate,
-            args.lnorm
+            args.lnorm,
+            args.bnorm,
         )
     elif num_encs >= 1:
         enc_list = torch.nn.ModuleList()
@@ -389,7 +390,8 @@ def encoder_for(args, idim, subsample):
                 args.eprojs,
                 subsample[idx],
                 args.dropout_rate[idx],
-                args.lnorm[idx]
+                args.lnorm[idx],
+                args.bnorm[idx],
             )
             enc_list.append(enc)
         return enc_list
