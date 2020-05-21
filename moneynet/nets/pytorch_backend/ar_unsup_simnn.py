@@ -4,7 +4,9 @@ import logging
 import six
 
 import torch
+import torch.nn.functional as F
 from torch import nn
+from torch.nn.parameter import Parameter
 
 import chainer
 from chainer import reporter
@@ -49,11 +51,14 @@ class Net(nn.Module):
         self.ignore_id = ignore_id
         self.subsample = [1]
 
+        self.k = 1000
+
         # reporter for monitoring
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.inference = InferenceNet(idim, idim, args)
+        self.embed = torch.nn.Embedding(self.k, self.odim)
+        self.inference = InferenceNet(self.idim, self.odim, args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -81,13 +86,20 @@ class Net(nn.Module):
         # exit()
 
         # monitoring buffer
-        buffs = {'loss': []}
+        buffs = {'loss': [], 'score_idx': []}
 
         # start iteration for superposition
         hidden_mask = None
         for _ in six.moves.range(int(self.hdim / self.cdim)):
+            # find anchor with maximum similarity
+            score = torch.matmul(xs_pad_in, self.embed.weight.t()) / \
+                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
+            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+            buffs['score_idx'].append(score_idx)
+            anchor = self.embed(score_idx)
+
             # feedforward to inference network
-            xs_ele_out, _, hidden_mask = self.inference(xs_pad_in, hidden_mask, decoder_type='src')
+            xs_ele_out, _, hidden_mask = self.inference(anchor, hidden_mask, decoder_type='src')
             xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
 
             # compute loss of total network
@@ -117,8 +129,23 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        _, h, hidden_mask = self.inference(x, None, decoder_type='src')
+        buffs = {'score_idx': []}
 
-        h = h.view(-1, h.size(-1))
+        for _ in six.moves.range(int(self.hdim / self.cdim)):
+            # find anchor with maximum similarity
+            score = torch.matmul(x, self.embed.weight.t()) / \
+                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
+            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+            buffs['score_idx'].append(score_idx)
+            anchor = self.embed(score_idx)
 
-        return h
+            # feedforward to inference network
+            xs_ele_out, _, hidden_mask = self.inference(anchor, hidden_mask, decoder_type='src')
+            xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
+
+            # compute residual feature
+            x = (x - xs_ele_out)
+
+        out = torch.stack(buffs['score_idx'], dim=-1)
+
+        return out
