@@ -128,6 +128,9 @@ class E2E(ASRInterface, torch.nn.Module):
             "--lnorm", default=False, type=strtobool, help="boolean option to use layer normalization"
         )
         group.add_argument(
+            "--bnorm", default=False, type=strtobool, help="boolean option to use batch normalization"
+        )
+        group.add_argument(
             "--subsample",
             default="1",
             type=str,
@@ -318,7 +321,7 @@ class E2E(ASRInterface, torch.nn.Module):
         if self.mtlalpha == 0:
             self.loss_ctc = None
         else:
-            self.loss_ctc = self.ctc(hs_pad, hlens, ys_pad)
+            self.loss_ctc = self.ctc(pred_pad, hlens, ys_pad)
 
         # 3. CE loss
         if LooseVersion(torch.__version__) < LooseVersion("1.0"):
