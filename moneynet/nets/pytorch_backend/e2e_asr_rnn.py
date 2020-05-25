@@ -39,6 +39,7 @@ from espnet.utils.cli_utils import strtobool
 
 from moneynet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
 from moneynet.nets.pytorch_backend.initialization import orthogonal_init_parameters
+from moneynet.nets.pytorch_backend.initialization import xavier_init_parameters
 from moneynet.nets.pytorch_backend.initialization import set_forget_bias_to_one
 from moneynet.nets.pytorch_backend.rnn.encoders import encoder_for
 
@@ -230,6 +231,8 @@ class E2E(ASRInterface, torch.nn.Module):
             self.init_like_chainer()
         elif args.initializer == "orthogonal":
             self.init_orthogonal()
+        elif args.initializer == "xavier":
+            self.init_xavier()
         else:
             raise NotImplementedError(
                 "unknown initializer: " + args.initializer
@@ -272,6 +275,13 @@ class E2E(ASRInterface, torch.nn.Module):
         initiate linear weight orthogonal
         """
         orthogonal_init_parameters(self)
+
+    def init_xavier(self):
+        """Initialize weight orthogonal
+        initiate bias to zero
+        initiate linear weight orthogonal
+        """
+        xavier_init_parameters(self)
 
     def forward(self, xs_pad, ilens, ys_pad):
         """E2E forward.

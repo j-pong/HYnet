@@ -8,6 +8,16 @@
 import math
 import torch
 
+def xavier_init_parameters(module):
+    for p in module.parameters():
+        data = p.data
+        if data.dim() == 1:
+            # bias
+            data.zero_()
+        else:
+            # linear weight
+            torch.nn.init.xavier_normal_(data)
+
 def orthogonal_init_parameters(module):
     for p in module.parameters():
         data = p.data

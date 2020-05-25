@@ -33,4 +33,4 @@ backend: pytorch
 model-module: "moneynet.nets.pytorch_backend.e2e_asr_rnn:E2E"
 
 # initialization method
-initializer: orthogonal
+initializer: xavier
