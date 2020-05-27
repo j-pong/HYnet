@@ -17,3 +17,4 @@ epochs: 10
 etype: linear
 hdim: 480
 cdim: 160
+tnum: 2

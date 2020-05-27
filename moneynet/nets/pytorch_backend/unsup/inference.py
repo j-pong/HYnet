@@ -2,22 +2,82 @@ import math
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
-from fairseq.models.wav2vec import norm_block
+# from fairseq.models.wav2vec import norm_block
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
 
+class Fp32GroupNorm(nn.GroupNorm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, input):
+        output = F.group_norm(
+            input.float(),
+            self.num_groups,
+            self.weight.float() if self.weight is not None else None,
+            self.bias.float() if self.bias is not None else None,
+            self.eps,
+        )
+        return output.type_as(input)
+
+
+class Fp32LayerNorm(nn.LayerNorm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, input):
+        output = F.layer_norm(
+            input.float(),
+            self.normalized_shape,
+            self.weight.float() if self.weight is not None else None,
+            self.bias.float() if self.bias is not None else None,
+            self.eps,
+        )
+        return output.type_as(input)
+
+
+class TransposeLast(nn.Module):
+    def __init__(self, deconstruct_idx=None):
+        super().__init__()
+        self.deconstruct_idx = deconstruct_idx
+
+    def forward(self, x):
+        if self.deconstruct_idx is not None:
+            x = x[self.deconstruct_idx]
+        return x.transpose(-2, -1)
+
+
+def norm_block(is_layer_norm, dim, affine=True):
+    if is_layer_norm:
+        mod = nn.Sequential(
+            TransposeLast(),
+            Fp32LayerNorm(dim, elementwise_affine=affine),
+            TransposeLast(),
+        )
+    else:
+        mod = Fp32GroupNorm(1, dim, affine=affine)
+
+    return mod
+
 
 class ConvInference(nn.Module):
     def __init__(self, idim, odim,
-                 conv_layers,
-                 dropout,
-                 log_compression,
-                 skip_connections,
-                 residual_scale,
-                 non_affine_group_norm,
-                 activation):
+                 conv_layers=[(512, 10, 5),
+                              (512, 8, 4),
+                              (512, 4, 2),
+                              (512, 4, 2),
+                              (512, 4, 2),
+                              (512, 1, 1),
+                              (512, 1, 1)],
+                 dropout=0.0,
+                 log_compression=False,
+                 skip_connections=False,
+                 residual_scale=0.5,
+                 non_affine_group_norm=False,
+                 activation=nn.ReLU()):
         super(ConvInference, self).__init__()
         self.idim = idim
         self.odim = odim
@@ -32,7 +92,7 @@ class ConvInference(nn.Module):
                 activation,
             )
 
-        in_d = 1
+        in_d = idim
         self.conv_layers = nn.ModuleList()
         for dim, k, stride in conv_layers:
             self.conv_layers.append(block(in_d, dim, k, stride))
@@ -41,6 +101,27 @@ class ConvInference(nn.Module):
         self.log_compression = log_compression
         self.skip_connections = skip_connections
         self.residual_scale = math.sqrt(residual_scale)
+
+    def forward(self, x):
+        x = torch.transpose(x, -2, -1)
+        for conv in self.conv_layers:
+            residual = x
+            x = conv(x)
+            if self.skip_connections and x.size(1) == residual.size(1):
+                tsz = x.size(2)
+                r_tsz = residual.size(2)
+                residual = residual[..., :: r_tsz // tsz][..., :tsz]
+                x = (x + residual) * self.residual_scale
+
+        if self.log_compression:
+            x = x.abs()
+            x = x + 1
+            x = x.log()
+
+        print(x.size())
+        exit()
+
+        return x
 
 
 class ExcInference(nn.Module):
