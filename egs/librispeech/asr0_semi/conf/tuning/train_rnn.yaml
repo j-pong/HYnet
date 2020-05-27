@@ -21,7 +21,7 @@ dropout-rate: 0.2
 sortagrad: -1 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
 opt: sgd
 epochs: 30
-patience: 3
+patience: 0
 
 # scheduled sampling option
 sampling-probability: 0.0

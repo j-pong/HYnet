@@ -3,6 +3,8 @@ mixup-alpha: 0.0  # 0.0 for only mean-teacher
 consistency-weight: 0.5
 consistency-rampup-starts: 0
 consistency-rampup-ends: 8
+cosine-rampdown-starts: 24
+cosine-rampdown-ends: 30
 ema-pre-decay: 0.9
 ema-post-decay: 0.99
 

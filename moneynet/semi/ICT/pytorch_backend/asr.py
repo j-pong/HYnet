@@ -59,6 +59,7 @@ from espnet.utils.training.train_utils import check_early_stop
 from espnet.utils.training.train_utils import set_early_stop
 
 from moneynet.nets.pytorch_backend.ICT.nets_utils import update_ema_variables
+from moneynet.nets.pytorch_backend.ICT.nets_utils import cosine_rampdown
 
 import matplotlib
 
@@ -172,6 +173,8 @@ class CustomUpdater(StandardUpdater):
 
         # Semi-supervised related
         self.consistency_rampup_ends = ICT_args["consistency_rampup_ends"]
+        self.cosine_rampdown_starts = ICT_args["cosine_rampdown_starts"]
+        self.cosine_rampdown_ends = ICT_args["cosine_rampdown_ends"]
         self.ema_pre_decay = ICT_args["ema_pre_decay"]
         self.ema_post_decay = ICT_args["ema_post_decay"]
 
@@ -208,6 +211,13 @@ class CustomUpdater(StandardUpdater):
             loss = data_parallel(self.model, (*labeled_x, *unlabeled_x, process_info), range(self.ngpu))
         loss = loss.mean() / self.accum_grad
         loss.backward()
+
+        # learning rate cosine rampdown for SGD optimizer
+        if epoch > self.cosine_rampdown_starts:
+            for p in optimizer.param_groups:
+                p["lr"] *= cosine_rampdown(epoch - self.cosine_rampdown_starts,
+                            self.cosine_rampdown_ends - self.cosine_rampdown_starts)
+            logging.info("learning rate decayed to " + str(p["lr"]))
 
         # gradient noise injection
         if self.grad_noise:
@@ -676,6 +686,8 @@ def train(args):
 
     # Set up ICT related arguments
     ICT_args = {"consistency_rampup_ends": args.consistency_rampup_ends,
+                "cosine_rampdown_starts": args.cosine_rampdown_starts,
+                "cosine_rampdown_ends": args.cosine_rampdown_ends,
                 "ema_pre_decay": args.ema_pre_decay,
                 "ema_post_decay": args.ema_post_decay
     }
