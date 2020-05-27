@@ -15,7 +15,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
-from moneynet.nets.pytorch_backend.unsup.inference import InferenceNet
+from moneynet.nets.pytorch_backend.unsup.inference import ExcInference
 
 
 class Reporter(chainer.Chain):
@@ -58,7 +58,7 @@ class Net(nn.Module):
 
         # inference part with action and selection
         self.embed = torch.nn.Embedding(self.k, self.odim)
-        self.inference = InferenceNet(self.idim, self.odim, args)
+        self.inference = ExcInference(self.idim, self.odim, args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))

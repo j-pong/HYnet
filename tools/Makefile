@@ -35,7 +35,7 @@ endif
 
 all: kaldi.done python check_install
 
-python: venv $(CUDA_DEPS) moneynet.done warp-ctc.done warp-transducer.done chainer_ctc.done
+python: venv $(CUDA_DEPS) moneynet.done warp-ctc.done warp-transducer.done chainer_ctc.done espnet.done fairseq.done
 
 extra: nkf.done moses.done mwerSegmenter.done pesq
 
@@ -79,6 +79,13 @@ espnet.done: venv
 	cd ../../
 	touch espnet.done
 endif
+
+fairseq.done: venv
+	git clone https://github.com/pytorch/fairseq
+	cd fairseq
+	. ../venv/bin/activate; pip install -e .
+	cd ../
+	touch fairseq.done
 
 moneynet.done: espnet.done
 	. venv/bin/activate && pip install -e ..

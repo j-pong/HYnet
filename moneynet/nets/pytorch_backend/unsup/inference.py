@@ -1,21 +1,62 @@
+import math
+
 import torch
 from torch import nn
-import torch.nn.functional as F
 
-from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind
+from fairseq.models.wav2vec import norm_block
+
+from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
 
-class InferenceNet(nn.Module):
-    def __init__(self, idim, odim, args):
-        super(InferenceNet, self).__init__()
+
+class ConvInference(nn.Module):
+    def __init__(self, idim, odim,
+                 conv_layers,
+                 dropout,
+                 log_compression,
+                 skip_connections,
+                 residual_scale,
+                 non_affine_group_norm,
+                 activation):
+        super(ConvInference, self).__init__()
+        self.idim = idim
+        self.odim = odim
+
+        def block(n_in, n_out, k, stride):
+            return nn.Sequential(
+                nn.Conv1d(n_in, n_out, k, stride=stride, bias=False),
+                nn.Dropout(p=dropout),
+                norm_block(
+                    is_layer_norm=False, dim=n_out, affine=not non_affine_group_norm
+                ),
+                activation,
+            )
+
+        in_d = 1
+        self.conv_layers = nn.ModuleList()
+        for dim, k, stride in conv_layers:
+            self.conv_layers.append(block(in_d, dim, k, stride))
+            in_d = dim
+
+        self.log_compression = log_compression
+        self.skip_connections = skip_connections
+        self.residual_scale = math.sqrt(residual_scale)
+
+
+class ExcInference(nn.Module):
+    def __init__(self, idim, odim,
+                 hdim,
+                 cdim,
+                 etype):
+        super(ExcInference, self).__init__()
         # configuration
         self.idim = idim
         self.odim = odim
-        self.hdim = args.hdim
-        self.cdim = args.cdim
+        self.hdim = hdim
+        self.cdim = cdim
 
         # next frame predictor
-        self.encoder_type = args.etype
+        self.encoder_type = etype
         if self.encoder_type == 'conv1d':
             self.input_extra = idim
             self.output_extra = odim
@@ -28,28 +69,21 @@ class InferenceNet(nn.Module):
             self.decoder_self = nn.Linear(self.hdim, idim)
 
     @staticmethod
-    def one_hot(y, num_classes):
-        scatter_dim = len(y.size())
-        y_tensor = y.view(*y.size(), -1)
-        zeros = torch.zeros(*y.size(), num_classes, dtype=y.dtype).to(y_tensor.device)
-
-        return zeros.scatter(scatter_dim, y_tensor, 1)
-
-    @staticmethod
     def energy_pooling(x, dim=-1):
         energy = x.pow(2).sum(dim)
         x_ind = torch.max(energy, dim=-1)[1]  # (B, Tmax, *)
         x = select_with_ind(x, x_ind)  # (B, Tmax, hdim)
         return x, x_ind
 
-    def energy_pooling_mask(self, x, part_size, share=False):
+    @staticmethod
+    def energy_pooling_mask(x, part_size, share=False):
         energy = x.pow(2)
         if share:
             indices = torch.topk(energy, k=part_size * 2, dim=-1)[1]  # (B, T, cdim*2)
         else:
             indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
-        mask = self.one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
-        mask_share = self.one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        mask = one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        mask_share = one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
         return mask, mask_share
 
     def hidden_exclude_activation(self, h, mask_prev):
