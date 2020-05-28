@@ -32,8 +32,6 @@ class Net(nn.Module):
         """Add arguments"""
         group = parser.add_argument_group("simnn setting")
         group.add_argument("--etype", default="linear", type=str)
-        group.add_argument("--hdim", default=160, type=int)
-        group.add_argument("--cdim", default=16, type=int)
         group.add_argument("--tnum", default=3, type=int)
         group.add_argument("--lr", default=0.001, type=float)
         group.add_argument("--momentum", default=0.9, type=float)
@@ -45,8 +43,7 @@ class Net(nn.Module):
         # network hyperparameter
         self.idim = idim
         self.odim = idim
-        self.hdim = args.hdim
-        self.cdim = args.cdim
+        self.iter = 3
         self.tnum = args.tnum
         self.ignore_id = ignore_id
         self.subsample = [1]
@@ -58,7 +55,7 @@ class Net(nn.Module):
 
         # inference part with action and selection
         self.embed = torch.nn.Embedding(self.k, self.odim)
-        self.inference = ConvInference(idim=idim, odim=idim)
+        self.inference = ConvInference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -89,7 +86,7 @@ class Net(nn.Module):
         buffs = {'loss': [], 'score_idx': []}
 
         # start iteration for superposition
-        for _ in six.moves.range(self.tnum):
+        for _ in six.moves.range(self.iter):
             # find anchor with maximum similarity
             score = torch.matmul(xs_pad_in, self.embed.weight.t()) / \
                     torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
@@ -99,12 +96,13 @@ class Net(nn.Module):
 
             # feedforward to inference network
             xs_ele_out = self.inference(anchor)
-            xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
+            sz = xs_ele_out.size()
+            xs_ele_out = xs_ele_out.view(sz[0], sz[1], self.tnum, self.idim)  # B, Tmax, tnum, C
 
             # compute loss of total network
-            masks = [seq_mask.view(-1, 1)]
-            loss_local = self.criterion(xs_ele_out.mean(-2).view(-1, self.idim),
-                                        xs_pad_out.mean(-2).view(-1, self.idim),
+            masks = [seq_mask.unsqueeze(-1).repeat(1, 1, self.tnum).view(-1, 1)]
+            loss_local = self.criterion(xs_ele_out.reshape(-1, self.idim),
+                                        xs_pad_out.reshape(-1, self.idim),
                                         masks)
 
             # compute residual feature
