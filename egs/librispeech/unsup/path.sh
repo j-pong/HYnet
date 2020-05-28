@@ -1,17 +1,17 @@
 MAIN_ROOT=$PWD/../../..
-KALDI_ROOT=$MAIN_ROOT/tools_trunk/kaldi
-ESPNET_ROOT=$MAIN_ROOT/tools_trunk/espnet
+KALDI_ROOT=$MAIN_ROOT/tools/kaldi
+ESPNET_ROOT=$MAIN_ROOT/tools/espnet
 
 [ -f $KALDI_ROOT/tools/env.sh ] && . $KALDI_ROOT/tools/env.sh
 export PATH=$PWD/utils/:$KALDI_ROOT/tools/openfst/bin:$KALDI_ROOT/tools/sctk/bin:$PWD:$PATH
 [ ! -f $KALDI_ROOT/tools/config/common_path.sh ] && echo >&2 "The standard file $KALDI_ROOT/tools/config/common_path.sh is not present -> Exit!" && exit 1
 . $KALDI_ROOT/tools/config/common_path.sh
 export LC_ALL=C
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:$MAIN_ROOT/tools_trunk/chainer_ctc/ext/warp-ctc/build
-if [ -e $MAIN_ROOT/tools_trunk/venv/etc/profile.d/conda.sh ]; then
-    source $MAIN_ROOT/tools_trunk/venv/etc/profile.d/conda.sh && conda deactivate && conda activate
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:$ESPNET_ROOT/tools/chainer_ctc/ext/warp-ctc/build
+if [ -e $ESPNET_ROOT/tools/venv/etc/profile.d/conda.sh ]; then
+    source $ESPNET_ROOT/tools/venv/etc/profile.d/conda.sh && conda deactivate && conda activate
 else
-    source $MAIN_ROOT/tools_trunk/venv/bin/activate
+    source $ESPNET_ROOT/tools/venv/bin/activate
 fi
 export PATH=$ESPNET_ROOT/utils:$ESPNET_ROOT/espnet/bin:$MAIN_ROOT/moneynet/bin:$PATH
 

@@ -154,6 +154,7 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
+. ./path_fair.sh || exit 1;
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Unsupervised Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
@@ -172,6 +173,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --train-json ${feat_tr_large_dir}/data_${bpemode}${nbpe}.json \
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
+. ./path.sh || exit 1;
 
 recog_model=model.loss.best  # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
