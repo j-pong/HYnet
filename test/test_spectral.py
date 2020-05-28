@@ -9,7 +9,7 @@ x = torch.linspace(0, 1, resol)
 units_freq = torch.arange(1, 3)
 
 # prepare tracer
-basis_state = torch.arange(1, 4)
+basis_state = torch.arange(1, f_dim + 1)
 basis_set = [torch.sin(2 * np.pi * x * bs) for bs in basis_state]
 basis_set = torch.stack(basis_set, dim=-1)  # T, f_dim
 
