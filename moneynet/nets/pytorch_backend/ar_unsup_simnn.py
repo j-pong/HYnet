@@ -6,7 +6,6 @@ import six
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.parameter import Parameter
 
 import chainer
 from chainer import reporter
@@ -15,7 +14,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
-from moneynet.nets.pytorch_backend.unsup.inference import ConvInference
+from moneynet.nets.pytorch_backend.unsup.inference import ConvInference as Inference
 
 
 class Reporter(chainer.Chain):
@@ -31,10 +30,17 @@ class Net(nn.Module):
     def add_arguments(parser):
         """Add arguments"""
         group = parser.add_argument_group("simnn setting")
-        group.add_argument("--etype", default="linear", type=str)
-        group.add_argument("--tnum", default=3, type=int)
+        # task related
+        group.add_argument("--tnum", default=5, type=int)
+        group.add_argument("--iter", default=3, type=int)
+
+        # optimization related
         group.add_argument("--lr", default=0.001, type=float)
         group.add_argument("--momentum", default=0.9, type=float)
+
+        # model related
+        group.add_argument("--hdim", default=512, type=int)
+        group.add_argument("--cdim", default=128, type=int)
 
         return parser
 
@@ -43,7 +49,7 @@ class Net(nn.Module):
         # network hyperparameter
         self.idim = idim
         self.odim = idim
-        self.iter = 3
+        self.iter = args.iter
         self.tnum = args.tnum
         self.ignore_id = ignore_id
         self.subsample = [1]
@@ -55,7 +61,7 @@ class Net(nn.Module):
 
         # inference part with action and selection
         self.embed = torch.nn.Embedding(self.k, self.odim)
-        self.inference = ConvInference(idim=idim, odim=idim, args=args)
+        self.inference = Inference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -126,23 +132,12 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        buffs = {'score_idx': []}
+        # find anchor with maximum similarity
+        score = torch.matmul(x, self.embed.weight.t()) / \
+                torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
+        score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+        anchor = self.embed(score_idx)
 
-        for _ in six.moves.range(int(self.hdim / self.cdim)):
-            # find anchor with maximum similarity
-            score = torch.matmul(x, self.embed.weight.t()) / \
-                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
-            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
-            buffs['score_idx'].append(score_idx)
-            anchor = self.embed(score_idx)
-
-            # feedforward to inference network
-            xs_ele_out, _, hidden_mask = self.inference(anchor, hidden_mask, decoder_type='src')
-            xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
-
-            # compute residual feature
-            x = (x - xs_ele_out)
-
-        out = torch.stack(buffs['score_idx'], dim=-1)
+        out = anchor
 
         return out
