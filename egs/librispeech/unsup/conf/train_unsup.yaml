@@ -3,10 +3,10 @@ model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:Net"
 
 # minibatch related
 accum-grad: 4
-batch-bins: 63000000
+batch-bins: 23000000 #30000000
 
 # optimization related
-opt: sgd
+opt: adam
 grad-clip: 5
 
 # scheduling related

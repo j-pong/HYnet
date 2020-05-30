@@ -135,7 +135,7 @@ class Net(nn.Module):
         # find anchor with maximum similarity
         score = torch.matmul(x, self.embed.weight.t()) / \
                 torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
-        score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+        score_idx = torch.argmax(score, dim=-1)
         anchor = self.embed(score_idx)
 
         out = anchor
