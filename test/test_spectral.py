@@ -1,32 +1,38 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
 
 resol = 128
 denorm = 63.5
-f_dim = 3
+d = 3
 
-x = torch.linspace(0, 1, resol)
-units_freq = torch.arange(1, 3)
+t = torch.linspace(0, 1, resol)
 
 # prepare tracer
-basis_state = torch.arange(1, f_dim + 1)
-basis_set = [torch.sin(2 * np.pi * x * bs) for bs in basis_state]
-basis_set = torch.stack(basis_set, dim=-1)  # T, f_dim
+basis_set = [torch.sin(2 * np.pi * t * bs) for bs in torch.arange(1, d + 1)]
+basis_set = torch.stack(basis_set, dim=-1).unsqueeze(0)  # 1, T, d
 
 # random feature generation
-x = torch.rand([1, f_dim])
+x = torch.rand([1, 1, d])  # B, 1, d
 
 # attach the tracer
-new_x = x * basis_set  # T, f_dim
+new_x = x * basis_set  # B, T, d
+x_rev = torch.matmul(basis_set.transpose(-2, -1), new_x) / denorm
 
 # normal distribution initialization dnn arch.
-w1 = torch.normal(0, 1, [f_dim, 64])
-new_x = torch.matmul(new_x, w1)  # T, 64
-w2 = torch.normal(0, 1, [64, 1])
-y = torch.matmul(new_x, w2)  # T, 1
+w1 = torch.normal(mean=0, std=1, size=(d, 64))
+h = torch.matmul(new_x, w1)  # B, T, C1
+h = F.relu(h)
+w2 = torch.normal(mean=0, std=1, size=(64, 4))
+y = torch.matmul(h, w2)  # B, T, d'
 
 # tracing feature coefficient
-coef_hat = torch.matmul(basis_set.t(), y) / denorm
+w_hat = torch.matmul(basis_set.transpose(-2, -1), y) / denorm  # B, d, d'
+# Note: The w_hat is transformed by the transform function. Thus we should compare x with w_hat.
+print(x, w_hat)
 
-# print
-print(coef_hat)
+# check loss by non-linearity
+new_x_hat = y.unsqueeze(2) / w_hat.unsqueeze(1)  # B, T, d, d'
+# new_x_hat = torch.masked_fill(new_x_hat, torch.isinf(new_x_hat), 0)
+x_used = torch.sum(new_x_hat * basis_set.unsqueeze(-1), dim=1) / denorm  # B, d, d'
+

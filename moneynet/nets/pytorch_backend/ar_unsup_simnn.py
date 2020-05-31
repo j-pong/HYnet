@@ -14,7 +14,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
-from moneynet.nets.pytorch_backend.unsup.inference import ConvInference as Inference
+from moneynet.nets.pytorch_backend.unsup.inference import Inference, ConvInference
 
 
 class Reporter(chainer.Chain):
@@ -32,7 +32,7 @@ class Net(nn.Module):
         group = parser.add_argument_group("simnn setting")
         # task related
         group.add_argument("--tnum", default=5, type=int)
-        group.add_argument("--iter", default=3, type=int)
+        group.add_argument("--iter", default=1, type=int)
 
         # optimization related
         group.add_argument("--lr", default=0.001, type=float)
@@ -41,6 +41,7 @@ class Net(nn.Module):
         # model related
         group.add_argument("--hdim", default=512, type=int)
         group.add_argument("--cdim", default=128, type=int)
+        group.add_argument("--inference_type", default='conv', type=str)
 
         return parser
 
@@ -61,7 +62,10 @@ class Net(nn.Module):
 
         # inference part with action and selection
         self.embed = torch.nn.Embedding(self.k, self.odim)
-        self.inference = Inference(idim=idim, odim=idim, args=args)
+        if args.inference_type == 'linear':
+            self.inference = Inference(idim=idim, odim=idim, args=args)
+        elif args.inference_type == 'conv':
+            self.inference = ConvInference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -89,7 +93,7 @@ class Net(nn.Module):
         # exit()
 
         # monitoring buffer
-        buffs = {'loss': [], 'score_idx': []}
+        buffs = {'loss': [], 'score_idx': [], 'conservation_error': 0}
 
         # start iteration for superposition
         for _ in six.moves.range(self.iter):
