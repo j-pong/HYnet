@@ -4,6 +4,7 @@ import logging
 import six
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 import chainer
@@ -13,7 +14,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
-from moneynet.nets.pytorch_backend.unsup.inference import InferenceNet
+from moneynet.nets.pytorch_backend.unsup.inference import Inference, ConvInference
 
 
 class Reporter(chainer.Chain):
@@ -29,12 +30,18 @@ class Net(nn.Module):
     def add_arguments(parser):
         """Add arguments"""
         group = parser.add_argument_group("simnn setting")
-        group.add_argument("--etype", default="linear", type=str)
-        group.add_argument("--hdim", default=160, type=int)
-        group.add_argument("--cdim", default=16, type=int)
-        group.add_argument("--tnum", default=10, type=int)
+        # task related
+        group.add_argument("--tnum", default=5, type=int)
+        group.add_argument("--iter", default=1, type=int)
+
+        # optimization related
         group.add_argument("--lr", default=0.001, type=float)
         group.add_argument("--momentum", default=0.9, type=float)
+
+        # model related
+        group.add_argument("--hdim", default=512, type=int)
+        group.add_argument("--cdim", default=128, type=int)
+        group.add_argument("--inference_type", default='conv', type=str)
 
         return parser
 
@@ -43,17 +50,22 @@ class Net(nn.Module):
         # network hyperparameter
         self.idim = idim
         self.odim = idim
-        self.hdim = args.hdim
-        self.cdim = args.cdim
+        self.iter = args.iter
         self.tnum = args.tnum
         self.ignore_id = ignore_id
         self.subsample = [1]
+
+        self.k = 1000
 
         # reporter for monitoring
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.inference = InferenceNet(idim, idim, args)
+        self.embed = torch.nn.Embedding(self.k, self.odim)
+        if args.inference_type == 'linear':
+            self.inference = Inference(idim=idim, odim=idim, args=args)
+        elif args.inference_type == 'conv':
+            self.inference = ConvInference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -81,19 +93,26 @@ class Net(nn.Module):
         # exit()
 
         # monitoring buffer
-        buffs = {'loss': []}
+        buffs = {'loss': [], 'score_idx': [], 'conservation_error': 0}
 
         # start iteration for superposition
-        hidden_mask = None
-        for _ in six.moves.range(int(self.hdim / self.cdim)):
+        for _ in six.moves.range(self.iter):
+            # find anchor with maximum similarity
+            score = torch.matmul(xs_pad_in, self.embed.weight.t()) / \
+                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
+            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+            buffs['score_idx'].append(score_idx)
+            anchor = self.embed(score_idx)
+
             # feedforward to inference network
-            xs_ele_out, _, hidden_mask = self.inference(xs_pad_in, hidden_mask, decoder_type='src')
-            xs_ele_out = xs_ele_out.unsqueeze(-2).repeat(1, 1, self.tnum, 1)  # B, Tmax, tnum, C
+            xs_ele_out = self.inference(anchor)
+            sz = xs_ele_out.size()
+            xs_ele_out = xs_ele_out.view(sz[0], sz[1], self.tnum, self.idim)  # B, Tmax, tnum, C
 
             # compute loss of total network
-            masks = [seq_mask.view(-1, 1)]
-            loss_local = self.criterion(xs_ele_out.mean(-2).view(-1, self.idim),
-                                        xs_pad_out.mean(-2).view(-1, self.idim),
+            masks = [seq_mask.unsqueeze(-1).repeat(1, 1, self.tnum).view(-1, 1)]
+            loss_local = self.criterion(xs_ele_out.reshape(-1, self.idim),
+                                        xs_pad_out.reshape(-1, self.idim),
                                         masks)
 
             # compute residual feature
@@ -117,8 +136,12 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        x, _, hidden_mask = self.inference(x, None, decoder_type='src')
+        # find anchor with maximum similarity
+        score = torch.matmul(x, self.embed.weight.t()) / \
+                torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
+        score_idx = torch.argmax(score, dim=-1)
+        anchor = self.embed(score_idx)
 
-        y = x.view(-1, self.odim)
+        out = anchor
 
-        return y
+        return out
