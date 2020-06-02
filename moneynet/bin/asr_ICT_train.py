@@ -515,6 +515,7 @@ def get_parser(parser=None, required=True):
     # semi-supervised learning related
     parser.add_argument("--utt-using-ratio", type=float, default=0.5, help="ratio of labeled utterances")
     parser.add_argument("--mixup-alpha", type=float, default=0.0, help="mixup weight alpha")
+    parser.add_argument("--mixup-scheme", type=str, default="global", help="mixup weight alpha")
     parser.add_argument("--consistency-weight", type=float, default=0.5,
                         help="consistency weight for unsupervised loss")
     parser.add_argument("--consistency-rampup-starts", type=int, default=0,
