@@ -55,13 +55,13 @@ class Net(nn.Module):
         self.ignore_id = ignore_id
         self.subsample = [1]
 
-        self.k = 1000
+        self.embed_dim = 1000
 
         # reporter for monitoring
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.embed = torch.nn.Embedding(self.k, self.odim)
+        self.embed = torch.nn.Embedding(self.embed_dim, self.odim)
         if args.inference_type == 'linear':
             self.inference = Inference(idim=idim, odim=idim, args=args)
         elif args.inference_type == 'conv':
@@ -99,10 +99,11 @@ class Net(nn.Module):
         for _ in six.moves.range(self.iter):
             # find anchor with maximum similarity
             score = torch.matmul(xs_pad_in, self.embed.weight.t()) / \
-                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
+                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.embed_dim)
             score_idx = torch.argmax(score, dim=-1)  # B, Tmax
             buffs['score_idx'].append(score_idx)
             anchor = self.embed(score_idx)
+            anchor = torch.softmax(anchor * xs_pad_in, dim=-1) * anchor
 
             # feedforward to inference network
             xs_ele_out = self.inference(anchor)
@@ -136,12 +137,15 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        # find anchor with maximum similarity
-        score = torch.matmul(x, self.embed.weight.t()) / \
-                torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
-        score_idx = torch.argmax(score, dim=-1)
-        anchor = self.embed(score_idx)
+        buffs = {'score_idx': []}
 
-        out = anchor
+        for _ in six.moves.range(1):
+            # find anchor with maximum similarity
+            score = torch.matmul(x, self.embed.weight.t()) / \
+                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.embed_dim)
+            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+            buffs['score_idx'].append(score_idx)
+
+        out = torch.stack(buffs['score_idx'], dim=-1)
 
         return out
