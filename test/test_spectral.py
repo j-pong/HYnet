@@ -19,7 +19,7 @@ y = torch.rand([1, 1, odim])  # B, 1, d'
 
 # attach the tracer
 x_ = x * basis_set  # B, T, d
-x_rev = torch.matmul(x_.transpose(-2, -1), basis_set).sum(-1) / denorm
+# x_rev = torch.matmul(x_.transpose(-2, -1), basis_set).sum(-1) / denorm
 
 # normal distribution initialization dnn arch.
 w1 = torch.normal(mean=0, std=1, size=(idim, 64))
@@ -34,7 +34,8 @@ y_hat = torch.matmul(h, w3)  # B, T, d'
 # tracing feature coefficient
 lam = torch.matmul(y_hat.transpose(-2, -1), basis_set) / denorm  # B, d', d
 w_hat = lam / x
-att_p = torch.abs(w_hat)/torch.sum(torch.abs(w_hat))
-print(att_p)
-# y_hat_hat = torch.matmul(x_, w_hat.transpose(-2, -1))
-# lam_hat = torch.matmul(y_hat_hat.transpose(-2, -1), basis_set) / denorm  # B, d', d
+w_hat_x = w_hat * torch.sign(x)
+w_hat_x_p = F.relu(w_hat)
+w_hat_x_n = -F.relu(-w_hat)
+e_loss = torch.sum(w_hat_x_p) + torch.sum(w_hat_x_n)
+print(e_loss)

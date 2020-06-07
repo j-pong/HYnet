@@ -571,6 +571,7 @@ def train(args):
         "epoch",
         "iteration",
         "main/loss",
+        "main/loss_aug",
         "validation/main/loss",
         "elapsed_time",
     ]

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import six
+import math
 
 import torch
 import torch.nn.functional as F
@@ -55,17 +56,34 @@ class Net(nn.Module):
         self.ignore_id = ignore_id
         self.subsample = [1]
 
+        # clustering configuration
         self.embed_dim = 1000
+        self.embed_feat = torch.nn.Embedding(self.embed_dim, self.odim)
+        # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
+
+        # self.embed_feat = self.embedding = nn.Parameter(
+        #     0.01 * torch.randn(self.embed_dim, self.odim)
+        # )
+        # self.embed_w = self.embedding = nn.Parameter(
+        #     0.01 * torch.randn(self.embed_dim, self.idim * self.odim)
+        # )
+
+        # spectral disentangling configuration
+        self.spec_dis = True
+        self.resol = 256
+        self.spec_denorm = (self.resol + idim * 2 - 1) / 2
+        self.basis_set = [torch.cos(2 * math.pi * torch.linspace(0, 1, self.resol) * freq) for freq in
+                     torch.arange(1, idim * self.iter + 1)]
+        self.basis_set = torch.stack(self.basis_set, dim=-1).unsqueeze(0)  # 1, T, iter * d
 
         # reporter for monitoring
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.embed = torch.nn.Embedding(self.embed_dim, self.odim)
         if args.inference_type == 'linear':
-            self.inference = Inference(idim=idim, odim=idim, args=args)
+            self.transform_f = Inference(idim=idim, odim=idim, args=args)
         elif args.inference_type == 'conv':
-            self.inference = ConvInference(idim=idim, odim=idim, args=args)
+            self.transform_f = ConvInference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -84,6 +102,16 @@ class Net(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
+    def clustering(self, x, embed):
+        # find anchor with maximum similarity
+        sim_prob = torch.matmul(x, embed.weight.t())
+        score_idx = torch.argmax(sim_prob, dim=-1)  # B, Tmax
+
+        anchor = embed(score_idx)  # B, Tmax, d
+        anchor = torch.softmax(anchor * x, dim=-1) * x
+
+        return anchor, score_idx, sim_prob
+
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         # prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
@@ -96,34 +124,40 @@ class Net(nn.Module):
         buffs = {'loss': [], 'score_idx': [], 'conservation_error': 0}
 
         # start iteration for superposition
+        anchors = []
+        # ToDo(j-pong): iter > 1 case will be covered by output disentangled
         for _ in six.moves.range(self.iter):
-            # find anchor with maximum similarity
-            score = torch.matmul(xs_pad_in, self.embed.weight.t()) / \
-                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.embed_dim)
-            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+            anchor, score_idx, _ = self.clustering(xs_pad_in, self.embed_feat)
+            xs_pad_in = (xs_pad_in - anchor).detach()
+            anchors.append(anchor)
             buffs['score_idx'].append(score_idx)
-            anchor = self.embed(score_idx)
-            anchor = torch.softmax(anchor * xs_pad_in, dim=-1) * anchor
+        anchors = torch.cat(anchors, dim=-1)  # B, Tmax, iter * d
+        anchors_ = anchors.unsqueeze(1) * self.basis_set.to(anchors.device).unsqueeze(2)  # B, T, Tmax, iter * d
 
-            # feedforward to inference network
-            xs_ele_out = self.inference(anchor)
-            sz = xs_ele_out.size()
-            xs_ele_out = xs_ele_out.view(sz[0], sz[1], self.tnum, self.idim)  # B, Tmax, tnum, C
+        # feedforward to inference network
+        xs_pad_out_hat = self.transform_f(anchors_)
+        sz = xs_pad_out_hat.size()
+        xs_pad_out_hat = xs_pad_out_hat.view(sz[0], self.resol, sz[2], self.tnum * self.idim)  # B, T, Tmax, tnum * d'
+        xs_pad_out_hat = xs_pad_out_hat.transpose(1, 2)  # B, Tmax, T, tnum * d'
 
-            # compute loss of total network
-            masks = [seq_mask.unsqueeze(-1).repeat(1, 1, self.tnum).view(-1, 1)]
-            loss_local = self.criterion(xs_ele_out.reshape(-1, self.idim),
-                                        xs_pad_out.reshape(-1, self.idim),
-                                        masks)
+        if self.spec_dis:
+            # tracing feature coefficient
+            lam = torch.matmul(xs_pad_out_hat.transpose(-2, -1),
+                               self.basis_set.to(xs_pad_out_hat.device)) / self.spec_denorm  # B, Tmax, tnum * d', iter * d
+            w_hat = lam / anchors.unsqueeze(2)
 
-            # compute residual feature
-            xs_pad_out = (xs_pad_out - xs_ele_out).detach()
+        # compute recovering loss
+        xs_pad_out_hat_rec = torch.matmul(w_hat, anchors_.transpose(1, 2).transpose(-2, -1))  # B, Tmax, tnum * d', T
+        print(xs_pad_out_hat_rec.transpose(-2, -1)[0][0][0])
+        # original output at first min-batch, time and inference_time
+        print(xs_pad_out_hat[0][0][0])
+        exit()
 
-            # buffering
-            buffs['loss'].append(loss_local.sum())
-
-        # total loss compute
-        loss = torch.stack(buffs['loss'], dim=-1).mean()
+        # compute loss of total network
+        masks = [seq_mask.unsqueeze(-1).repeat(1, 1, self.tnum).view(-1, 1)]
+        loss = self.criterion(xs_pad_out_hat.reshape(-1, self.idim),
+                              xs_pad_out.reshape(-1, self.idim),
+                              masks).mean()
 
         if not torch.isnan(loss):
             self.reporter.report(float(loss))
@@ -139,11 +173,13 @@ class Net(nn.Module):
 
         buffs = {'score_idx': []}
 
-        for _ in six.moves.range(1):
-            # find anchor with maximum similarity
-            score = torch.matmul(x, self.embed.weight.t()) / \
-                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.embed_dim)
-            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
+        # start iteration for superposition
+        anchors = []
+        for _ in six.moves.range(self.iter):
+            anchor, score_idx = self.clustering(x)
+            x = (x - anchor).detach()
+            anchors.append(anchor)
+
             buffs['score_idx'].append(score_idx)
 
         out = torch.stack(buffs['score_idx'], dim=-1)
