@@ -73,7 +73,7 @@ class Net(nn.Module):
         self.resol = 256
         self.spec_denorm = (self.resol + idim * 2 - 1) / 2
         self.basis_set = [torch.cos(2 * math.pi * torch.linspace(0, 1, self.resol) * freq) for freq in
-                     torch.arange(1, idim * self.iter + 1)]
+                          torch.arange(1, idim * self.iter + 1)]
         self.basis_set = torch.stack(self.basis_set, dim=-1).unsqueeze(0)  # 1, T, iter * d
 
         # reporter for monitoring
@@ -138,19 +138,22 @@ class Net(nn.Module):
         xs_pad_out_hat = self.transform_f(anchors_)
         sz = xs_pad_out_hat.size()
         xs_pad_out_hat = xs_pad_out_hat.view(sz[0], self.resol, sz[2], self.tnum * self.idim)  # B, T, Tmax, tnum * d'
-        xs_pad_out_hat = xs_pad_out_hat.transpose(1, 2)  # B, Tmax, T, tnum * d'
 
         if self.spec_dis:
+            # transpose for inverse transform of the original network
+            xs_pad_out_hat = xs_pad_out_hat.transpose(1, 2)  # B, Tmax, T, tnum * d'
             # tracing feature coefficient
             lam = torch.matmul(xs_pad_out_hat.transpose(-2, -1),
-                               self.basis_set.to(xs_pad_out_hat.device)) / self.spec_denorm  # B, Tmax, tnum * d', iter * d
+                               self.basis_set.to(
+                                   xs_pad_out_hat.device)) / self.spec_denorm  # B, Tmax, tnum * d', iter * d
             w_hat = lam / anchors.unsqueeze(2)
 
         # compute recovering loss
         xs_pad_out_hat_rec = torch.matmul(w_hat, anchors_.transpose(1, 2).transpose(-2, -1))  # B, Tmax, tnum * d', T
-        print(xs_pad_out_hat_rec.transpose(-2, -1)[0][0][0])
+        print(xs_pad_out_hat_rec.transpose(-2, -1).size(), xs_pad_out_hat.size())
+        print(xs_pad_out_hat_rec.transpose(-2, -1))
         # original output at first min-batch, time and inference_time
-        print(xs_pad_out_hat[0][0][0])
+        print(xs_pad_out_hat)
         exit()
 
         # compute loss of total network

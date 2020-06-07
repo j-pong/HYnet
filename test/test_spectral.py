@@ -34,8 +34,14 @@ y_hat = torch.matmul(h, w3)  # B, T, d'
 # tracing feature coefficient
 lam = torch.matmul(y_hat.transpose(-2, -1), basis_set) / denorm  # B, d', d
 w_hat = lam / x
-w_hat_x = w_hat * torch.sign(x)
-w_hat_x_p = F.relu(w_hat)
-w_hat_x_n = -F.relu(-w_hat)
-e_loss = torch.sum(w_hat_x_p) + torch.sum(w_hat_x_n)
-print(e_loss)
+
+# w_hat_x = w_hat * torch.sign(x)
+# w_hat_x_p = F.relu(w_hat)
+# w_hat_x_n = -F.relu(-w_hat)
+# e_loss = torch.sum(w_hat_x_p) + torch.sum(w_hat_x_n)
+# print(e_loss)
+
+y_hat_hat = torch.matmul(x_, w_hat.transpose(-2, -1))
+lam_hat = torch.matmul(y_hat_hat.transpose(-2, -1), basis_set) / denorm  # B, d', d
+print(y_hat_hat, y_hat)
+
