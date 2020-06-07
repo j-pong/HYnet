@@ -1,13 +1,13 @@
 import numpy as np
 import torch
 
-def mixup_data(x, y, ilens, alpha):
+def mixup_data(x, y, ilens, alpha, scheme="global"):
     '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
     x_device = x.device
     y_device = y.device
 
     if alpha > 0.:
-        lam = np.random.beta(alpha, alpha)
+        lam = np.random.uniform(0.5, 1)
     else:
         lam = 1.
     batch_size = x.size()[0]
@@ -17,21 +17,27 @@ def mixup_data(x, y, ilens, alpha):
     x_b = np.zeros(x.shape)
     y_b = np.zeros(y.shape)
 
-    for i in range(batch_size):
-        shuffle_range = list(range(ilens[i]))
-        np.random.shuffle(shuffle_range)
-        index.append(shuffle_range)
-        x_b[i, :ilens[i]] = x[i, index[i]]
-        y_b[i, :ilens[i]] = y[i, index[i]]
+    if scheme == "local":
+        for i in range(batch_size):
+            shuffle_range = list(range(ilens[i]))
+            np.random.shuffle(shuffle_range)
+            index.append(shuffle_range)
+            x_b[i, :ilens[i]] = x[i, index[i]]
+            y_b[i, :ilens[i]] = y[i, index[i]]
+        mixed_x = torch.Tensor(lam * x + (1 - lam) * x_b)
+    elif scheme == "global":
+        batch_size = x.shape[0]
+        index = torch.randperm(batch_size)
+        mixed_x = torch.Tensor(lam * x + (1 - lam) * x[index, :])
+        y_b = y[index]
 
-    mixed_x = torch.Tensor(lam * x + (1 - lam) * x_b)
     mixed_x = mixed_x.to(x_device)
 
     y_b = torch.Tensor(y_b).to(y_device).long()
     y = torch.Tensor(y).to(y_device).long()
     return mixed_x, y, y_b, index, lam
 
-def mixup_logit(y, ilens, index, lam):
+def mixup_logit(y, ilens, index, lam, scheme="global"):
     '''Compute the mixup logit'''
     device = y.device
     batch_size = y.size()[0]
@@ -39,8 +45,11 @@ def mixup_logit(y, ilens, index, lam):
     y = y.data.cpu().numpy()
     y_b = np.zeros(y.shape)
 
-    for i in range(batch_size):
-        y_b[i, :ilens[i]] = y[i, index[i]]
+    if scheme == "local":
+        for i in range(batch_size):
+            y_b[i, :ilens[i]] = y[i, index[i]]
+    elif scheme == "global":
+        y_b = y[index]
     mixed_y = torch.Tensor(lam * y + (1 - lam) * y_b)
     mixed_y = mixed_y.to(device)
     return mixed_y
