@@ -131,3 +131,11 @@ def temp_softmax(x, T=10.0, dim=-1):
     exp_x = torch.exp(x - max_x)
     x = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
     return x
+
+
+def one_hot(y, num_classes):
+    scatter_dim = len(y.size())
+    y_tensor = y.view(*y.size(), -1)
+    zeros = torch.zeros(*y.size(), num_classes, dtype=y.dtype).to(y.device)
+
+    return zeros.scatter(scatter_dim, y_tensor, 1)

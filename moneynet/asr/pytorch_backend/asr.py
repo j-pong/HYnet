@@ -827,6 +827,17 @@ def train(args):
             trigger=(args.report_interval_iters, "iteration"),
         )
         report_keys.append("eps")
+    if args.opt == "rmsprop":
+        trainer.extend(
+            extensions.observe_value(
+                "lr",
+                lambda trainer: trainer.updater.get_optimizer("main").param_groups[0][
+                    "lr"
+                ],
+            ),
+            trigger=(args.report_interval_iters, "iteration"),
+        )
+        report_keys.append("lr")
     if args.report_cer:
         report_keys.append("validation/main/cer")
     if args.report_wer:
