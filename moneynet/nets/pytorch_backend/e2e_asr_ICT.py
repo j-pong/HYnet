@@ -184,6 +184,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.reporter = Reporter()
 
         # ICT related
+        self.scheme = args.mixup_scheme
         self.consistency_weight = args.consistency_weight
         self.consistency_rampup_starts = args.consistency_rampup_starts
         self.consistency_rampup_ends = args.consistency_rampup_ends
@@ -305,8 +306,8 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # 1. Mixup feature
         if self.mixup_alpha > 0.0:
-            hs_pad, ys_pad, ys_pad_b, _, lam = mixup_data(hs_pad, ys_pad, hlens, self.mixup_alpha)
-            ul_hs_pad_mixed, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha)
+            hs_pad, ys_pad, ys_pad_b, _, lam = mixup_data(hs_pad, ys_pad, hlens, self.mixup_alpha, self.scheme)
+            ul_hs_pad_mixed, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha, self.scheme)
 
         # 2. RNN Encoder
         pred_pad, hlens, _ = self.enc(hs_pad, hlens)
@@ -329,7 +330,7 @@ class E2E(ASRInterface, torch.nn.Module):
             ema_ul_pred_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
         )
         if self.mixup_alpha > 0.0:
-            ema_ul_pred_pad = mixup_logit(ema_ul_pred_pad, ul_hlens, ul_shuf_idx, ul_lam)
+            ema_ul_pred_pad = mixup_logit(ema_ul_pred_pad, ul_hlens, ul_shuf_idx, ul_lam, self.scheme)
 
         # 5. Supervised loss
         if LooseVersion(torch.__version__) < LooseVersion("1.0"):
