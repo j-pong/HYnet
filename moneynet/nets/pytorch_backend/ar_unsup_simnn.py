@@ -61,13 +61,6 @@ class Net(nn.Module):
         self.embed_feat = torch.nn.Embedding(self.embed_dim, self.odim)
         # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
 
-        # self.embed_feat = self.embedding = nn.Parameter(
-        #     0.01 * torch.randn(self.embed_dim, self.odim)
-        # )
-        # self.embed_w = self.embedding = nn.Parameter(
-        #     0.01 * torch.randn(self.embed_dim, self.idim * self.odim)
-        # )
-
         # spectral disentangling configuration
         self.spec_dis = True
         self.resol = 256
@@ -101,6 +94,9 @@ class Net(nn.Module):
         numer = (mean - p).pow(2)
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
+
+    def spectral_dis(self):
+        pass
 
     def clustering(self, x, embed):
         # find anchor with maximum similarity

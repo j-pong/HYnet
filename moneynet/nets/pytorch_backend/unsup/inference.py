@@ -18,12 +18,20 @@ class Inference(nn.Module):
         self.cdim = args.cdim
 
         self.encoder = nn.Sequential(
-            nn.Linear(idim, 1024),
+            nn.Linear(idim, 512),
             nn.ReLU(),
-            nn.Linear(1024, self.hdim)
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.hdim)
         )
         self.decoder = nn.Sequential(
             nn.Linear(self.hdim, 1024),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(1024, self.odim * args.tnum)
         )
