@@ -193,7 +193,7 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     {
         utils/mkgraph.sh \
             data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
-#        mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
+        mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
         for test in dev_clean dev_other test_clean test_other; do
             steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
                                 exp/tri4b/graph_tgsmall data/$test \
@@ -233,6 +233,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     # Generate the fmllr features; by default 40-dimensional fmllr
     for x in train_clean_100 dev_clean dev_other test_clean test_other; do
         mkdir -p data/${x}_fmllr
+        cp -r data/${x}/* data/${x}_fmllr
         steps/nnet/make_fmllr_feats.sh --nj $nj --cmd "$train_cmd" \
         --transform-dir exp/tri4b/decode_tgsmall_$x \
             data/${x}_fmllr data/${x} exp/tri4b exp/make_fmllr/${x} ${fmllrdir} || exit 1
