@@ -24,17 +24,17 @@ import torch
 from torch.nn.parallel import data_parallel
 from kaldi_io import write_mat
 
-from espnet.asr.asr_utils import adadelta_eps_decay
-from espnet.asr.asr_utils import add_results_to_json
-from espnet.asr.asr_utils import CompareValueTrigger
-from espnet.asr.asr_utils import format_mulenc_args
-from espnet.asr.asr_utils import get_model_conf
-from espnet.asr.asr_utils import plot_spectrogram
-from espnet.asr.asr_utils import restore_snapshot
-from espnet.asr.asr_utils import snapshot_object
-from espnet.asr.asr_utils import torch_load
-from espnet.asr.asr_utils import torch_resume
-from espnet.asr.asr_utils import torch_snapshot
+from moneynet.asr.asr_utils import adadelta_eps_decay, rmsprop_lr_decay
+from moneynet.asr.asr_utils import add_results_to_json
+from moneynet.asr.asr_utils import CompareValueTrigger
+from moneynet.asr.asr_utils import format_mulenc_args
+from moneynet.asr.asr_utils import get_model_conf
+from moneynet.asr.asr_utils import plot_spectrogram
+from moneynet.asr.asr_utils import restore_snapshot
+from moneynet.asr.asr_utils import snapshot_object
+from moneynet.asr.asr_utils import torch_load
+from moneynet.asr.asr_utils import torch_resume
+from moneynet.asr.asr_utils import torch_snapshot
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 import espnet.lm.pytorch_backend.extlm as extlm_pytorch
@@ -172,6 +172,7 @@ class CustomUpdater(StandardUpdater):
         self.use_apex = use_apex
 
         # Semi-supervised related
+        self.consistency_rampup_starts = ICT_args["consistency_rampup_starts"]
         self.consistency_rampup_ends = ICT_args["consistency_rampup_ends"]
         self.cosine_rampdown_starts = ICT_args["cosine_rampdown_starts"]
         self.cosine_rampdown_ends = ICT_args["cosine_rampdown_ends"]
@@ -213,6 +214,7 @@ class CustomUpdater(StandardUpdater):
         loss.backward()
 
         # learning rate cosine rampdown for SGD optimizer
+        # TODO: make it only for sgd
         if epoch > self.cosine_rampdown_starts:
             for p in optimizer.param_groups:
                 p["lr"] *= cosine_rampdown(epoch - self.cosine_rampdown_starts,
@@ -238,7 +240,9 @@ class CustomUpdater(StandardUpdater):
         else:
             optimizer.step()
             global_step = epoch * train_iter.len + train_iter.current_position
-            if epoch < self.consistency_rampup_ends:
+            if epoch < self.consistency_rampup_starts:
+                update_ema_variables(self.model.enc, self.model.ema_enc, 0, global_step)
+            elif epoch < self.consistency_rampup_ends:
                 update_ema_variables(self.model.enc, self.model.ema_enc, self.ema_pre_decay, global_step)
             else:
                 update_ema_variables(self.model.enc, self.model.ema_enc, self.ema_post_decay, global_step)
@@ -501,7 +505,7 @@ def train(args):
     elif args.opt == "rmsprop":
         optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
     elif args.opt == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.95, nesterov=True)
+        optimizer = torch.optim.SGD(model.parameters(), lr=1, momentum=0.95, nesterov=True)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
@@ -685,7 +689,8 @@ def train(args):
     )
 
     # Set up ICT related arguments
-    ICT_args = {"consistency_rampup_ends": args.consistency_rampup_ends,
+    ICT_args = {"consistency_rampup_starts": args.consistency_rampup_starts,
+                "consistency_rampup_ends": args.consistency_rampup_ends,
                 "cosine_rampdown_starts": args.cosine_rampdown_starts,
                 "cosine_rampdown_ends": args.cosine_rampdown_ends,
                 "ema_pre_decay": args.ema_pre_decay,
@@ -810,6 +815,43 @@ def train(args):
                 ),
             )
 
+    # lr decay in rmsprop
+    if args.opt == "rmsprop":
+        if args.criterion == "acc":
+            trainer.extend(
+                restore_snapshot(
+                    model, args.outdir + "/model.acc.best", load_fn=torch_load
+                ),
+                trigger=CompareValueTrigger(
+                    "validation/main/teacher_acc",
+                    lambda best_value, current_value: best_value > current_value,
+                ),
+            )
+            trainer.extend(
+                rmsprop_lr_decay(args.lr_decay),
+                trigger=CompareValueTrigger(
+                    "validation/main/teacher_acc",
+                    lambda best_value, current_value: best_value > current_value,
+                ),
+            )
+        elif args.criterion == "loss":
+            trainer.extend(
+                restore_snapshot(
+                    model, args.outdir + "/model.loss.best", load_fn=torch_load
+                ),
+                trigger=CompareValueTrigger(
+                    "validation/main/loss",
+                    lambda best_value, current_value: best_value < current_value,
+                ),
+            )
+            trainer.extend(
+                rmsprop_lr_decay(args.lr_decay),
+                trigger=CompareValueTrigger(
+                    "validation/main/loss",
+                    lambda best_value, current_value: best_value < current_value,
+                ),
+            )
+
     # Write a log of evaluation statistics for each epoch
     trainer.extend(
         extensions.LogReport(trigger=(args.report_interval_iters, "iteration"))
@@ -838,6 +880,17 @@ def train(args):
             trigger=(args.report_interval_iters, "iteration"),
         )
         report_keys.append("eps")
+    if args.opt == "rmsprop" or "sgd":
+        trainer.extend(
+            extensions.observe_value(
+                "lr",
+                lambda trainer: trainer.updater.get_optimizer("main").param_groups[0][
+                    "lr"
+                ],
+            ),
+            trigger=(args.report_interval_iters, "iteration"),
+        )
+        report_keys.append("lr")
     trainer.extend(
         extensions.PrintReport(report_keys),
         trigger=(args.report_interval_iters, "iteration"),

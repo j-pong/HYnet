@@ -193,7 +193,7 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     {
         utils/mkgraph.sh \
             data/lang_test_tgsmall exp/tri4b exp/tri4b/graph_tgsmall
-#        mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
+        mkdir exp/tri4b/decode_tgsmall_train_clean_100 && cp exp/tri4b/trans.* exp/tri4b/decode_tgsmall_train_clean_100/
         for test in dev_clean dev_other test_clean test_other; do
             steps/decode_fmllr.sh --nj ${nj} --cmd "$decode_cmd" \
                                 exp/tri4b/graph_tgsmall data/$test \
