@@ -49,7 +49,7 @@ class RNNP(torch.nn.Module):
 
             # Layer Normalization
             if bnorm:
-                setattr(self, "bn%d" % i, torch.nn.BatchNorm1d(hdim))
+                setattr(self, "bn%d" % i, torch.nn.BatchNorm1d(hdim, momentum=0.05))
 
             # Layer Normalization
             if lnorm:
@@ -149,7 +149,7 @@ class RNN(torch.nn.Module):
         if lnorm:
             self.layer_norm = torch.nn.LayerNorm(hdim)
         if bnorm:
-            self.batch_norm = torch.nn.BatchNorm1d(hdim)
+            self.batch_norm = torch.nn.BatchNorm1d(hdim, momentum=0.05)
 
         self.typ = typ
         self.lnorm = lnorm
