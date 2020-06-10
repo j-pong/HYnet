@@ -7,7 +7,7 @@ def mixup_data(x, y, ilens, alpha, scheme="global"):
     y_device = y.device
 
     if alpha > 0.:
-        lam = np.random.uniform(0.5, 1)
+        lam = np.random.uniform(alpha, 1)
     else:
         lam = 1.
     batch_size = x.size()[0]

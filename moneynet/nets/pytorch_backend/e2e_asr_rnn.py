@@ -302,7 +302,6 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. RNN Encoder
         hs_pad, hlens, _ = self.enc(hs_pad, hlens)
 
-        # TODO: Not sure about oversampling & outer
         # 2. post-processing layer for target dimension
         if self.outer:
             post_pad = self.poster(hs_pad)

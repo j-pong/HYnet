@@ -17,9 +17,9 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=conf/specaug.yaml
+preprocess_config=
 train_config=conf/train.yaml
-train_unsup_config=conf/train_unsup.yaml
+semi_config=conf/ICT.yaml
 decode_config=conf/decode.yaml
 
 # decoding parameter
@@ -56,13 +56,13 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_960
+train_set=train_100
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
-    for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
+    for part in dev-clean test-clean dev-other test-other train-clean-100; do
         local/download_and_untar.sh ${datadir} ${data_url} ${part}
     done
 
@@ -74,7 +74,7 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     ### Task dependent. You have to make data the following preparation part by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 0: Data preparation"
-    for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
+    for part in dev-clean test-clean dev-other test-other train-clean-100; do
         # use underscore-separated names in data directories.
         local/data_prep.sh ${datadir}/LibriSpeech/${part} data/${part//-/_}
     done
@@ -100,7 +100,7 @@ fi
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "stage 2: MFCC Feature Generation"
     # MFCC feature extraction
-    for part in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+    for part in dev_clean test_clean dev_other test_other train_clean_100; do
         steps/make_mfcc.sh --cmd "$train_cmd" --nj ${nj} data/$part exp/make_mfcc/$part $mfccdir
         steps/compute_cmvn_stats.sh data/$part exp/make_mfcc/$part $mfccdir
     done
@@ -214,7 +214,7 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     echo "stage 9: Get Alignment"
 
     # align the train, test, dev set using the tri4b model
-    for part in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+    for part in dev_clean test_clean dev_other test_other train_clean_100; do
         steps/align_fmllr.sh --nj ${nj} data/${part} data/lang exp/tri4b exp/tri4b_ali_${part}
 
         KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
@@ -231,7 +231,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 10: Fmllr Feature Generation For Network Training"
     # Generate the fmllr features; by default 40-dimensional fmllr
-    for x in train_clean_100 train_clean_360 train_clean_500 dev_clean dev_other test_clean test_other; do
+    for x in train_clean_100 dev_clean dev_other test_clean test_other; do
         mkdir -p data/${x}_fmllr
         cp -r data/${x}/* data/${x}_fmllr
         steps/nnet/make_fmllr_feats.sh --nj $nj --cmd "$train_cmd" \
@@ -240,8 +240,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
         utils/fix_data_dir.sh data/${x}_fmllr
     done
 
-    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fmllr \
-        data/train_clean_360_fmllr data/train_other_500_fmllr
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fmllr
     utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fmllr \
         data/dev_other_fmllr
     mkdir -p data/${train_set}
@@ -297,8 +296,9 @@ mkdir -p ${expdir}
 if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     echo "stage 12: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_hyb_train.py \
+        asr_ICT_train.py \
         --config ${train_config} \
+        --config2 ${semi_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
@@ -315,20 +315,22 @@ fi
 
 if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
     echo "stage 13: Decoding"
-    # Average ASR models
-    if ${use_valbest_average}; then
-        recog_model=model.val${n_average}.avg.best
-        opt="--log ${expdir}/results/log"
-    else
-        recog_model=model.last${n_average}.avg.best
-        opt="--log"
+    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
+        # Average ASR models
+        if ${use_valbest_average}; then
+            recog_model=model.val${n_average}.avg.best
+            opt="--log ${expdir}/results/log"
+        else
+            recog_model=model.last${n_average}.avg.best
+            opt="--log"
+        fi
+        average_checkpoints.py \
+            ${opt} \
+            --backend pytorch \
+            --snapshots ${expdir}/results/snapshot.ep.* \
+            --out ${expdir}/results/${recog_model} \
+            --num ${n_average}
     fi
-    average_checkpoints.py \
-        ${opt} \
-        --backend pytorch \
-        --snapshots ${expdir}/results/snapshot.ep.* \
-        --out ${expdir}/results/${recog_model} \
-        --num ${n_average}
 
     nj=7
 
@@ -357,14 +359,11 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --api v1
 
         # get decoded results
-        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1
-        steps/lmrescore_const_arpa.sh \
-            --cmd "$decode_cmd"  data/lang_test_{tgsmall,fglarge} \
-            data/${rtask} ${expdir}/${decode_dir} ${expdir}/${decode_dir}_fglarge || exit 1
-        for x in ${expdir}/${decode_dir}_fglarge; do
+        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1;
+        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir} || exit 1;
+        for x in ${expdir}/${decode_dir}; do
             [ -d $x ] && echo $x | grep "${1:-.*}" >/dev/null && grep WER $x/wer_* 2>/dev/null | utils/best_wer.sh;
         done
-#        rm -rf ${expdir}/${decode_dir}/data.*.ark
     ) &
     pids+=($!) # store background pids
     done
