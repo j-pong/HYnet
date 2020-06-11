@@ -1,6 +1,7 @@
 PYTHON_VERSION := 3.7.3
 CUDA_VERSION := 10.2
 
+# Pytorch version for fairseq
 TH_VERSION := 1.5.0
 
 # Use a prebuild Kaldi to omit the installation
@@ -27,7 +28,7 @@ kaldi.done:
 	touch kaldi.done
 else
 kaldi.done:
-	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi.git
+	test -d kaldi || git clon-e https://github.com/kaldi-asr/kaldi.git
 	cd kaldi/tools; extras/check_dependencies.sh;
 	cd kaldi/tools; make -j 8;
 	cd kaldi/tools; extras/install_irstlm.sh;
@@ -62,4 +63,11 @@ fairseq.done: espnet.done
 
 moneynet.done: espnet.done
 	. venv/bin/activate && pip install -e ..
+	. espnet/tools/venv/bin/activate && pip install -e ..
 	touch moneynet.done
+
+clean:
+ 	rm -rf kaldi venv fairseq
+ 	rm -f miniconda.sh
+ 	rm -rf *.done
+ 	rm -rf espnet
