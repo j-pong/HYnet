@@ -10,16 +10,17 @@ else
     fi
 fi
 
+USER=jpong
 PGID=${PGID:-5555}
 PUID=${PUID:-5555}
 echo "PUID=${PUID}"
 echo "PGID=${PGID}"
 
-groupmod -o -g "$PGID" moneynet
-usermod -o -u "$PUID" moneynet
-chown -R ${PUID}:${PGID} /home/moneynet
+groupmod -o -g "$PGID" ${USER}
+usermod -o -u "$PUID" ${USER}
+chown -R ${PUID}:${PGID} /home/${USER}
 
-su - coder -c "ssh-keygen -q -t rsa -b 4096 -f ~/.ssh/id_rsa -C coder[${PUID}-${PGID}]@$(hostname) -N ''"
+su - jpong -c "ssh-keygen -q -t rsa -b 4096 -f ~/.ssh/id_rsa -C jpong[${PUID}-${PGID}]@$(hostname) -N ''"
 echo "[start.sh] ssh-key generated."
 
 #-------------------------------------------------------------------------------

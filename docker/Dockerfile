@@ -1,4 +1,3 @@
-
 FROM nvidia/cuda:10.2-cudnn7-devel-ubuntu18.04
 ENV LANG C.UTF-8
 
@@ -53,7 +52,7 @@ RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
     $GIT_CLONE https://github.com/Kitware/CMake ~/cmake && \
     cd ~/cmake && \
     ./bootstrap && \
-    make -j"$(nproc)" install \
+    make -j"$(nproc)" install
 
 ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
@@ -66,11 +65,11 @@ WORKDIR ${workspace}
 ARG root_passwd=root
 RUN echo "root:${root_passwd}" | chpasswd
 
-ARG user=moneynet
-ARG group=moneynet
+ARG user=jpong
+ARG group=jpong
 ARG uid=911
 ARG gid=911
-ARG passwd=moneynet
+ARG passwd=dsp2020
 
 RUN groupadd -g ${gid} ${group} \
   && useradd -u ${uid} -g ${gid} -m -s /bin/bash ${user} \
