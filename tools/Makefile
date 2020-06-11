@@ -28,7 +28,7 @@ kaldi.done:
 	touch kaldi.done
 else
 kaldi.done:
-	test -d kaldi || git clon-e https://github.com/kaldi-asr/kaldi.git
+	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi.git
 	cd kaldi/tools; extras/check_dependencies.sh;
 	cd kaldi/tools; make -j 8;
 	cd kaldi/tools; extras/install_irstlm.sh;
