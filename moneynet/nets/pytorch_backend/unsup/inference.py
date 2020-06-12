@@ -27,13 +27,13 @@ class Inference(nn.Module):
             nn.Linear(512, self.hdim)
         )
         self.decoder = nn.Sequential(
-            nn.Linear(self.hdim, 1024),
+            nn.Linear(self.hdim, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Linear(1024, self.odim * args.tnum)
+            nn.Linear(512, self.odim)
         )
 
     @staticmethod

@@ -94,7 +94,6 @@ class Net(nn.Module):
         pass
 
     def clustering(self, x, embed):
-        # find anchor with maximum similarity
         sim_prob = torch.matmul(x, embed.weight.t())
         score_idx = torch.argmax(sim_prob, dim=-1)  # B, Tmax
 
@@ -106,34 +105,30 @@ class Net(nn.Module):
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         # prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
-        xs_pad_out = xs_pad_out[:, :max(ilens)]
+        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
-        print(xs_pad_in.size(), xs_pad_out.size(), seq_mask.size())
-        exit()
 
         # monitoring buffer
         buffs = {'loss': [], 'score_idx': [], 'conservation_error': 0}
 
-        # start iteration for superposition
+        # For solving superposition state of the feature
         anchors = []
         for _ in six.moves.range(self.iter):
             anchor, score_idx, _ = self.clustering(xs_pad_in, self.embed_feat)
             xs_pad_in = (xs_pad_in - anchor).detach()
             anchors.append(anchor)
             buffs['score_idx'].append(score_idx)
-        anchors = torch.cat(anchors, dim=-1)  # B, Tmax, iter * d
+        anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1, 1)  # B, iter, tnum, Tmax, idim
 
-        # feedforward to inference network
-        xs_pad_out_hat = self.transform_f(anchors)
-        sz = xs_pad_out_hat.size()
-        xs_pad_out_hat = xs_pad_out_hat.view(sz[0], sz[2], self.tnum, self.idim)  # B, Tmax, tnum * d'
+        # Inference via transform function with anchors
+        xs_pad_out_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, idim
+        xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)
 
         if self.spec_dis:
-            # transpose for inverse transform of the original network
-            xs_pad_out_hat = xs_pad_out_hat.transpose(1, 2)  # B, Tmax, tnum * d'
+            pass
 
         # compute loss of total network
-        masks = [seq_mask.unsqueeze(-1).repeat(1, 1, self.tnum).view(-1, 1)]
+        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
         loss = self.criterion(xs_pad_out_hat.reshape(-1, self.idim),
                               xs_pad_out.reshape(-1, self.idim),
                               masks).mean()

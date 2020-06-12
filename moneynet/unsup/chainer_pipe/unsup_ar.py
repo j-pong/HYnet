@@ -297,7 +297,7 @@ class CustomConverter(object):
             [
                 torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
                              if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
-                             for i in range(self.tnum)], dim=-2)
+                             for i in range(self.tnum)], dim=1)
                 for x in xs[1]],
             0
         ).to(device, dtype=self.dtype)
