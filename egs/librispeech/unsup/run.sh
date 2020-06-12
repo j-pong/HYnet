@@ -22,6 +22,7 @@ unsup_resume=
 # feature configuration
 do_delta=false
 
+preprocess_unsup_config=conf/specaug.yaml
 train_unsup_config=conf/train_unsup.yaml
 
 preprocess_config=conf/specaug.yaml
@@ -160,6 +161,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         KALDI_ROOT=${KALDI_ROOT} unsup_train.py \
         --config ${train_unsup_config} \
+        --preprocess-conf ${preprocess_unsup_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
         --outdir ${expdir}/results \

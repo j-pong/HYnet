@@ -47,14 +47,23 @@ complex_basis, _ = forward(basis_set, ratio)
 
 # tracing feature coefficient
 w_hat = torch.matmul(complex_basis.transpose(-2, -1), basis_set) / denorm  # B, d', d
+# evaluation spectral disentangling
+y_hat_hat = torch.matmul(x, w_hat.transpose(-2, -1))
+# print(y_hat)
+print(y_hat_hat)
+
+w_hat = w1.unsqueeze(0) * ratio[0]
+w_hat = torch.matmul(w_hat, w2)
+w_hat = w_hat * ratio[1]
+w_hat = torch.matmul(w_hat, w3).transpose(-2,-1)
 
 # evaluation spectral disentangling
 y_hat_hat = torch.matmul(x, w_hat.transpose(-2, -1))
 print(y_hat)
 print(y_hat_hat)
 
-w_hat_x = w_hat * torch.sign(x)
-w_hat_x_p = torch.relu(w_hat)
-w_hat_x_n = torch.relu(-w_hat)
-e_loss = torch.sum(w_hat_x_p) + torch.sum(w_hat_x_n)
-print(e_loss)
+# w_hat_x = w_hat * torch.sign(x)
+# w_hat_x_p = torch.relu(w_hat)
+# w_hat_x_n = torch.relu(-w_hat)
+# e_loss = torch.sum(w_hat_x_p) + torch.sum(w_hat_x_n)
+# print(e_loss)

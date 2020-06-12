@@ -41,6 +41,7 @@ RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
         openssh-server \
         rsync \
         sshfs \
+        libsndfile1 \
         # libsndfile1 \
         # python3-dev \
         # python3-pip \

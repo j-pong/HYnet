@@ -27,13 +27,13 @@ from torch.nn.parallel import data_parallel
 
 from kaldi_io import write_mat
 
-from espnet.asr.asr_utils import adadelta_eps_decay
+# from espnet.asr.asr_utils import adadelta_eps_decay
 # from espnet.asr.asr_utils import add_results_to_json
-from espnet.asr.asr_utils import CompareValueTrigger
+# from espnet.asr.asr_utils import CompareValueTrigger
 # from espnet.asr.asr_utils import format_mulenc_args
 # from espnet.asr.asr_utils import get_model_conf
 # from espnet.asr.asr_utils import plot_spectrogram
-from espnet.asr.asr_utils import restore_snapshot
+# from espnet.asr.asr_utils import restore_snapshot
 from espnet.asr.asr_utils import snapshot_object
 from espnet.asr.asr_utils import torch_load
 from espnet.asr.asr_utils import torch_resume
@@ -53,13 +53,14 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
-from espnet.utils.io_utils import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler
 from espnet.utils.training.tensorboard_logger import TensorboardLogger
 from espnet.utils.training.train_utils import check_early_stop
 from espnet.utils.training.train_utils import set_early_stop
+
+from moneynet.utils.chainer_pipe.io_utils import LoadInputsAndTargets
 
 import matplotlib
 
@@ -286,10 +287,10 @@ class CustomConverter(object):
             xs = [x[:: self.subsampling_factor, :] for x in xs]
 
         # get batch of lengths of input sequences
-        ilens = np.array([x.shape[0] for x in xs])
+        ilens = np.array([x.shape[0] for x in xs[0]])
         xs_pad_in = pad_list(
             [torch.from_numpy(x[:-self.tnum]).float()
-             for x in xs],
+             for x in xs[0]],
             0
         ).to(device, dtype=self.dtype)
         xs_pad_out = pad_list(
@@ -297,7 +298,7 @@ class CustomConverter(object):
                 torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
                              if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
                              for i in range(self.tnum)], dim=-2)
-                for x in xs],
+                for x in xs[1]],
             0
         ).to(device, dtype=self.dtype)
 

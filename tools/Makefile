@@ -65,9 +65,3 @@ moneynet.done: espnet.done
 	. venv/bin/activate && pip install -e ..
 	. espnet/tools/venv/bin/activate && pip install -e ..
 	touch moneynet.done
-
-clean:
- 	rm -rf kaldi venv fairseq
- 	rm -f miniconda.sh
- 	rm -rf *.done
- 	rm -rf espnet
