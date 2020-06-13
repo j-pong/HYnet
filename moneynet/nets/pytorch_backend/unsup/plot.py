@@ -42,28 +42,23 @@ class PlotImageReport(extension.Extension):
             os.makedirs(self.outdir)
 
     def __call__(self, trainer):
-        images = self.get_images()
+        ret = self.get_ret()
 
-        for idx, img in enumerate(images):
-            filename = "%s/%s.ep.{.updater.epoch}.png" % (
+        for idx, key in enumerate(ret.keys()):
+            filename = "%s/%s:%s.ep.{.updater.epoch}.png" % (
                 self.outdir,
                 self.data[idx][0],
+                key
             )
-            img = self.get_attention_weight(idx, img)
-            # np_filename = "%s/%s.ep.{.updater.epoch}.npy" % (
-            #     self.outdir,
-            #     self.data[idx][0],
-            # )
-            # np.save(np_filename.format(trainer), att_w)
-            self._plot_and_save_image(img, filename.format(trainer))
+            self._plot_and_save_image(ret[key], filename.format(trainer))
 
-    def get_images(self):
+    def get_ret(self):
         batch = self.converter([self.transform(self.data)], self.device)
         if isinstance(batch, tuple):
-            att_ws = self.vis_fn(*batch)
+            ret = self.vis_fn(*batch)
         else:
-            att_ws = self.vis_fn(**batch)
-        return att_ws
+            ret = self.vis_fn(**batch)
+        return ret
 
     def draw_image(self, img):
         import matplotlib.pyplot as plt
@@ -71,14 +66,14 @@ class PlotImageReport(extension.Extension):
         img = img.astype(np.float32)
         if len(img.shape) == 3:
             for h, aw in enumerate(img, 1):
-                plt.subplot(1, len(img), h)
-                plt.imshow(aw, aspect="auto")
-                plt.xlabel("Encoder Index")
-                plt.ylabel("Decoder Index")
+                plt.subplot(len(img), 1, h)
+                plt.imshow(aw.T, aspect="auto")
+                plt.ylabel("feature_dim")
+                plt.xlabel("time")
         else:
             plt.imshow(img, aspect="auto")
-            plt.xlabel("Encoder Index")
-            plt.ylabel("Decoder Index")
+            plt.xlabel("index")
+            plt.ylabel("time")
         plt.tight_layout()
         return plt
 

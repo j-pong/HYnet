@@ -5,6 +5,7 @@ import six
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 import chainer
 from chainer import reporter
@@ -59,7 +60,7 @@ class Net(nn.Module):
         # clustering configuration
         self.embed_dim = 1000
         self.embed_feat = torch.nn.Embedding(self.embed_dim, self.odim)
-        self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
+        # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
 
         # spectral disentangling configuration
         self.spec_dis = True
@@ -123,6 +124,7 @@ class Net(nn.Module):
         # Inference via transform function with anchors
         xs_pad_out_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, idim
         xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)
+        self.buffs['out'].append(xs_pad_out_hat)
 
         if self.spec_dis:
             pass
@@ -166,5 +168,7 @@ class Net(nn.Module):
     def calculate_images(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         with torch.no_grad():
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
-        ret = torch.stack(self.buffs['score_idx'], dim=1).cpu().numpy()
+        ret = dict()
+        ret['score_idx'] = torch.stack(self.buffs['score_idx'], dim=1).cpu().numpy()
+        ret['out'] = self.buffs['out'][0][:,0,:,:].cpu().numpy()
         return ret
