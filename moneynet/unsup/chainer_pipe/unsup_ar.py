@@ -527,30 +527,24 @@ def train(args):
                        trigger=(args.save_interval_iters, "iteration"), )
     else:
         trainer.extend(CustomEvaluator(model, {"main": valid_iter}, reporter, device, args.ngpu))
-    # # Save attention weight each epoch
-    # if args.num_save_attention > 0 and args.mtlalpha != 1.0:
-    #     data = sorted(
-    #         list(valid_json.items())[: args.num_save_attention],
-    #         key=lambda x: int(x[1]["input"][0]["shape"][1]),
-    #         reverse=True,
-    #     )
-    #     if hasattr(model, "module"):
-    #         att_vis_fn = model.module.calculate_all_attentions
-    #         plot_class = model.module.attention_plot_class
-    #     else:
-    #         att_vis_fn = model.calculate_all_attentions
-    #         plot_class = model.attention_plot_class
-    #     att_reporter = plot_class(
-    #         att_vis_fn,
-    #         data,
-    #         args.outdir + "/att_ws",
-    #         converter=converter,
-    #         transform=load_cv,
-    #         device=device,
-    #     )
-    #     trainer.extend(att_reporter, trigger=(1, "epoch"))
-    # else:
-    att_reporter = None
+
+    data = sorted(
+        list(valid_json.items())[: args.num_save_attention],
+        key=lambda x: int(x[1]["input"][0]["shape"][1]),
+        reverse=True,
+    )
+    vis_fn = model.calculate_images
+    plot_class = model.images_plot_class
+    img_reporter = plot_class(
+        vis_fn,
+        data,
+        args.outdir + "/images",
+        converter=converter,
+        transform=load_cv,
+        device=device,
+    )
+    trainer.extend(img_reporter, trigger=(1, "iteration"))
+
     trainer.extend(extensions.PlotReport(["main/loss", "validation/main/loss"], "epoch", file_name="loss.png", ))
 
     # Save best models
@@ -584,13 +578,9 @@ def train(args):
         report_keys.append("eps")
     trainer.extend(extensions.PrintReport(report_keys), trigger=(args.report_interval_iters, "iteration"), )
     trainer.extend(extensions.ProgressBar(update_interval=args.report_interval_iters))
-    set_early_stop(trainer, args)
-    if args.tensorboard_dir is not None and args.tensorboard_dir != "":
-        trainer.extend(TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
-                       trigger=(args.report_interval_iters, "iteration"), )
+
     # Run the training
     trainer.run()
-    check_early_stop(trainer, args.epochs)
 
 
 def recog(args):

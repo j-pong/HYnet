@@ -2,10 +2,8 @@
 # -*- coding: utf-8 -*-
 import logging
 import six
-import math
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 import chainer
@@ -16,6 +14,8 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
 from moneynet.nets.pytorch_backend.unsup.inference import Inference, ConvInference
+
+from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 
 
 class Reporter(chainer.Chain):
@@ -109,7 +109,7 @@ class Net(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
         # monitoring buffer
-        buffs = {'loss': [], 'score_idx': [], 'conservation_error': 0}
+        self.buffs = {'score_idx': [], 'out':[]}
 
         # For solving superposition state of the feature
         anchors = []
@@ -117,7 +117,7 @@ class Net(nn.Module):
             anchor, score_idx, _ = self.clustering(xs_pad_in, self.embed_feat)
             xs_pad_in = (xs_pad_in - anchor).detach()
             anchors.append(anchor)
-            buffs['score_idx'].append(score_idx)
+            self.buffs['score_idx'].append(score_idx)
         anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1, 1)  # B, iter, tnum, Tmax, idim
 
         # Inference via transform function with anchors
@@ -147,15 +147,24 @@ class Net(nn.Module):
 
         buffs = {'score_idx': []}
 
-        # start iteration for superposition
+        # For solving superposition state of the feature
         anchors = []
         for _ in six.moves.range(self.iter):
-            anchor, score_idx = self.clustering(x)
+            anchor, score_idx, _ = self.clustering(x, self.embed_feat)
             x = (x - anchor).detach()
             anchors.append(anchor)
-
             buffs['score_idx'].append(score_idx)
 
         out = torch.stack(buffs['score_idx'], dim=-1)
 
         return out
+
+    @property
+    def images_plot_class(self):
+        return PlotImageReport
+
+    def calculate_images(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
+        with torch.no_grad():
+            self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
+        ret = torch.stack(self.buffs['score_idx'], dim=1).cpu().numpy()
+        return ret
