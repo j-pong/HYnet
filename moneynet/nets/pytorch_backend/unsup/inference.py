@@ -16,23 +16,24 @@ class Inference(nn.Module):
         self.hdim = args.hdim
         self.cdim = args.cdim
 
+        self.bias = args.bias
         self.encoder = nn.ModuleList([
-            nn.Linear(idim, 512),
+            nn.Linear(idim, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, self.hdim)
+            nn.Linear(512, self.hdim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
-            nn.Linear(self.hdim, 512),
+            nn.Linear(self.hdim, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, self.odim)
+            nn.Linear(512, self.odim, bias=self.bias)
         ])
 
     @staticmethod

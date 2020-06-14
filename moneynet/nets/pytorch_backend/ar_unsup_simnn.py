@@ -44,6 +44,7 @@ class Net(nn.Module):
         group.add_argument("--hdim", default=512, type=int)
         group.add_argument("--cdim", default=128, type=int)
         group.add_argument("--inference_type", default='conv', type=str)
+        group.add_argument("--bias", default=1, type=int)
 
         return parser
 
@@ -110,7 +111,7 @@ class Net(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
         # monitoring buffer
-        self.buffs = {'score_idx': [], 'out':[]}
+        self.buffs = {'score_idx': [], 'out': []}
 
         # For solving superposition state of the feature
         anchors = []
@@ -122,7 +123,7 @@ class Net(nn.Module):
         anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1, 1)  # B, iter, tnum, Tmax, idim
 
         # Inference via transform function with anchors
-        xs_pad_out_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, idim
+        xs_pad_out_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, odim
         xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)
         self.buffs['out'].append(xs_pad_out_hat)
 
@@ -169,6 +170,8 @@ class Net(nn.Module):
         with torch.no_grad():
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
         ret = dict()
-        ret['score_idx'] = torch.stack(self.buffs['score_idx'], dim=1).cpu().numpy()
-        ret['out'] = self.buffs['out'][0][:,0,:,:].cpu().numpy()
+        ret['score_idx'] = F.one_hot(torch.stack(self.buffs['score_idx'], dim=1),
+                                     num_classes=self.embed_dim).sum(dim=1).cpu().numpy()
+        import numpy as np
+        ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret

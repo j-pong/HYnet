@@ -44,13 +44,14 @@ class PlotImageReport(extension.Extension):
     def __call__(self, trainer):
         ret = self.get_ret()
 
-        for idx, key in enumerate(ret.keys()):
-            filename = "%s/%s:%s.ep.{.updater.epoch}.png" % (
-                self.outdir,
-                self.data[idx][0],
-                key
-            )
-            self._plot_and_save_image(ret[key], filename.format(trainer))
+        for key in ret.keys():
+            for idx, img in enumerate(ret[key]):
+                filename = "%s/%s:%s.ep.{.updater.epoch}.png" % (
+                    self.outdir,
+                    self.data[idx][0],
+                    key
+                )
+                self._plot_and_save_image(img, filename.format(trainer))
 
     def get_ret(self):
         batch = self.converter([self.transform(self.data)], self.device)
@@ -65,13 +66,13 @@ class PlotImageReport(extension.Extension):
 
         img = img.astype(np.float32)
         if len(img.shape) == 3:
-            for h, aw in enumerate(img, 1):
+            for h, im in enumerate(img, 1):
                 plt.subplot(len(img), 1, h)
-                plt.imshow(aw.T, aspect="auto")
+                plt.imshow(im.T, aspect="auto")
                 plt.ylabel("feature_dim")
                 plt.xlabel("time")
         else:
-            plt.imshow(img, aspect="auto")
+            plt.imshow(img.T, aspect="auto")
             plt.xlabel("index")
             plt.ylabel("time")
         plt.tight_layout()

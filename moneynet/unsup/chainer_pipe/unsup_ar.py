@@ -385,7 +385,7 @@ def train(args):
             model.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
         )
     elif args.opt == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay)
+        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     elif args.opt == "noam":
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
