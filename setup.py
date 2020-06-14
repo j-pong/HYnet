@@ -6,6 +6,7 @@ from setuptools import setup
 requirements = {
     "install": [
         "kaldi_io",
+        "soundfile"
     ],
 }
 install_requires = requirements["install"]

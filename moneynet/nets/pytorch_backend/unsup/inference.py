@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 from fairseq.models.wav2vec import ConvAggegator
 
@@ -17,16 +16,24 @@ class Inference(nn.Module):
         self.hdim = args.hdim
         self.cdim = args.cdim
 
-        self.encoder = nn.Sequential(
-            nn.Linear(idim, 1024),
+        self.encoder = nn.ModuleList([
+            nn.Linear(idim, 512),
             nn.ReLU(),
-            nn.Linear(1024, self.hdim)
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(self.hdim, 1024),
+            nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Linear(1024, self.odim * args.tnum)
-        )
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.hdim)
+        ])
+        self.decoder = nn.ModuleList([
+            nn.Linear(self.hdim, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.odim)
+        ])
 
     @staticmethod
     def energy_pooling_mask(x, part_size, share=False):
@@ -52,13 +59,33 @@ class Inference(nn.Module):
         h = h.masked_fill(~(mask_cur_share.byte()), 0.0)
         return h, mask_prev
 
-    def forward(self, x, mask_prev=None):
-        x = self.encoder(x)
-        if mask_prev is not None:
-            x, mask_prev = self.hidden_exclude_activation(x, mask_prev)
+    def forward(self, x, ratio=None):
+        if ratio is None:
+            ratio = []
+            for module in self.encoder:
+                x_ = module(x)
+                if isinstance(module, nn.ReLU):
+                    ratio.append(x_ / x)
+
+                x = x_
+            for module in self.decoder:
+                x_ = module(x)
+                if isinstance(module, nn.ReLU):
+                    ratio.append(x_ / x)
+
+                x = x_
         else:
-            mask_prev = None
-        x = self.decoder(x)
+            for module in self.encoder:
+                x_ = module(x)
+                if isinstance(module, nn.ReLU):
+                    ratio.append(x_ / x)
+                x = x_
+            for module in self.decoder:
+                x_ = module(x)
+                if isinstance(module, nn.ReLU):
+                    ratio.append(x_ / x)
+
+                x = x_
 
         return x
 

@@ -53,6 +53,8 @@ espnet.done: venv
 	cd espnet/tools && make KALDI=../../${KALDI}
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
+	# import moneynet to espnet venv
+	. ../../venv/bin/activate && pip install -e ../../..
 	touch espnet.done
 
 fairseq.done: espnet.done
@@ -65,9 +67,3 @@ moneynet.done: espnet.done
 	. venv/bin/activate && pip install -e ..
 	. espnet/tools/venv/bin/activate && pip install -e ..
 	touch moneynet.done
-
-clean:
- 	rm -rf kaldi venv fairseq
- 	rm -f miniconda.sh
- 	rm -rf *.done
- 	rm -rf espnet

@@ -4,8 +4,8 @@ import logging
 import six
 
 import torch
-import torch.nn.functional as F
 from torch import nn
+import torch.nn.functional as F
 
 import chainer
 from chainer import reporter
@@ -15,6 +15,8 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
 from moneynet.nets.pytorch_backend.unsup.inference import Inference, ConvInference
+
+from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 
 
 class Reporter(chainer.Chain):
@@ -55,17 +57,22 @@ class Net(nn.Module):
         self.ignore_id = ignore_id
         self.subsample = [1]
 
-        self.k = 1000
+        # clustering configuration
+        self.embed_dim = 1000
+        self.embed_feat = torch.nn.Embedding(self.embed_dim, self.odim)
+        # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
+
+        # spectral disentangling configuration
+        self.spec_dis = True
 
         # reporter for monitoring
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.embed = torch.nn.Embedding(self.k, self.odim)
         if args.inference_type == 'linear':
-            self.inference = Inference(idim=idim, odim=idim, args=args)
+            self.transform_f = Inference(idim=idim, odim=idim, args=args)
         elif args.inference_type == 'conv':
-            self.inference = ConvInference(idim=idim, odim=idim, args=args)
+            self.transform_f = ConvInference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -84,45 +91,49 @@ class Net(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
+    def spectral_dis(self):
+        pass
+
+    def clustering(self, x, embed):
+        sim_prob = torch.matmul(x, embed.weight.t())
+        score_idx = torch.argmax(sim_prob, dim=-1)  # B, Tmax
+
+        anchor = embed(score_idx)  # B, Tmax, d
+        anchor = torch.softmax(anchor * x, dim=-1) * x
+
+        return anchor, score_idx, sim_prob
+
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         # prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
-        xs_pad_out = xs_pad_out[:, :max(ilens)]
+        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
-        # print(xs_pad_in.size(), xs_pad_out.size(), seq_mask.size())
-        # exit()
 
         # monitoring buffer
-        buffs = {'loss': [], 'score_idx': [], 'conservation_error': 0}
+        self.buffs = {'score_idx': [], 'out':[]}
 
-        # start iteration for superposition
+        # For solving superposition state of the feature
+        anchors = []
         for _ in six.moves.range(self.iter):
-            # find anchor with maximum similarity
-            score = torch.matmul(xs_pad_in, self.embed.weight.t()) / \
-                    torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
-            score_idx = torch.argmax(score, dim=-1)  # B, Tmax
-            buffs['score_idx'].append(score_idx)
-            anchor = self.embed(score_idx)
+            anchor, score_idx, _ = self.clustering(xs_pad_in, self.embed_feat)
+            xs_pad_in = (xs_pad_in - anchor).detach()
+            anchors.append(anchor)
+            self.buffs['score_idx'].append(score_idx)
+        anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1, 1)  # B, iter, tnum, Tmax, idim
 
-            # feedforward to inference network
-            xs_ele_out = self.inference(anchor)
-            sz = xs_ele_out.size()
-            xs_ele_out = xs_ele_out.view(sz[0], sz[1], self.tnum, self.idim)  # B, Tmax, tnum, C
+        # Inference via transform function with anchors
+        xs_pad_out_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, idim
+        xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)
+        self.buffs['out'].append(xs_pad_out_hat)
 
-            # compute loss of total network
-            masks = [seq_mask.unsqueeze(-1).repeat(1, 1, self.tnum).view(-1, 1)]
-            loss_local = self.criterion(xs_ele_out.reshape(-1, self.idim),
-                                        xs_pad_out.reshape(-1, self.idim),
-                                        masks)
+        if self.spec_dis:
+            pass
 
-            # compute residual feature
-            xs_pad_out = (xs_pad_out - xs_ele_out).detach()
-
-            # buffering
-            buffs['loss'].append(loss_local.sum())
-
-        # total loss compute
-        loss = torch.stack(buffs['loss'], dim=-1).mean()
+        # compute loss of total network
+        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
+        loss = self.criterion(xs_pad_out_hat.reshape(-1, self.idim),
+                              xs_pad_out.reshape(-1, self.idim),
+                              masks).mean()
 
         if not torch.isnan(loss):
             self.reporter.report(float(loss))
@@ -136,12 +147,28 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        # find anchor with maximum similarity
-        score = torch.matmul(x, self.embed.weight.t()) / \
-                torch.norm(self.embed.weight, dim=-1).view(1, 1, self.k)
-        score_idx = torch.argmax(score, dim=-1)
-        anchor = self.embed(score_idx)
+        buffs = {'score_idx': []}
 
-        out = anchor
+        # For solving superposition state of the feature
+        anchors = []
+        for _ in six.moves.range(self.iter):
+            anchor, score_idx, _ = self.clustering(x, self.embed_feat)
+            x = (x - anchor).detach()
+            anchors.append(anchor)
+            buffs['score_idx'].append(score_idx)
+
+        out = torch.stack(buffs['score_idx'], dim=-1)
 
         return out
+
+    @property
+    def images_plot_class(self):
+        return PlotImageReport
+
+    def calculate_images(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
+        with torch.no_grad():
+            self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
+        ret = dict()
+        ret['score_idx'] = torch.stack(self.buffs['score_idx'], dim=1).cpu().numpy()
+        ret['out'] = self.buffs['out'][0][:,0,:,:].cpu().numpy()
+        return ret

@@ -7,13 +7,13 @@ batch-bins: 28000000
 
 # optimization related
 opt: adam
-grad-clip: 5
+grad-clip: 1
 
 # scheduling related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
 epochs: 40
 
 # model architecture
-tnum: 5
+tnum: 2
 iter: 1
 inference_type: linear
