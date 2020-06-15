@@ -3,10 +3,10 @@ mixup-alpha: 0.0  # 0.0 for only mean-teacher
 mixup-scheme: global
 consistency-weight: 0.5
 consistency-rampup-starts: 0
-consistency-rampup-ends: 5
+consistency-rampup-ends: 10
 cosine-rampdown-starts: 40
 cosine-rampdown-ends: 40
 ema-pre-decay: 0.9
-ema-post-decay: 0.99
+ema-post-decay: 0.999
 
 show-student-model-acc: True  # if just for training, recommend to set it False
