@@ -93,11 +93,11 @@ class Net(nn.Module):
         return torch.sum(numer, dim=-1) / denom
 
     def clustering(self, x, embed):
-        sim_prob = torch.matmul(x, embed.weight.t())
+        sim_prob = torch.matmul(x, embed.weight.t()) / torch.norm(embed.weight.t(), dim=0, keepdim=True).unsqueeze(0)
         score_idx = torch.argmax(sim_prob, dim=-1)  # B, Tmax
 
         anchor = embed(score_idx)  # B, Tmax, d
-        anchor = torch.softmax(anchor * x, dim=-1) * x
+        anchor = torch.softmax(anchor * x, dim=-1) * anchor
 
         return anchor, score_idx, sim_prob
 
@@ -120,8 +120,8 @@ class Net(nn.Module):
         anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1, 1)  # B, iter, tnum, Tmax, idim
 
         # Inference via transform function with anchors
-        xs_pad_out_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, odim
-        xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)
+        xs_pad_out_hat, p_hat = self.transform_f(anchors)  # B, iter, tnum, Tmax, odim
+        xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)  # B, iter, tnum, Tmax, odim
         self.buffs['out'].append(xs_pad_out_hat)
 
         if self.spec_dis:

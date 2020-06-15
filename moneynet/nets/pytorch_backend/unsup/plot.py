@@ -53,6 +53,9 @@ class PlotImageReport(extension.Extension):
                 )
                 self._plot_and_save_image(img, filename.format(trainer))
 
+                print(self.data[0])
+                exit()
+
     def get_ret(self):
         batch = self.converter([self.transform(self.data)], self.device)
         if isinstance(batch, tuple):

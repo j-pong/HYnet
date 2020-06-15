@@ -3,45 +3,10 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn import init
-from torch.nn.parameter import Parameter
 
 from fairseq.models.wav2vec import ConvAggegator
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
-
-
-class Linear(nn.Module):
-    __constants__ = ['in_features', 'out_features']
-
-    def __init__(self, in_features, out_features, bias=True):
-        super(Linear, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.weight = Parameter(torch.Tensor(out_features, in_features))
-        if bias:
-            self.bias = Parameter(torch.Tensor(out_features))
-        else:
-            self.register_parameter('bias', None)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        if self.bias is not None:
-            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
-            bound = 1 / math.sqrt(fan_in)
-            init.uniform_(self.bias, -bound, bound)
-
-    def forward(self, input, bias_pass=False):
-        if bias_pass:
-            return F.linear(input, self.weight)
-        else:
-            return F.linear(input, self.weight, self.bias)
-
-    def extra_repr(self):
-        return 'in_features={}, out_features={}, bias={}'.format(
-            self.in_features, self.out_features, self.bias is not None
-        )
 
 
 class Inference(nn.Module):
@@ -55,29 +20,29 @@ class Inference(nn.Module):
 
         self.bias = args.bias
         self.encoder = nn.ModuleList([
-            Linear(idim, 512, bias=self.bias),
+            nn.Linear(idim, 512, bias=self.bias),
             nn.ReLU(),
-            Linear(512, 512, bias=self.bias),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            Linear(512, 512, bias=self.bias),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            Linear(512, self.hdim, bias=self.bias)
+            nn.Linear(512, self.hdim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
-            Linear(self.hdim, 512, bias=self.bias),
+            nn.Linear(self.hdim, 512, bias=self.bias),
             nn.ReLU(),
-            Linear(512, 512, bias=self.bias),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            Linear(512, 512, bias=self.bias),
+            nn.Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            Linear(512, self.odim, bias=self.bias)
+            nn.Linear(512, self.odim, bias=self.bias)
         ])
 
     @staticmethod
     def forward_(x, module_list):
         ratio = []
         for idx, module in enumerate(module_list):
-            if isinstance(module, Linear):
+            if isinstance(module, nn.Linear):
                 if idx > 0:
                     ratio.append(x / x_base)
                 x_base = module(x)
@@ -96,7 +61,7 @@ class Inference(nn.Module):
     def forward_brew(module_list, ratio, w_hat=None, bias_hat=None):
         i = 0
         for module in module_list:
-            if isinstance(module, Linear):
+            if isinstance(module, nn.Linear):
                 w = module.weight
                 if w_hat is None:
                     w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
@@ -122,12 +87,12 @@ class Inference(nn.Module):
         return w_hat, bias_hat
 
     def forward(self, x):
-
         x, ratio_enc = self.forward_(x, module_list=self.encoder)
         x, ratio_dec = self.forward_(x, module_list=self.decoder)
 
-        p_hat = self.forward_brew(self.encoder, ratio_enc)
-        p_hat = self.forward_brew(self.decoder, ratio_dec, p_hat[0], p_hat[1])
+        # p_hat = self.forward_brew(self.encoder, ratio_enc)
+        # p_hat = self.forward_brew(self.decoder, ratio_dec, p_hat[0], p_hat[1])
+        p_hat = None
 
         return x, p_hat
 
