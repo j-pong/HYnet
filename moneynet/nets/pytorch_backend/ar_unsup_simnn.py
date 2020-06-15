@@ -148,14 +148,12 @@ class Net(nn.Module):
         buffs = {'score_idx': []}
 
         # For solving superposition state of the feature
-        anchors = []
         for _ in six.moves.range(self.iter):
             anchor, score_idx, _ = self.clustering(x, self.embed_feat)
             x = (x - anchor).detach()
-            anchors.append(anchor)
             buffs['score_idx'].append(score_idx)
 
-        out = torch.stack(buffs['score_idx'], dim=-1)
+        out = torch.stack(buffs['score_idx'], dim=-1)[0]
 
         return out
 
@@ -169,6 +167,5 @@ class Net(nn.Module):
         ret = dict()
         ret['score_idx'] = F.one_hot(torch.stack(self.buffs['score_idx'], dim=1),
                                      num_classes=self.embed_dim).cpu().numpy()
-        import numpy as np
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret

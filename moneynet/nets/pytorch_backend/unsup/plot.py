@@ -42,7 +42,7 @@ class PlotImageReport(extension.Extension):
             os.makedirs(self.outdir)
 
     def __call__(self, trainer):
-        ret = self.get_ret()
+        ret, batch = self.get_ret()
 
         for key in ret.keys():
             for idx, img in enumerate(ret[key]):
@@ -51,10 +51,9 @@ class PlotImageReport(extension.Extension):
                     self.data[idx][0],
                     key
                 )
+                if key == 'out':
+                    img = np.concatenate([batch[1][idx].transpose(0, 1).cpu().numpy(), img], axis=0)
                 self._plot_and_save_image(img, filename.format(trainer))
-
-                print(self.data[0])
-                exit()
 
     def get_ret(self):
         batch = self.converter([self.transform(self.data)], self.device)
@@ -62,7 +61,7 @@ class PlotImageReport(extension.Extension):
             ret = self.vis_fn(*batch)
         else:
             ret = self.vis_fn(**batch)
-        return ret
+        return ret, batch
 
     def draw_image(self, img):
         import matplotlib.pyplot as plt
@@ -72,7 +71,7 @@ class PlotImageReport(extension.Extension):
             for h, im in enumerate(img, 1):
                 plt.subplot(len(img), 1, h)
                 plt.imshow(im.T, aspect="auto")
-                plt.ylabel("feature_dim")
+                plt.ylabel("feat_dim")
                 plt.xlabel("time")
         else:
             plt.imshow(img.T, aspect="auto")
