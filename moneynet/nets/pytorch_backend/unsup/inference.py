@@ -1,16 +1,53 @@
+import math
+
 import torch
+import torch.nn.functional as F
 from torch import nn
+from torch.nn import init
+from torch.nn.parameter import Parameter
 
 from fairseq.models.wav2vec import ConvAggegator
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
 
+class Linear(nn.Module):
+    __constants__ = ['in_features', 'out_features']
+
+    def __init__(self, in_features, out_features, bias=True):
+        super(Linear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = Parameter(torch.Tensor(out_features, in_features))
+        if bias:
+            self.bias = Parameter(torch.Tensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in)
+            init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input, bias_pass=False):
+        if bias_pass:
+            return F.linear(input, self.weight)
+        else:
+            return F.linear(input, self.weight, self.bias)
+
+    def extra_repr(self):
+        return 'in_features={}, out_features={}, bias={}'.format(
+            self.in_features, self.out_features, self.bias is not None
+        )
+
+
 class Inference(nn.Module):
     def __init__(self, idim, odim, args):
         super().__init__()
         # configuration
-        assert idim == odim
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
@@ -18,77 +55,81 @@ class Inference(nn.Module):
 
         self.bias = args.bias
         self.encoder = nn.ModuleList([
-            nn.Linear(idim, 512, bias=self.bias),
+            Linear(idim, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
+            Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
+            Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, self.hdim, bias=self.bias)
+            Linear(512, self.hdim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
-            nn.Linear(self.hdim, 512, bias=self.bias),
+            Linear(self.hdim, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
+            Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
+            Linear(512, 512, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, self.odim, bias=self.bias)
+            Linear(512, self.odim, bias=self.bias)
         ])
 
     @staticmethod
-    def energy_pooling_mask(x, part_size, share=False):
-        energy = x.pow(2)
-        if share:
-            indices = torch.topk(energy, k=part_size * 2, dim=-1)[1]  # (B, T, cdim*2)
-        else:
-            indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
-        mask = one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
-        mask_share = one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
-        return mask, mask_share
+    def forward_(x, module_list):
+        ratio = []
+        for idx, module in enumerate(module_list):
+            if isinstance(module, Linear):
+                if idx > 0:
+                    ratio.append(x / x_base)
+                x_base = module(x)
+                x = x_base
+            elif isinstance(module, nn.ReLU):
+                x = module(x)
+            else:
+                raise AttributeError("Current network architecture is not supported!")
 
-    def hidden_exclude_activation(self, h, mask_prev):
-        # byte tensor is not good choice
-        if mask_prev is None:
-            mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
-            mask_prev = mask_cur
-        else:
-            assert mask_prev is not None
-            h[mask_prev.byte()] = 0.0
-            mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
-            mask_prev = mask_prev + mask_cur
-        h = h.masked_fill(~(mask_cur_share.byte()), 0.0)
-        return h, mask_prev
+            if len(module_list) - 1 == idx:
+                ratio.append(x / x_base)
 
-    def forward(self, x, ratio=None):
-        if ratio is None:
-            ratio = []
-            for module in self.encoder:
-                x_ = module(x)
-                if isinstance(module, nn.ReLU):
-                    ratio.append(x_ / x)
+        return x, ratio
 
-                x = x_
-            for module in self.decoder:
-                x_ = module(x)
-                if isinstance(module, nn.ReLU):
-                    ratio.append(x_ / x)
+    @staticmethod
+    def forward_brew(module_list, ratio, w_hat=None, bias_hat=None):
+        i = 0
+        for module in module_list:
+            if isinstance(module, Linear):
+                w = module.weight
+                if w_hat is None:
+                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
+                        0)  # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
+                else:
+                    w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
+                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
 
-                x = x_
-        else:
-            for module in self.encoder:
-                x_ = module(x)
-                if isinstance(module, nn.ReLU):
-                    ratio.append(x_ / x)
-                x = x_
-            for module in self.decoder:
-                x_ = module(x)
-                if isinstance(module, nn.ReLU):
-                    ratio.append(x_ / x)
+                if module.bias is not None:
+                    b = module.bias
+                    if bias_hat is None:
+                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+                    else:
+                        bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
+                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                i += 1
+            elif isinstance(module, nn.ReLU):
+                pass
+            else:
+                print(module)
+                raise AttributeError("Current network architecture is not supported!")
 
-                x = x_
+        return w_hat, bias_hat
 
-        return x
+    def forward(self, x):
+
+        x, ratio_enc = self.forward_(x, module_list=self.encoder)
+        x, ratio_dec = self.forward_(x, module_list=self.decoder)
+
+        p_hat = self.forward_brew(self.encoder, ratio_enc)
+        p_hat = self.forward_brew(self.decoder, ratio_dec, p_hat[0], p_hat[1])
+
+        return x, p_hat
 
 
 class ConvInference(nn.Module):
@@ -144,6 +185,30 @@ class ExcInference(Inference):
         x_ind = torch.max(energy, dim=-1)[1]  # (B, Tmax, *)
         x = select_with_ind(x, x_ind)  # (B, Tmax, hdim)
         return x, x_ind
+
+    @staticmethod
+    def energy_pooling_mask(x, part_size, share=False):
+        energy = x.pow(2)
+        if share:
+            indices = torch.topk(energy, k=part_size * 2, dim=-1)[1]  # (B, T, cdim*2)
+        else:
+            indices = torch.topk(energy, k=part_size, dim=-1)[1]  # (B, T, cdim)
+        mask = one_hot(indices[:, :, :part_size], num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        mask_share = one_hot(indices, num_classes=x.size(-1)).float().sum(-2)  # (B, T, hdim)
+        return mask, mask_share
+
+    def hidden_exclude_activation(self, h, mask_prev):
+        # byte tensor is not good choice
+        if mask_prev is None:
+            mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
+            mask_prev = mask_cur
+        else:
+            assert mask_prev is not None
+            h[mask_prev.byte()] = 0.0
+            mask_cur, mask_cur_share = self.energy_pooling_mask(h, self.cdim, share=True)
+            mask_prev = mask_prev + mask_cur
+        h = h.masked_fill(~(mask_cur_share.byte()), 0.0)
+        return h, mask_prev
 
     def forward(self, x, mask_prev=None):
         x, _ = pad_for_shift(key=x, pad=self.input_extra,

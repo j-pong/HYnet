@@ -92,9 +92,6 @@ class Net(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
-    def spectral_dis(self):
-        pass
-
     def clustering(self, x, embed):
         sim_prob = torch.matmul(x, embed.weight.t())
         score_idx = torch.argmax(sim_prob, dim=-1)  # B, Tmax
@@ -171,7 +168,7 @@ class Net(nn.Module):
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
         ret = dict()
         ret['score_idx'] = F.one_hot(torch.stack(self.buffs['score_idx'], dim=1),
-                                     num_classes=self.embed_dim).sum(dim=1).cpu().numpy()
+                                     num_classes=self.embed_dim).cpu().numpy()
         import numpy as np
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret
