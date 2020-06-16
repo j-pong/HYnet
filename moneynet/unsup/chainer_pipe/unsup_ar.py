@@ -545,7 +545,10 @@ def train(args):
     )
     trainer.extend(img_reporter, trigger=(1, "epoch"))
 
-    trainer.extend(extensions.PlotReport(["main/loss", "validation/main/loss"], "epoch", file_name="loss.png", ))
+    trainer.extend(extensions.PlotReport(["main/loss",
+                                          "main/e_loss",
+                                          "validation/main/loss",
+                                          "validation/main/e_loss"], "epoch", file_name="loss.png", ))
 
     # Save best models
     trainer.extend(
@@ -566,8 +569,9 @@ def train(args):
         "epoch",
         "iteration",
         "main/loss",
-        "main/loss_aug",
-        "validation/main/loss",
+        "main/e_loss",
+        "validation/main/loss"
+        "validation/main/e_loss",
         "elapsed_time",
     ]
     if args.opt == "adadelta":

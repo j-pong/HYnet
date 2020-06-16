@@ -77,12 +77,13 @@ class Inference(nn.Module):
                     else:
                         bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
                         bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                else:
+                    bias_hat = None
                 i += 1
             elif isinstance(module, nn.ReLU):
                 pass
             else:
-                print(module)
-                raise AttributeError("Current network architecture is not supported!")
+                raise AttributeError("Current network architecture, {}, is not supported!".format(module))
 
         return w_hat, bias_hat
 
@@ -90,11 +91,13 @@ class Inference(nn.Module):
         x, ratio_enc = self.forward_(x, module_list=self.encoder)
         x, ratio_dec = self.forward_(x, module_list=self.decoder)
 
-        # p_hat = self.forward_brew(self.encoder, ratio_enc)
-        # p_hat = self.forward_brew(self.decoder, ratio_dec, p_hat[0], p_hat[1])
-        p_hat = None
+        return x, ratio_enc, ratio_dec
 
-        return x, p_hat
+    def brew(self, ratios):
+        p_hat = self.forward_brew(self.encoder, ratios[0])
+        p_hat = self.forward_brew(self.decoder, ratios[1], p_hat[0], p_hat[1])
+
+        return p_hat
 
 
 class ConvInference(nn.Module):
