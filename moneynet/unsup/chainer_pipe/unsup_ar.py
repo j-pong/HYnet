@@ -546,9 +546,11 @@ def train(args):
     trainer.extend(img_reporter, trigger=(1, "epoch"))
 
     trainer.extend(extensions.PlotReport(["main/loss",
-                                          "main/e_loss",
-                                          "validation/main/loss",
-                                          "validation/main/e_loss"], "epoch", file_name="loss.png", ))
+                                          "validation/main/loss"], "epoch", file_name="loss.png", ))
+    trainer.extend(extensions.PlotReport(["main/e_positive",
+                                          "main/e_negative",
+                                          "validation/main/e_positive",
+                                          "validation/main/e_negative"], "epoch", file_name="energy.png", ))
 
     # Save best models
     trainer.extend(

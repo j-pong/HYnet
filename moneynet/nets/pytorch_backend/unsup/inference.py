@@ -20,22 +20,14 @@ class Inference(nn.Module):
 
         self.bias = args.bias
         self.encoder = nn.ModuleList([
-            nn.Linear(idim, 512, bias=self.bias),
+            nn.Linear(idim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(512, self.hdim, bias=self.bias)
+            nn.Linear(self.hdim, self.hdim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
-            nn.Linear(self.hdim, 512, bias=self.bias),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(512, 512, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(512, self.odim, bias=self.bias)
+            nn.Linear(self.hdim, self.odim, bias=self.bias)
         ])
 
     @staticmethod
@@ -44,7 +36,7 @@ class Inference(nn.Module):
         for idx, module in enumerate(module_list):
             if isinstance(module, nn.Linear):
                 if idx > 0:
-                    ratio.append(x / x_base)
+                    ratio.append((x / x_base).detach())
                 x_base = module(x)
                 x = x_base
             elif isinstance(module, nn.ReLU):
@@ -53,37 +45,38 @@ class Inference(nn.Module):
                 raise AttributeError("Current network architecture is not supported!")
 
             if len(module_list) - 1 == idx:
-                ratio.append(x / x_base)
+                ratio.append((x / x_base).detach())
 
         return x, ratio
 
     @staticmethod
     def forward_brew(module_list, ratio, w_hat=None, bias_hat=None):
-        i = 0
-        for module in module_list:
-            if isinstance(module, nn.Linear):
-                w = module.weight
-                if w_hat is None:
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
-                        0)  # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
-                else:
-                    w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
-
-                if module.bias is not None:
-                    b = module.bias
-                    if bias_hat is None:
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+        with torch.no_grad():
+            i = 0
+            for module in module_list:
+                if isinstance(module, nn.Linear):
+                    w = module.weight
+                    if w_hat is None:
+                        w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
+                            0)  # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
                     else:
-                        bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                        w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
+                        w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
+
+                    if module.bias is not None:
+                        b = module.bias
+                        if bias_hat is None:
+                            bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+                        else:
+                            bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
+                            bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                    else:
+                        bias_hat = None
+                    i += 1
+                elif isinstance(module, nn.ReLU):
+                    pass
                 else:
-                    bias_hat = None
-                i += 1
-            elif isinstance(module, nn.ReLU):
-                pass
-            else:
-                raise AttributeError("Current network architecture, {}, is not supported!".format(module))
+                    raise AttributeError("Current network architecture, {}, is not supported!".format(module))
 
         return w_hat, bias_hat
 

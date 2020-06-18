@@ -54,7 +54,7 @@ espnet.done: venv
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
 	# import moneynet to espnet venv
-	. ../../venv/bin/activate && pip install -e ../../..
+	cd espnet/tools && . venv/bin/activate && pip install -e ../../..
 	touch espnet.done
 
 fairseq.done: espnet.done

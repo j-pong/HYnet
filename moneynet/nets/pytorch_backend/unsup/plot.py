@@ -80,7 +80,7 @@ class PlotImageReport(extension.Extension):
         plt.tight_layout()
         return plt
 
-    def _plot_and_save_image(self, att_w, filename):
-        plt = self.draw_image(att_w)
+    def _plot_and_save_image(self, img, filename):
+        plt = self.draw_image(img)
         plt.savefig(filename)
         plt.close()

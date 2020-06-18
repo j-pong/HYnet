@@ -22,10 +22,11 @@ from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 class Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
 
-    def report(self, loss, e_loss):
+    def report(self, loss, e_positive, e_negative):
         """Report at every step."""
         reporter.report({"loss": loss}, self)
-        reporter.report({"e_loss": e_loss}, self)
+        reporter.report({"e_positive": e_positive}, self)
+        reporter.report({"e_negative": e_negative}, self)
 
 
 class Net(nn.Module):
@@ -72,8 +73,11 @@ class Net(nn.Module):
 
         if self.embed_mem:
             # clustering configuration
-            self.embed_dim = 1000
-            self.embed_feat = torch.nn.Embedding(self.embed_dim, self.odim)
+            self.embed_dim_high = 1000
+            self.embed_dim_low = 50
+            self.low_freq = 2
+            self.embed_feat_high = torch.nn.Embedding(self.embed_dim_high, self.odim - self.low_freq)
+            self.embed_feat_low = torch.nn.Embedding(self.embed_dim_low, self.low_freq)
             # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
         # inference part with action and selection
         if args.inference_type == 'linear':
@@ -114,16 +118,21 @@ class Net(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
         # monitoring buffer
-        self.buffs = {'score_idx': [], 'out': []}
+        self.buffs = {'score_idx_h': [], 'score_idx_l': [], 'out': []}
 
         # For solving superposition state of the feature
         if self.embed_mem:
             anchors = []
             for _ in six.moves.range(self.iter):
-                anchor, score_idx, _ = self.clustering(xs_pad_in, self.embed_feat)
-                xs_pad_in = (xs_pad_in - anchor).detach()
+                anchor_h, score_idx_h, _ = self.clustering(xs_pad_in[..., :-self.low_freq], self.embed_feat_high)
+                anchor_l, score_idx_l, _ = self.clustering(xs_pad_in[..., -self.low_freq:], self.embed_feat_low)
+                anchor = torch.cat([anchor_h, anchor_l], dim=-1)
+                if self.iter != 1:
+                    xs_pad_in = (xs_pad_in - anchor).detach()
                 anchors.append(anchor)
-                self.buffs['score_idx'].append(score_idx)
+                if self.eval:
+                    self.buffs['score_idx_h'].append(score_idx_h)
+                    self.buffs['score_idx_l'].append(score_idx_l)
             anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1,
                                                                       1)  # B, iter, tnum, Tmax, idim
         else:
@@ -132,15 +141,21 @@ class Net(nn.Module):
         # Inference via transform function with anchors
         xs_pad_out_hat, ratio_enc, ratio_dec = self.transform_f(anchors)  # B, iter, tnum, Tmax, odim
         xs_pad_out_hat = xs_pad_out_hat.mean(dim=1)  # B, iter, tnum, Tmax, odim
-        self.buffs['out'].append(xs_pad_out_hat)
+        if self.eval:
+            self.buffs['out'].append(xs_pad_out_hat)
 
         if self.brewing:
             p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
+            p_hat = p_hat[0]
 
-            w_hat_x = p_hat[0] * torch.sign(anchors.view(-1, self.idim).unsqueeze(-1))
-            w_hat_x_p = torch.relu(w_hat_x[0])
-            w_hat_x_n = torch.relu(-w_hat_x[0])
-            e_loss = torch.sum(w_hat_x_p) - torch.sum(w_hat_x_n)
+            w_hat_x = p_hat[0] * torch.sign(anchors.view(-1, self.idim).unsqueeze(-1).detach())
+            w_hat_x_p = torch.relu(w_hat_x)
+            w_hat_x_n = torch.relu(-w_hat_x)
+            e_positive = torch.sum(torch.mean(w_hat_x_p, dim=0))
+            e_negative = torch.sum(torch.mean(w_hat_x_n, dim=0))
+        else:
+            e_positive = 0
+            e_negative = 0
 
         # compute loss of total network
         masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
@@ -149,7 +164,7 @@ class Net(nn.Module):
                               masks).mean()
 
         if not torch.isnan(loss):
-            self.reporter.report(float(loss), float(e_loss))
+            self.reporter.report(float(loss), float(e_positive), float(e_negative))
         else:
             print("loss (=%f) is not correct", float(loss))
             logging.warning("loss (=%f) is not correct", float(loss))
@@ -182,7 +197,9 @@ class Net(nn.Module):
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
         ret = dict()
         if self.embed_mem:
-            ret['score_idx'] = F.one_hot(torch.stack(self.buffs['score_idx'], dim=1),
-                                         num_classes=self.embed_dim).cpu().numpy()
+            ret['score_idx_h'] = F.one_hot(torch.stack(self.buffs['score_idx_h'], dim=1),
+                                           num_classes=self.embed_dim_high).cpu().numpy()
+            ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
+                                           num_classes=self.embed_dim_low).cpu().numpy()
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret

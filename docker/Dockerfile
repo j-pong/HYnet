@@ -50,6 +50,17 @@ RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
 
 # CUSTOM ----------------------------------------------------------------------<
 
+    DEBIAN_FRONTEND=noninteractive $APT_INSTALL \
+        zlib1g-dev \
+        automake \
+        autoconf \
+        sox \
+        gfortran \
+        libtool \
+        subversion \
+        python3 \
+        && \
+
     $GIT_CLONE https://github.com/Kitware/CMake ~/cmake && \
     cd ~/cmake && \
     ./bootstrap && \
