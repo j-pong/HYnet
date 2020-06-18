@@ -547,10 +547,10 @@ def train(args):
 
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))
-    trainer.extend(extensions.PlotReport(["main/e_positive",
-                                          "main/e_negative",
-                                          "validation/main/e_positive",
-                                          "validation/main/e_negative"], "epoch", file_name="energy.png", ))
+    trainer.extend(extensions.PlotReport(["main/e_loss",
+                                          "validation/main/e_loss"], "epoch", file_name="energy.png", ))
+    trainer.extend(extensions.PlotReport(["main/discontinuity",
+                                          "validation/main/discontinuity"], "epoch", file_name="discontinuity.png", ))
 
     # Save best models
     trainer.extend(

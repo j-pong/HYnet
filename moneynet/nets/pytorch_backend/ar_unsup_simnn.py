@@ -22,11 +22,11 @@ from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 class Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
 
-    def report(self, loss, e_positive, e_negative):
+    def report(self, loss, e_loss, discontinuity):
         """Report at every step."""
         reporter.report({"loss": loss}, self)
-        reporter.report({"e_positive": e_positive}, self)
-        reporter.report({"e_negative": e_negative}, self)
+        reporter.report({"e_loss": e_loss}, self)
+        reporter.report({"discontinuity": discontinuity}, self)
 
 
 class Net(nn.Module):
@@ -144,6 +144,8 @@ class Net(nn.Module):
         if self.eval:
             self.buffs['out'].append(xs_pad_out_hat)
 
+        # compute loss of total network
+        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
         if self.brewing:
             p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
             p_hat = p_hat[0]
@@ -151,20 +153,23 @@ class Net(nn.Module):
             w_hat_x = p_hat[0] * torch.sign(anchors.view(-1, self.idim).unsqueeze(-1).detach())
             w_hat_x_p = torch.relu(w_hat_x)
             w_hat_x_n = torch.relu(-w_hat_x)
-            e_positive = torch.sum(torch.mean(w_hat_x_p, dim=0))
-            e_negative = torch.sum(torch.mean(w_hat_x_n, dim=0))
-        else:
-            e_positive = 0
-            e_negative = 0
 
-        # compute loss of total network
-        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
+            seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
+            e_loss = seq_energy_mask.mean()
+
+            seq_energy_mask = seq_energy_mask < 1.0
+            discontinuity = seq_energy_mask.float().mean()
+            masks.append(seq_energy_mask)
+
+        else:
+            e_loss = 0.0
+            discontinuity = 0.0
         loss = self.criterion(xs_pad_out_hat.reshape(-1, self.idim),
                               xs_pad_out.reshape(-1, self.idim),
                               masks).mean()
 
         if not torch.isnan(loss):
-            self.reporter.report(float(loss), float(e_positive), float(e_negative))
+            self.reporter.report(float(loss), float(e_loss), float(discontinuity))
         else:
             print("loss (=%f) is not correct", float(loss))
             logging.warning("loss (=%f) is not correct", float(loss))
