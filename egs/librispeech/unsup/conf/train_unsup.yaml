@@ -3,7 +3,7 @@ model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:Net"
 
 # minibatch related
 accum-grad: 4
-batch-bins: 26000000
+batch-bins: 6000000
 
 # optimization related
 opt: adam
@@ -17,6 +17,7 @@ epochs: 40
 # model architecture
 tnum: 2
 iter: 1
+hdim: 512
 inference_type: linear
 embed_mem: 1
 brewing: 1

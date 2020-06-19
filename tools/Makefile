@@ -57,8 +57,7 @@ espnet.done: venv
 	cd espnet/tools && make KALDI=../../${KALDI} kaldi.done && \
 	make venv && \
 	make espnet.done && \
-	make warp-ctc.done && \
-	make warp-transducer.done
+	make warp-ctc.done
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
 	# import moneynet to espnet venv
