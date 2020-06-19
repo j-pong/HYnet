@@ -5,7 +5,7 @@ CUDA_VERSION := 10.2
 TH_VERSION := 1.5.0
 
 # Use a prebuild Kaldi to omit the installation
-KALDI :=
+KALDI := kaldi
 WGET := wget --tries=3
 
 # Both Miniconda2/3 can install any Python versions
@@ -28,8 +28,8 @@ kaldi.done:
 	touch kaldi.done
 else
 kaldi.done:
-	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi ./kaldi && \
-    cd ./kaldi/tools && \
+	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi kaldi && \
+    cd kaldi/tools && \
     extras/install_mkl.sh -s && \
     extras/check_dependencies.sh && \
     make -j 4 && \
@@ -38,7 +38,6 @@ kaldi.done:
     ./configure && \
     make depend -j 4 && \
     make -j 4
-	KALDI=kaldi
 	touch kaldi.done
 endif
 
