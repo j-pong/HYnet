@@ -28,9 +28,8 @@ kaldi.done:
 	touch kaldi.done
 else
 kaldi.done:
-	rm -rf kaldi
-	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi kaldi && \
-    cd kaldi/tools && \
+	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi ./kaldi && \
+    cd ./kaldi/tools && \
     extras/install_mkl.sh && \
     extras/check_dependencies.sh && \
     make -j 4 && \
@@ -39,7 +38,7 @@ kaldi.done:
     ./configure && \
     make depend -j 4 && \
     make -j 4
-    KALDI=kaldi
+	KALDI=kaldi
 	touch kaldi.done
 endif
 
@@ -70,7 +69,7 @@ espnet.done: venv
 fairseq.done: espnet.done
 	rm -rf fairseq
 	git clone https://github.com/pytorch/fairseq
-	cd fairseq && . ../venv/bin/activate && pip uninstall typing && pip install -e .
+	cd fairseq && . ../venv/bin/activate && pip uninstall -y typing && pip install -e .
 	touch fairseq.done
 
 moneynet.done: espnet.done
