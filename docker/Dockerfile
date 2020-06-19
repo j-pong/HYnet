@@ -1,21 +1,17 @@
 FROM nvidia/cuda:10.2-cudnn7-devel-ubuntu18.04
 ENV LANG C.UTF-8
 
-RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
-    GIT_CLONE="git clone --depth 10" && \
+ARG DEBIAN_FRONTEND=noninteractive
 
-    rm -rf /var/lib/apt/lists/* \
+RUN rm -rf /var/lib/apt/lists/* \
            /etc/apt/sources.list.d/cuda.list \
-           /etc/apt/sources.list.d/nvidia-ml.list && \
+           /etc/apt/sources.list.d/nvidia-ml.list
 
-    apt-get update && \
+RUN apt-get update -y
 
-# ==================================================================
-# tools
-# ------------------------------------------------------------------
-
-    DEBIAN_FRONTEND=noninteractive $APT_INSTALL \
+RUN apt-get install -y --no-install-recommends \
         build-essential \
+        dialog \
         apt-utils \
         ca-certificates \
         wget \
@@ -24,12 +20,9 @@ RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
         libssl-dev \
         curl \
         unzip \
-        unrar \
-        && \
+        unrar
 
-# CUSTOM ---------------------------------------------------------------------->
-
-    DEBIAN_FRONTEND=noninteractive $APT_INSTALL \
+RUN apt-get install -y --no-install-recommends \
         sudo \
         zip \
         nano \
@@ -41,16 +34,9 @@ RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
         openssh-server \
         rsync \
         sshfs \
-        libsndfile1 \
-        # libsndfile1 \
-        # python3-dev \
-        # python3-pip \
-        # python3-tk \
-        && \
+        libsndfile1
 
-# CUSTOM ----------------------------------------------------------------------<
-
-    DEBIAN_FRONTEND=noninteractive $APT_INSTALL \
+RUN apt-get install -y --no-install-recommends \
         zlib1g-dev \
         automake \
         autoconf \
@@ -59,12 +45,12 @@ RUN APT_INSTALL="apt-get install -y --no-install-recommends" && \
         libtool \
         subversion \
         python3 \
-        && \
+        cmake \
+        make \
+        flac \
+        bc
 
-    $GIT_CLONE https://github.com/Kitware/CMake ~/cmake && \
-    cd ~/cmake && \
-    ./bootstrap && \
-    make -j"$(nproc)" install
+RUN apt-get upgrade -y
 
 ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
@@ -121,7 +107,9 @@ EXPOSE 22
 #-------------------------------------------------------------------------------
 
 COPY start.sh /
+COPY cuda_path.sh /
 RUN chmod u+x /start.sh
+RUN chmod u+x /cuda_path.sh
 
 ENV PUID=5555
 ENV PGID=5555

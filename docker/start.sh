@@ -25,3 +25,5 @@ echo "[start.sh] ssh-key generated."
 
 #-------------------------------------------------------------------------------
 exec /usr/sbin/sshd -D
+
+source /bashrc.sh

@@ -28,11 +28,16 @@ kaldi.done:
 	touch kaldi.done
 else
 kaldi.done:
-	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi.git
-	cd kaldi/tools; extras/check_dependencies.sh;
-	cd kaldi/tools; make -j 8;
-	cd kaldi/tools; extras/install_irstlm.sh;
-	cd kaldi/src; ./configure --shared --use-cuda=no; make depend -j 8; make -j 8;
+	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi ./kaldi && \
+    cd ./kaldi/tools && \
+    extras/install_mkl.sh && \
+    extras/check_dependencies.sh && \
+    make -j"$(nproc)" && \
+    extras/install_irstlm.sh && \
+    cd ../src/ && \
+    ./configure && \
+    make depend -j"$(nproc)" && \
+    make -j"$(nproc)"
 	touch kaldi.done
 endif
 
