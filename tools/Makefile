@@ -39,6 +39,7 @@ kaldi.done:
     ./configure && \
     make depend -j 4 && \
     make -j 4
+    KALDI=kaldi
 	touch kaldi.done
 endif
 
@@ -54,9 +55,12 @@ venv: miniconda.sh
 	. venv/bin/activate && conda info -a
 
 espnet.done: venv
-	rm -rf espnet
 	git clone https://github.com/espnet/espnet
-	cd espnet/tools && make KALDI=../../${KALDI}
+	cd espnet/tools && make KALDI=../../${KALDI} kaldi.done && \
+	make venv && \
+	make espnet.done && \
+	make warp-ctc.done && \
+	make warp-transducer.done
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
 	# import moneynet to espnet venv
@@ -66,7 +70,7 @@ espnet.done: venv
 fairseq.done: espnet.done
 	rm -rf fairseq
 	git clone https://github.com/pytorch/fairseq
-	cd fairseq && . ../venv/bin/activate && pip install -e .
+	cd fairseq && . ../venv/bin/activate && pip uninstall typing && pip install -e .
 	touch fairseq.done
 
 moneynet.done: espnet.done
