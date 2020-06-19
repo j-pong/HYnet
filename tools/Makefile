@@ -30,7 +30,7 @@ else
 kaldi.done:
 	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi ./kaldi && \
     cd ./kaldi/tools && \
-    extras/install_mkl.sh && \
+    extras/install_mkl.sh -s && \
     extras/check_dependencies.sh && \
     make -j 4 && \
     extras/install_irstlm.sh && \
