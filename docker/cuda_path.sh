@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-CUDAROOT=/use/local/cuda
+CUDAROOT=/usr/local/cuda
 
 export PATH=$CUDAROOT/bin:$PATH
 export LD_LIBRARY_PATH=$CUDAROOT/lib64:$LD_LIBRARY_PATH
