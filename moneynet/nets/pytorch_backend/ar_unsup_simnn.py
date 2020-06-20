@@ -183,17 +183,18 @@ class Net(nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        buffs = {'score_idx': []}
-
         # For solving superposition state of the feature
+        ret = dict()
         for _ in six.moves.range(self.iter):
-            anchor, score_idx, _ = self.clustering(x, self.embed_feat)
-            x = (x - anchor).detach()
-            buffs['score_idx'].append(score_idx)
+            anchor_h, score_idx_h, _ = self.clustering(x[..., :-self.low_freq], self.embed_feat_high)
+            anchor_l, score_idx_l, _ = self.clustering(x[..., -self.low_freq:], self.embed_feat_low)
+            anchor = torch.cat([anchor_h, anchor_l], dim=-1)
+            if self.iter != 1:
+                x = (x - anchor).detach()
+            ret['score_idx_h'].append(score_idx_h)
+            ret['score_idx_l'].append(score_idx_l)
 
-        out = torch.stack(buffs['score_idx'], dim=-1)[0]
-
-        return out
+        return self.buffs
 
     @property
     def images_plot_class(self):
