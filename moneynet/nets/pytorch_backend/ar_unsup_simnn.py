@@ -51,6 +51,7 @@ class Net(nn.Module):
         group.add_argument("--bias", default=1, type=int)
         group.add_argument("--embed_mem", default=0, type=int)
         group.add_argument("--brewing", default=0, type=int)
+        group.add_argument("--eth", default=0.7, type=int)
 
         return parser
 
@@ -62,11 +63,11 @@ class Net(nn.Module):
         self.iter = args.iter
         self.tnum = args.tnum
         self.ignore_id = ignore_id
-        self.subsample = [1]
 
         # additive task
         self.embed_mem = args.embed_mem
         self.brewing = args.brewing
+        self.e_th = args.eth
 
         # reporter for monitoring
         self.reporter = Reporter()
@@ -157,9 +158,10 @@ class Net(nn.Module):
             seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
             e_loss = seq_energy_mask.mean()
 
-            seq_energy_mask = seq_energy_mask < 1.0
+            seq_energy_mask = seq_energy_mask < self.e_th
             discontinuity = seq_energy_mask.float().mean()
-            masks.append(seq_energy_mask)
+            if self.eval:
+                masks.append(seq_energy_mask)
 
         else:
             e_loss = 0.0
