@@ -21,7 +21,7 @@ class Inference(nn.Module):
         self.bias = args.bias
         self.encoder = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU()
+            nn.ReLU(),
         ])
         self.decoder = nn.ModuleList([
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
@@ -35,7 +35,9 @@ class Inference(nn.Module):
         for idx, module in enumerate(module_list):
             if isinstance(module, nn.Linear):
                 if idx > 0:
-                    ratio.append((x / x_base).detach())
+                    rat = x / x_base
+                    rat[torch.isnan(rat)] = 0.0
+                    ratio.append(rat)
                 x_base = module(x)
                 x = x_base
             elif isinstance(module, nn.ReLU):
@@ -44,7 +46,9 @@ class Inference(nn.Module):
                 raise AttributeError("Current network architecture is not supported!")
 
             if len(module_list) - 1 == idx:
-                ratio.append((x / x_base).detach())
+                rat = x / x_base
+                rat[torch.isnan(rat)] = 0.0
+                ratio.append(rat)
 
         return x, ratio
 
