@@ -134,27 +134,28 @@ class NetTransform(nn.Module):
         masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
         if self.brewing:
             # brew deep neural network model
-            p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
-            p_hat = p_hat[0]
+            with torch.no_grad():
+                p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
+                p_hat = p_hat[0]
 
-            # relation with sign
-            sign_pair = torch.matmul(torch.sign(anchors.view(-1, self.idim).unsqueeze(-1)),
-                                     torch.sign(xs_pad_out.contiguous().view(-1, self.odim).unsqueeze(-2)))
-            w_hat_x = p_hat * sign_pair
+                # relation with sign
+                sign_pair = torch.matmul(torch.sign(anchors.view(-1, self.idim).unsqueeze(-1)),
+                                         torch.sign(xs_pad_out.contiguous().view(-1, self.odim).unsqueeze(-2)))
+                w_hat_x = p_hat * sign_pair
 
-            # pos-neg filtering with energy-based weight
-            w_hat_x_p = torch.relu(w_hat_x)
-            w_hat_x_n = torch.relu(-w_hat_x)
+                # pos-neg filtering with energy-based weight
+                w_hat_x_p = torch.relu(w_hat_x)
+                w_hat_x_n = torch.relu(-w_hat_x)
 
-            # get mask with ratio of positive and negative weight
-            seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
-            seq_energy_mask[torch.isnan(seq_energy_mask)] = 0.0
-            e_loss = seq_energy_mask.mean()
+                # get mask with ratio of positive and negative weight
+                seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
+                seq_energy_mask[torch.isnan(seq_energy_mask)] = 0.0
+                e_loss = seq_energy_mask.mean()
 
-            seq_energy_mask = seq_energy_mask < self.e_th
-            discontinuity = seq_energy_mask.float().mean()
-            if not self.eval:
-                masks.append(seq_energy_mask)
+                seq_energy_mask = seq_energy_mask < self.e_th
+                discontinuity = seq_energy_mask.float().mean()
+                if not self.eval:
+                    masks.append(seq_energy_mask)
 
         else:
             e_loss = 0.0

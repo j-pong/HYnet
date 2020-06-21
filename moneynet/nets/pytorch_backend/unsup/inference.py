@@ -30,14 +30,19 @@ class Inference(nn.Module):
         ])
 
     @staticmethod
-    def forward_(x, module_list):
+    def calculate_ratio(x, x_base):
+        with torch.no_grad():
+            rat = x / x_base
+            rat[torch.isnan(rat)] = 0.0
+
+        return rat
+
+    def forward_(self, x, module_list):
         ratio = []
         for idx, module in enumerate(module_list):
             if isinstance(module, nn.Linear):
                 if idx > 0:
-                    rat = x / x_base
-                    rat[torch.isnan(rat)] = 0.0
-                    ratio.append(rat)
+                    ratio.append(self.calculate_ratio(x, x_base))
                 x_base = module(x)
                 x = x_base
             elif isinstance(module, nn.ReLU):
@@ -46,40 +51,37 @@ class Inference(nn.Module):
                 raise AttributeError("Current network architecture is not supported!")
 
             if len(module_list) - 1 == idx:
-                rat = x / x_base
-                rat[torch.isnan(rat)] = 0.0
-                ratio.append(rat)
+                ratio.append(self.calculate_ratio(x, x_base))
 
         return x, ratio
 
     @staticmethod
-    def forward_brew(module_list, ratio, w_hat=None, bias_hat=None):
-        with torch.no_grad():
-            i = 0
-            for module in module_list:
-                if isinstance(module, nn.Linear):
-                    w = module.weight
-                    if w_hat is None:
-                        w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
-                            0)  # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
-                    else:
-                        w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
-                        w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
-
-                    if module.bias is not None:
-                        b = module.bias
-                        if bias_hat is None:
-                            bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
-                        else:
-                            bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
-                            bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
-                    else:
-                        bias_hat = None
-                    i += 1
-                elif isinstance(module, nn.ReLU):
-                    pass
+    def brew_(module_list, ratio, w_hat=None, bias_hat=None):
+        i = 0
+        for module in module_list:
+            if isinstance(module, nn.Linear):
+                w = module.weight
+                if w_hat is None:
+                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
+                        0)  # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
                 else:
-                    raise AttributeError("Current network architecture, {}, is not supported!".format(module))
+                    w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
+                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
+
+                if module.bias is not None:
+                    b = module.bias
+                    if bias_hat is None:
+                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+                    else:
+                        bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
+                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                else:
+                    bias_hat = None
+                i += 1
+            elif isinstance(module, nn.ReLU):
+                pass
+            else:
+                raise AttributeError("Current network architecture, {}, is not supported!".format(module))
 
         return w_hat, bias_hat
 
@@ -90,8 +92,8 @@ class Inference(nn.Module):
         return x, ratio_enc, ratio_dec
 
     def brew(self, ratios):
-        p_hat = self.forward_brew(self.encoder, ratios[0])
-        p_hat = self.forward_brew(self.decoder, ratios[1], p_hat[0], p_hat[1])
+        p_hat = self.brew_(self.encoder, ratios[0])
+        p_hat = self.brew_(self.decoder, ratios[1], p_hat[0], p_hat[1])
 
         return p_hat
 
