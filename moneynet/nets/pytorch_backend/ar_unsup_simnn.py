@@ -35,7 +35,7 @@ class Net(nn.Module):
         """Add arguments"""
         group = parser.add_argument_group("simnn setting")
         # task related
-        group.add_argument("--tnum", default=5, type=int)
+        group.add_argument("--tnum", default=10, type=int)
         group.add_argument("--iter", default=1, type=int)
 
         # optimization related
@@ -46,6 +46,8 @@ class Net(nn.Module):
         group.add_argument("--hdim", default=512, type=int)
         group.add_argument("--cdim", default=128, type=int)
         group.add_argument("--inference_type", default='conv', type=str)
+        group.add_argument("--embed_dim_high", default=1000, type=int)
+        group.add_argument("--embed_dim_low", default=50, type=int)
 
         # task related
         group.add_argument("--bias", default=1, type=int)
@@ -56,13 +58,14 @@ class Net(nn.Module):
         return parser
 
     def __init__(self, idim, odim, args, ignore_id=-1):
-        super(Net, self).__init__()
+        super().__init__()
         # network hyperparameter
         self.idim = idim
         self.odim = idim
         self.iter = args.iter
         self.tnum = args.tnum
         self.ignore_id = ignore_id
+        self.subsample = [1]
 
         # additive task
         self.embed_mem = args.embed_mem
@@ -74,8 +77,8 @@ class Net(nn.Module):
 
         if self.embed_mem:
             # clustering configuration
-            self.embed_dim_high = 1000
-            self.embed_dim_low = 50
+            self.embed_dim_high = args.embed_dim_high
+            self.embed_dim_low = args.embed_dim_low
             self.low_freq = 2
             self.embed_feat_high = torch.nn.Embedding(self.embed_dim_high, self.odim - self.low_freq)
             self.embed_feat_low = torch.nn.Embedding(self.embed_dim_low, self.low_freq)
@@ -160,7 +163,7 @@ class Net(nn.Module):
 
             seq_energy_mask = seq_energy_mask < self.e_th
             discontinuity = seq_energy_mask.float().mean()
-            if self.eval:
+            if not self.eval:
                 masks.append(seq_energy_mask)
 
         else:
@@ -209,5 +212,82 @@ class Net(nn.Module):
                                            num_classes=self.embed_dim_high).cpu().numpy()
             ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
                                            num_classes=self.embed_dim_low).cpu().numpy()
+        ret['out'] = self.buffs['out'][0].cpu().numpy()
+        return ret
+
+
+class NetTransform(Net):
+    def __init__(self, idim, odim, args, ignore_id=-1):
+        super().__init__(idim, odim, args, ignore_id)
+
+    def transform_training(self, x):
+        x_hat, ratio_enc, ratio_dec = self.transform_f(x)  # B, tnum, Tmax, odim
+
+        return x_hat, ratio_enc, ratio_dec
+
+    def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
+        # prepare data
+        xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
+        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
+        seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
+
+        # monitoring buffer
+        self.buffs = {'score_idx_h': [], 'score_idx_l': [], 'out': []}
+
+        # clustering
+        anchors = xs_pad_in.unsqueeze(1).repeat(1, self.tnum, 1, 1)  # B, tnum, Tmax, idim
+
+        # non-linearity network training
+        xs_pad_out_hat, ratio_enc, ratio_dec = self.transform_training(anchors)
+        if self.eval:
+            self.buffs['out'].append(xs_pad_out_hat)
+
+        # compute loss of total network
+        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
+        if self.brewing:
+            p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
+            p_hat = p_hat[0]
+
+            sign_pair = torch.matmul(torch.sign(anchors.view(-1, self.idim).unsqueeze(-1).detach()),
+                        torch.sign(xs_pad_out.view(-1, self.odim).unsqueeze(-2).detach()))
+            print(sign_pair.size(), p_hat[0].size())
+            exit()
+            w_hat_x = p_hat[0] * sign_pair
+            w_hat_x_p = torch.relu(w_hat_x)
+            w_hat_x_n = torch.relu(-w_hat_x)
+
+            seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
+            e_loss = seq_energy_mask.mean()
+
+            seq_energy_mask = seq_energy_mask < self.e_th
+            discontinuity = seq_energy_mask.float().mean()
+            if not self.eval:
+                masks.append(seq_energy_mask)
+
+        else:
+            e_loss = 0.0
+            discontinuity = 0.0
+
+        # compute loss and filtering
+        loss = self.criterion(xs_pad_out_hat.reshape(-1, self.idim),
+                              xs_pad_out.reshape(-1, self.idim),
+                              masks).mean()
+        if not torch.isnan(loss):
+            self.reporter.report(float(loss), float(e_loss), float(discontinuity))
+        else:
+            print("loss (=%f) is not c\orrect", float(loss))
+            logging.warning("loss (=%f) is not correct", float(loss))
+
+        return loss
+
+    def calculate_images(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
+        with torch.no_grad():
+            self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
+        ret = dict()
+        # if self.embed_mem:
+        #     ret['score_idx_h'] = F.one_hot(torch.stack(self.buffs['score_idx_h'], dim=1),
+        #                                    num_classes=self.embed_dim_high).cpu().numpy()
+        #     ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
+        #                                    num_classes=self.embed_dim_low).cpu().numpy()
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret
