@@ -71,8 +71,13 @@ class PlotImageReport(extension.Extension):
             for h, im in enumerate(img, 1):
                 plt.subplot(len(img), 1, h)
                 plt.imshow(im.T, aspect="auto")
-                plt.ylabel("feat_dim")
+                plt.ylabel("dim")
                 plt.xlabel("time")
+        elif len(img.shape) == 1:
+            plt.plot(img)
+            plt.xlabel("time")
+            plt.grid()
+            plt.autoscale(enable=True, axis='x', tight=True)
         else:
             plt.imshow(img.T, aspect="auto")
             plt.xlabel("index")

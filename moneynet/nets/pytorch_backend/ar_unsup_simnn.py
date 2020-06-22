@@ -76,14 +76,14 @@ class NetTransform(nn.Module):
 
         # inference part with action and selection
         self.transform_f = Inference(idim=idim, odim=idim, args=args)
-        if self.embed_mem:
-            # clustering configuration
-            self.embed_dim_high = args.embed_dim_high
-            self.embed_dim_low = args.embed_dim_low
-            self.low_freq = 2
-            self.embed_feat_high = torch.nn.Embedding(self.embed_dim_high, self.odim - self.low_freq)
-            self.embed_feat_low = torch.nn.Embedding(self.embed_dim_low, self.low_freq)
-            # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
+        # if self.embed_mem:
+        #     # clustering configuration
+        #     self.embed_dim_high = args.embed_dim_high
+        #     self.embed_dim_low = args.embed_dim_low
+        #     self.low_freq = 2
+        #     self.embed_feat_high = torch.nn.Embedding(self.embed_dim_high, self.odim - self.low_freq)
+        #     self.embed_feat_low = torch.nn.Embedding(self.embed_dim_low, self.low_freq)
+        #     # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -116,7 +116,7 @@ class NetTransform(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
         # monitoring buffer
-        self.buffs = {'score_idx_h': [], 'score_idx_l': [], 'out': []}
+        self.buffs = {'score_idx_h': [], 'score_idx_l': [], 'out': [], 'seq_energy': []}
 
         # clustering
         anchors = xs_pad_in.unsqueeze(1).repeat(1, self.tnum, 1, 1)  # B, tnum, Tmax, idim
@@ -150,39 +150,41 @@ class NetTransform(nn.Module):
 
                 seq_energy_mask = seq_energy_mask < self.e_th
                 discontinuity = seq_energy_mask.float().mean()
-                if not self.eval:
-                    masks.append(seq_energy_mask)
+                # if not self.eval:
+                #     masks.append(seq_energy_mask)
 
         else:
             e_loss = 0.0
             discontinuity = 0.0
 
-        # if self.embed_mem:
-        #     anchors = []
-        #     for _ in six.moves.range(self.iter):
-        #         anchor_h, score_idx_h, _ = self.clustering(xs_pad_in[..., :-self.low_freq], self.embed_feat_high)
-        #         anchor_l, score_idx_l, _ = self.clustering(xs_pad_in[..., -self.low_freq:], self.embed_feat_low)
-        #         anchor = torch.cat([anchor_h, anchor_l], dim=-1)
-        #         if self.iter != 1:
-        #             xs_pad_in = (xs_pad_in - anchor).detach()
-        #         anchors.append(anchor)
-        #         if self.eval:
-        #             self.buffs['score_idx_h'].append(score_idx_h)
-        #             self.buffs['score_idx_l'].append(score_idx_l)
-        #     anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1,
-        #                                                               1)  # B, iter, tnum, Tmax, idim
-        # else:
-        #     anchors = xs_pad_in.unsqueeze(1).unsqueeze(1).repeat(1, 1, self.tnum, 1, 1)
-
         # compute loss and filtering
-        loss = self.criterion(xs_pad_out_hat.reshape(-1, self.idim),
-                              xs_pad_out.reshape(-1, self.idim),
+        loss = self.criterion(xs_pad_out_hat.view(-1, self.idim),
+                              xs_pad_out.contiguous().view(-1, self.idim),
                               masks).mean()
         if not torch.isnan(loss) or not torch.isnan(e_loss):
             self.reporter.report(float(loss), float(e_loss), float(discontinuity))
         else:
             print("loss (=%f) is not c\orrect", float(loss))
             logging.warning("loss (=%f) is not correct", float(loss))
+
+        if self.embed_mem:
+            # anchors = []
+            # for _ in six.moves.range(self.iter):
+            #     anchor_h, score_idx_h, _ = self.clustering(xs_pad_in[..., :-self.low_freq], self.embed_feat_high)
+            #     anchor_l, score_idx_l, _ = self.clustering(xs_pad_in[..., -self.low_freq:], self.embed_feat_low)
+            #     anchor = torch.cat([anchor_h, anchor_l], dim=-1)
+            #     if self.iter != 1:
+            #         xs_pad_in = (xs_pad_in - anchor).detach()
+            #     anchors.append(anchor)
+            #     if self.eval:
+            #         self.buffs['score_idx_h'].append(score_idx_h)
+            #         self.buffs['score_idx_l'].append(score_idx_l)
+            # anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1,
+            #                                                           1)  # B, iter, tnum, Tmax, idim
+            bsz, tnsz, tsz, csz = anchors.size()
+
+            seq_energy_mask = seq_energy_mask.view(bsz, tnsz, tsz)
+            self.buffs['seq_energy'] = 1 - seq_energy_mask[:, 0, :].float()
 
         return loss
 
@@ -201,9 +203,11 @@ class NetTransform(nn.Module):
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
         ret = dict()
         if self.embed_mem:
-            ret['score_idx_h'] = F.one_hot(torch.stack(self.buffs['score_idx_h'], dim=1),
-                                           num_classes=self.embed_dim_high).cpu().numpy()
-            ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
-                                           num_classes=self.embed_dim_low).cpu().numpy()
+            ret['seq_energy'] = self.buffs['seq_energy'].cpu().numpy()
+        #     ret['score_idx_h'] = F.one_hot(torch.stack(self.buffs['score_idx_h'], dim=1),
+        #                                    num_classes=self.embed_dim_high).cpu().numpy()
+        #     ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
+        #                                    num_classes=self.embed_dim_low).cpu().numpy()
+
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret
