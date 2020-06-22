@@ -1,23 +1,23 @@
 # model name for training
-model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:Net"
+model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:NetTransform"
 
 # minibatch related
 accum-grad: 4
-batch-bins: 6000000
+batch-bins: 4000000
 
 # optimization related
 opt: adam
 grad-clip: 1
 lr: 0.001
+eth: 1.5
 
 # scheduling related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
 epochs: 40
 
 # model architecture
-tnum: 2
+tnum: 10
 iter: 1
-hdim: 512
-inference_type: linear
-embed_mem: 1
+hdim: 320
+embed_mem: 0
 brewing: 1

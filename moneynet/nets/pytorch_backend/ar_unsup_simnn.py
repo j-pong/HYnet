@@ -14,7 +14,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
-from moneynet.nets.pytorch_backend.unsup.inference import Inference, ConvInference
+from moneynet.nets.pytorch_backend.unsup.inference import Inference
 
 from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 
@@ -45,7 +45,6 @@ class NetTransform(nn.Module):
         # model related
         group.add_argument("--hdim", default=512, type=int)
         group.add_argument("--cdim", default=128, type=int)
-        group.add_argument("--inference_type", default='conv', type=str)
         group.add_argument("--embed_dim_high", default=1000, type=int)
         group.add_argument("--embed_dim_low", default=50, type=int)
 
@@ -75,6 +74,8 @@ class NetTransform(nn.Module):
         # reporter for monitoring
         self.reporter = Reporter()
 
+        # inference part with action and selection
+        self.transform_f = Inference(idim=idim, odim=idim, args=args)
         if self.embed_mem:
             # clustering configuration
             self.embed_dim_high = args.embed_dim_high
@@ -83,11 +84,6 @@ class NetTransform(nn.Module):
             self.embed_feat_high = torch.nn.Embedding(self.embed_dim_high, self.odim - self.low_freq)
             self.embed_feat_low = torch.nn.Embedding(self.embed_dim_low, self.low_freq)
             # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
-        # inference part with action and selection
-        if args.inference_type == 'linear':
-            self.transform_f = Inference(idim=idim, odim=idim, args=args)
-        elif args.inference_type == 'conv':
-            self.transform_f = ConvInference(idim=idim, odim=idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))

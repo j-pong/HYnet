@@ -18,13 +18,9 @@ class Inference(nn.Module):
         self.bias = args.bias
         self.encoder = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU()
         ])
         self.decoder = nn.ModuleList([
-            nn.Linear(self.hdim, self.hdim, bias=self.bias),
-            nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, self.odim, bias=self.bias)
@@ -97,37 +93,6 @@ class Inference(nn.Module):
         p_hat = self.brew_(self.decoder, ratios[1], p_hat[0], p_hat[1])
 
         return p_hat
-
-
-class ConvInference(nn.Module):
-    def __init__(self, idim, odim, args):
-        super().__init__()
-        # configuration
-        self.idim = idim
-        self.odim = odim
-
-        agg_layers = [(512, 2, 1), (512, 3, 1), (512, 4, 1), (512, 5, 1), (512, 6, 1), (512, 7, 1), (512, 8, 1),
-                      (512, 9, 1), (512, 10, 1), (512, 11, 1), (512, 12, 1), (512, 13, 1)]
-        self.encoder = ConvAggegator(
-            conv_layers=agg_layers,
-            embed=idim,
-            dropout=0.0,
-            skip_connections=True,
-            residual_scale=0.5,
-            non_affine_group_norm=False,
-            conv_bias=True,
-            zero_pad=False,
-            activation=nn.GELU(),
-        )
-        self.decoder = nn.Linear(512, odim * args.tnum)
-
-    def forward(self, x):
-        x = x.transpose(-2, -1)  # B, C, T
-        x = self.encoder(x)
-        x = x.transpose(-2, -1)  # B, T, C
-        x = self.decoder(x)
-        return x
-
 
 class ExcInference(Inference):
     def __init__(self, idim, odim, args):
