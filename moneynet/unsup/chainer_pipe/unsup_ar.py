@@ -314,7 +314,7 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad_in, xs_pad_out, ilens, ys_pad
+        return xs_pad_in[:,:,:-3], xs_pad_out[:,:,:,:-3], ilens, ys_pad
 
 
 def train(args):
