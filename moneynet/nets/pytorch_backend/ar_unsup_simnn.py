@@ -58,9 +58,11 @@ class NetTransform(nn.Module):
 
     def __init__(self, idim, odim, args, ignore_id=-1):
         super().__init__()
+        self.low_freq = 3
+
         # network hyperparameter
-        self.idim = idim
-        self.odim = idim
+        self.idim = idim - self.low_freq
+        self.odim = idim - self.low_freq
         self.iter = args.iter
         self.tnum = args.tnum
         self.ignore_id = ignore_id
@@ -75,7 +77,7 @@ class NetTransform(nn.Module):
         self.reporter = Reporter()
 
         # inference part with action and selection
-        self.transform_f = Inference(idim=idim, odim=idim, args=args)
+        self.transform_f = Inference(idim=self.idim, odim=self.idim, args=args)
         # if self.embed_mem:
         #     # clustering configuration
         #     self.embed_dim_high = args.embed_dim_high
@@ -111,12 +113,15 @@ class NetTransform(nn.Module):
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         # prepare data
-        xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
-        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
+        xs_pad_in = xs_pad_in[:, :max(ilens), :-self.low_freq]  # for data parallel
+        xs_pad_out = xs_pad_out[:, :max(ilens), :, :-self.low_freq].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
         # monitoring buffer
-        self.buffs = {'score_idx_h': [], 'score_idx_l': [], 'out': [], 'seq_energy': []}
+        self.buffs = {'score_idx_h': [],
+                      'score_idx_l': [],
+                      'out': [],
+                      'seq_energy': None}
 
         # clustering
         anchors = xs_pad_in.unsqueeze(1).repeat(1, self.tnum, 1, 1)  # B, tnum, Tmax, idim
@@ -150,8 +155,7 @@ class NetTransform(nn.Module):
 
                 seq_energy_mask = seq_energy_mask < self.e_th
                 discontinuity = seq_energy_mask.float().mean()
-                # if not self.eval:
-                #     masks.append(seq_energy_mask)
+                # masks.append(seq_energy_mask)
 
         else:
             e_loss = 0.0
@@ -181,10 +185,11 @@ class NetTransform(nn.Module):
             #         self.buffs['score_idx_l'].append(score_idx_l)
             # anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1,
             #                                                           1)  # B, iter, tnum, Tmax, idim
-            bsz, tnsz, tsz, csz = anchors.size()
+            with torch.no_grad():
+                bsz, tnsz, tsz, csz = anchors.size()
 
-            seq_energy_mask = seq_energy_mask.view(bsz, tnsz, tsz)
-            self.buffs['seq_energy'] = 1 - seq_energy_mask[:, 0, :].float()
+                seq_energy_mask = seq_energy_mask.view(bsz, tnsz, tsz)
+                self.buffs['seq_energy'] = seq_energy_mask # 1 - seq_energy_mask[:, 0, :].float()
 
         return loss
 
@@ -203,7 +208,8 @@ class NetTransform(nn.Module):
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
         ret = dict()
         if self.embed_mem:
-            ret['seq_energy'] = self.buffs['seq_energy'].cpu().numpy()
+            for i in range(self.tnum):
+                ret['seq_energy_{}'.format(i)] = self.buffs['seq_energy'][i].cpu().numpy()
         #     ret['score_idx_h'] = F.one_hot(torch.stack(self.buffs['score_idx_h'], dim=1),
         #                                    num_classes=self.embed_dim_high).cpu().numpy()
         #     ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
