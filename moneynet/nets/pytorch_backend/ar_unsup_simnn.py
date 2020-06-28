@@ -3,6 +3,8 @@
 import logging
 import six
 
+import numpy as np
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -17,6 +19,12 @@ from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
 from moneynet.nets.pytorch_backend.unsup.inference import Inference
 
 from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
+
+
+def gaussian_func(x, m=0.0, sigma=1.0):
+    norm = np.sqrt(2 * np.pi * sigma ** 2)
+    dist = (x - m) ** 2 / (2 * sigma ** 2)
+    return 1 / norm * np.exp(-dist)
 
 
 class Reporter(chainer.Chain):
@@ -53,6 +61,7 @@ class NetTransform(nn.Module):
         group.add_argument("--embed_mem", default=0, type=int)
         group.add_argument("--brewing", default=0, type=int)
         group.add_argument("--eth", default=0.7, type=float)
+        group.add_argument("--field_var", default=20.0, type=float)
 
         return parser
 
@@ -71,8 +80,10 @@ class NetTransform(nn.Module):
         self.brewing = args.brewing
         self.e_th = args.eth
 
-        # reporter for monitoring
-        self.reporter = Reporter()
+        self.field_var = args.field_var
+        space = np.linspace(0, self.idim - 1, self.idim)
+        self.field = np.expand_dims(
+            np.stack([gaussian_func(space, i, self.field_var) for i in range(self.idim)], axis=0), 0)
 
         # inference part with action and selection
         self.transform_f = Inference(idim=self.idim, odim=self.idim, args=args)
@@ -87,6 +98,9 @@ class NetTransform(nn.Module):
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
+
+        # reporter for monitoring
+        self.reporter = Reporter()
 
         # initialize parameter
         initialize(self)
@@ -135,20 +149,24 @@ class NetTransform(nn.Module):
             # brew deep neural network model
             with torch.no_grad():
                 p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
-                p_hat = p_hat[0]
+                w_hat = p_hat[0]
+                # b_hat = p_hat[1]
 
-                # relation with sign
-                sign_pair = torch.matmul(torch.sign(anchors.view(-1, self.idim).unsqueeze(-1)),
-                                         torch.sign(xs_pad_out.contiguous().view(-1, self.odim).unsqueeze(-2)))
-                w_hat_x = p_hat * sign_pair
+                seq_energy_mask = torch.pow(torch.abs(w_hat) - self.field_var, 2).mean(-1).mean(-1).unsqueeze(-1)
 
-                # pos-neg filtering with energy-based weight
-                w_hat_x_p = torch.relu(w_hat_x)
-                w_hat_x_n = torch.relu(-w_hat_x)
-
-                # get mask with ratio of positive and negative weight
-                seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
-                seq_energy_mask[torch.isnan(seq_energy_mask)] = 0.0
+                # # relation with sign
+                # sign_pair = torch.matmul(torch.sign(anchors.view(-1, self.idim).unsqueeze(-1)),
+                #                          torch.sign(xs_pad_out.contiguous().view(-1, self.odim).unsqueeze(
+                #                              -2) - b_hat.unsqueeze(-2)))
+                # w_hat_x = p_hat * sign_pair
+                #
+                # # pos-neg filtering with energy-based weight
+                # w_hat_x_p = torch.relu(w_hat_x)
+                # w_hat_x_n = torch.relu(-w_hat_x)
+                #
+                # # get mask with ratio of positive and negative weight
+                # seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
+                # seq_energy_mask[torch.isnan(seq_energy_mask)] = 0.0
                 e_loss = seq_energy_mask.mean()
 
                 discontinuity = (seq_energy_mask < self.e_th).float().mean()
@@ -184,7 +202,6 @@ class NetTransform(nn.Module):
             #                                                           1)  # B, iter, tnum, Tmax, idim
             bsz, tnsz, tsz, csz = anchors.size()
             self.buffs['seq_energy'] = seq_energy_mask.view(bsz, tnsz, tsz)  # 1 - seq_energy_mask[:, 0, :].float()
-
 
         return loss
 

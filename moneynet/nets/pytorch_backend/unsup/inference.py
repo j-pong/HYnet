@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from fairseq.models.wav2vec import ConvAggegator
+from fairseq.models.wav2vec import Wav2VecModel
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
@@ -18,7 +18,8 @@ class Inference(nn.Module):
         self.bias = args.bias
         self.encoder = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU()
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
@@ -83,8 +84,9 @@ class Inference(nn.Module):
         return w_hat, bias_hat
 
     def forward(self, x):
-        x, ratio_enc = self.forward_(x, module_list=self.encoder)
-        x, ratio_dec = self.forward_(x, module_list=self.decoder)
+        h, ratio_enc = self.forward_(x, module_list=self.encoder)
+        kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, T, T]
+        x, ratio_dec = self.forward_(h, module_list=self.decoder)
 
         return x, ratio_enc, ratio_dec
 
@@ -93,6 +95,7 @@ class Inference(nn.Module):
         p_hat = self.brew_(self.decoder, ratios[1], p_hat[0], p_hat[1])
 
         return p_hat
+
 
 class ExcInference(Inference):
     def __init__(self, idim, odim, args):

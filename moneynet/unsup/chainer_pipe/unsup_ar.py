@@ -636,7 +636,7 @@ def recog(args):
                 feat = (feat[0][0])
 
                 hyps = model.recognize(feat)
-                hyps = hyps.squeeze(1)
+                hyps = hyps.squeeze(0)
                 hyps = hyps.data.numpy()
 
                 write_mat(ark_file, hyps, key=name)
