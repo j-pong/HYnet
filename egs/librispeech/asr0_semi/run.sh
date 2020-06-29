@@ -1,1 +1,1 @@
-scripts/run_100h_fmllr_3gram.sh
+scripts/run_100h_fmllr_3gram_1gpu.sh

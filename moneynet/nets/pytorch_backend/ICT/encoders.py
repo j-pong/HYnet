@@ -1,5 +1,6 @@
 import logging
 import six
+from distutils.util import strtobool
 
 import numpy as np
 import torch
@@ -24,7 +25,7 @@ class RNNP(torch.nn.Module):
     :param str typ: The RNN type
     """
 
-    def __init__(self, idim, elayers, cdim, hdim, subsample, dropout, typ="blstm"):
+    def __init__(self, idim, elayers, cdim, hdim, subsample, dropout, bnorm, typ="blstm"):
         super(RNNP, self).__init__()
         bidir = typ[0] == "b"
         for i in six.moves.range(elayers):
@@ -46,12 +47,18 @@ class RNNP(torch.nn.Module):
             else:
                 setattr(self, "bt%d" % i, torch.nn.Linear(cdim, hdim))
 
+            # Layer Normalization
+            if bnorm:
+                setattr(self, "bn%d" % i, torch.nn.BatchNorm1d(hdim, momentum=0.05))
+
+
         self.elayers = elayers
         self.cdim = cdim
         self.subsample = subsample
         self.typ = typ
         self.bidir = bidir
         self.dropout = dropout
+        self.bnorm = bnorm
 
     def forward(self, xs_pad, ilens, prev_state=None):
         """RNNP forward
@@ -86,6 +93,9 @@ class RNNP(torch.nn.Module):
             xs_pad = projected.view(ys_pad.size(0), ys_pad.size(1), -1)
             if layer < self.elayers - 1:
                 xs_pad = torch.tanh(F.dropout(xs_pad, p=self.dropout))
+            if self.bnorm:
+                batch_norm = getattr(self, "bn%d" % layer)
+                xs_pad = batch_norm(xs_pad.permute(0,2,1)).permute(0,2,1)
 
         return xs_pad, ilens, elayer_states  # x: utt list of frame x dim
 
@@ -101,7 +111,7 @@ class RNN(torch.nn.Module):
     :param str typ: The RNN type
     """
 
-    def __init__(self, idim, elayers, cdim, hdim, dropout, typ="blstm"):
+    def __init__(self, idim, elayers, cdim, hdim, dropout, bnorm, typ="blstm"):
         super(RNN, self).__init__()
         bidir = typ[0] == "b"
         self.nbrnn = (
@@ -127,7 +137,13 @@ class RNN(torch.nn.Module):
             self.l_last = torch.nn.Linear(cdim * 2, hdim)
         else:
             self.l_last = torch.nn.Linear(cdim, hdim)
+
+        # Layer Normalization
+        if bnorm:
+            self.batch_norm = torch.nn.BatchNorm1d(hdim, momentum=0.05)
+
         self.typ = typ
+        self.bnorm = bnorm
 
     def forward(self, xs_pad, ilens, prev_state=None):
         """RNN forward
@@ -155,6 +171,8 @@ class RNN(torch.nn.Module):
             self.l_last(ys_pad.contiguous().view(-1, ys_pad.size(2)))
         )
         xs_pad = projected.view(ys_pad.size(0), ys_pad.size(1), -1)
+        if self.bnorm:
+            xs_pad = self.batch_norm(xs_pad.permute(0,2,1)).permute(0,2,1)
         return xs_pad, ilens, states  # x: utt list of frame x dim
 
 
@@ -247,7 +265,7 @@ class Encoder(torch.nn.Module):
     """
 
     def __init__(
-        self, etype, idim, odim, elayers, eunits, eprojs, subsample, dropout, in_channel=1
+        self, etype, idim, odim, elayers, eunits, eprojs, subsample, dropout, bnorm, in_channel=1
     ):
         super(Encoder, self).__init__()
         typ = etype.lstrip("vgg").rstrip("p")
@@ -289,12 +307,12 @@ class Encoder(torch.nn.Module):
         else:
             if etype[-1] == "p":
                 self.enc = torch.nn.ModuleList(
-                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, typ=typ)]
+                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, bnorm, typ=typ)]
                 )
                 logging.info(typ.upper() + " with every-layer projection for encoder")
             else:
                 self.enc = torch.nn.ModuleList(
-                    [RNN(idim, elayers, eunits, eprojs, dropout, typ=typ)]
+                    [RNN(idim, elayers, eunits, eprojs, dropout, bnorm, typ=typ)]
                 )
                 logging.info(typ.upper() + " without projection for encoder")
 
@@ -320,7 +338,7 @@ class Encoder(torch.nn.Module):
 
         # make mask to remove bias value in padded part
         mask = to_device(self, make_pad_mask(ilens).unsqueeze(-1))
-        xs_pad = self.poster(xs_pad.masked_fill(mask, 0.0))
+        xs_pad = self.poster(xs_pad)
 
         return xs_pad.masked_fill(mask, 0.0), ilens, current_states
 
@@ -348,6 +366,7 @@ def encoder_for(args, idim, odim, subsample):
             args.eprojs,
             subsample,
             args.dropout_rate,
+            args.bnorm,
         )
     elif num_encs >= 1:
         enc_list = torch.nn.ModuleList()
@@ -361,6 +380,7 @@ def encoder_for(args, idim, odim, subsample):
                 args.eprojs,
                 subsample[idx],
                 args.dropout_rate[idx],
+                args.bnorm[idx],
             )
             enc_list.append(enc)
         return enc_list
@@ -368,3 +388,4 @@ def encoder_for(args, idim, odim, subsample):
         raise ValueError(
             "Number of encoders needs to be more than one. {}".format(num_encs)
         )
+

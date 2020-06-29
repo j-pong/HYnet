@@ -11,6 +11,7 @@ backend=pytorch
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+ngpu_id=0,1,2,3
 nj=32
 debugmode=1
 dumpdir=dump   # directory to dump full features
@@ -22,6 +23,7 @@ unsup_resume=
 # feature configuration
 do_delta=false
 
+preprocess_unsup_config=conf/specaug.yaml
 train_unsup_config=conf/train_unsup.yaml
 
 preprocess_config=conf/specaug.yaml
@@ -158,8 +160,9 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Unsupervised Training"
     . ./path_fair.sh || exit 1;
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        KALDI_ROOT=${KALDI_ROOT} unsup_train.py \
+        KALDI_ROOT=${KALDI_ROOT} CUDA_VISIBLE_DEVICES=${ngpu_id} unsup_train.py \
         --config ${train_unsup_config} \
+        --preprocess-conf ${preprocess_unsup_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
         --outdir ${expdir}/results \

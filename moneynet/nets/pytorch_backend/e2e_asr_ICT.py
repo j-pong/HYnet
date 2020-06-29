@@ -35,6 +35,7 @@ from espnet.nets.pytorch_backend.nets_utils import to_device
 from espnet.nets.pytorch_backend.nets_utils import to_torch_tensor
 from espnet.nets.pytorch_backend.rnn.attentions import att_for
 from espnet.nets.scorers.ctc import CTCPrefixScorer
+from espnet.utils.cli_utils import strtobool
 
 from moneynet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
 from moneynet.nets.pytorch_backend.initialization import orthogonal_init_parameters
@@ -122,6 +123,9 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         group.add_argument(
             "--dropout-rate", default=None, type=float, help="dropout in rnn layers. use --dropout-rate if None is set"
+        )
+        group.add_argument(
+            "--bnorm", default=False, type=strtobool, help="boolean option to use batch normalization"
         )
         group.add_argument(
             "--subsample",
@@ -301,36 +305,39 @@ class E2E(ASRInterface, torch.nn.Module):
             self.stu_acc = th_accuracy(
                 ul_pred_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
             )
+            # empty used cuda variable
+            ul_pred_pad = None
         else:
             self.stu_acc = None
 
         # 1. Mixup feature
         if self.mixup_alpha > 0.0:
             hs_pad, ys_pad, ys_pad_b, _, lam = mixup_data(hs_pad, ys_pad, hlens, self.mixup_alpha, self.scheme)
-            ul_hs_pad_mixed, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha, self.scheme)
+            ul_hs_pad, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha,
+                                                                      self.scheme)
 
         # 2. RNN Encoder
-        pred_pad, hlens, _ = self.enc(hs_pad, hlens)
+        hs_pad, hlens, _ = self.enc(hs_pad, hlens)
+        ema_ul_hs_pad, ul_hlens, _ = self.ema_enc(ul_hs_pad, ul_hlens)
         if self.mixup_alpha > 0.0:
-            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad_mixed, ul_hlens)
+            ul_hs_pad, ul_hlens, _ = self.enc(ul_hs_pad, ul_hlens)
         else:
-            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad, ul_hlens)
-        ema_ul_pred_pad, ema_ul_hlens, _ = self.ema_enc(ul_hs_pad, ul_hlens)
+            ul_hs_pad, ul_hlens, _ = self.enc(ul_hs_pad, ul_hlens)
 
         # 3. post-processing layer for target dimension
-        pred_pad, ys_pad = self.match_pad(pred_pad, ys_pad)
+        hs_pad, ys_pad = self.match_pad(hs_pad, ys_pad)
         if self.mixup_alpha > 0.0:
-            pred_pad, ys_pad_b = self.match_pad(pred_pad, ys_pad_b)
-        ul_pred_pad, ul_ys_pad = self.match_pad(ul_pred_pad, ul_ys_pad)
-        ema_ul_pred_pad, ul_ys_pad = self.match_pad(ema_ul_pred_pad, ul_ys_pad)
+            hs_pad, ys_pad_b = self.match_pad(hs_pad, ys_pad_b)
+        ul_hs_pad, ul_ys_pad = self.match_pad(ul_hs_pad, ul_ys_pad)
+        ema_ul_hs_pad, ul_ys_pad = self.match_pad(ema_ul_hs_pad, ul_ys_pad)
 
         # 4. mixup ema model output
         # Calculate EMA model accuracy before mixup
         self.ema_acc = th_accuracy(
-            ema_ul_pred_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
+            ema_ul_hs_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
         )
         if self.mixup_alpha > 0.0:
-            ema_ul_pred_pad = mixup_logit(ema_ul_pred_pad, ul_hlens, ul_shuf_idx, ul_lam, self.scheme)
+            ema_ul_hs_pad = mixup_logit(ema_ul_hs_pad, ul_hlens, ul_shuf_idx, ul_lam, self.scheme)
 
         # 5. Supervised loss
         if LooseVersion(torch.__version__) < LooseVersion("1.0"):
@@ -339,13 +346,13 @@ class E2E(ASRInterface, torch.nn.Module):
             reduction_str = "mean"
         if self.mixup_alpha > 0.0:
             loss_ce_a = F.cross_entropy(
-                pred_pad.view(-1, self.odim),
+                hs_pad.view(-1, self.odim),
                 ys_pad.view(-1),
                 ignore_index=self.ignore_id,
                 reduction=reduction_str,
             )
             loss_ce_b = F.cross_entropy(
-                pred_pad.view(-1, self.odim),
+                hs_pad.view(-1, self.odim),
                 ys_pad_b.view(-1),
                 ignore_index=self.ignore_id,
                 reduction=reduction_str,
@@ -353,7 +360,7 @@ class E2E(ASRInterface, torch.nn.Module):
             self.loss_ce = lam * loss_ce_a + (1 - lam) * loss_ce_b
         else:
             self.loss_ce = F.cross_entropy(
-                pred_pad.view(-1, self.odim),
+                hs_pad.view(-1, self.odim),
                 ys_pad.view(-1),
                 ignore_index=self.ignore_id,
                 reduction=reduction_str,
@@ -361,8 +368,8 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # 6. Consistency loss
         self.loss_mse = F.mse_loss(
-            ul_pred_pad.view(-1, self.odim),
-            ema_ul_pred_pad.view(-1, self.odim),
+            ul_hs_pad.view(-1, self.odim),
+            ema_ul_hs_pad.view(-1, self.odim),
             reduction=reduction_str
         )
 

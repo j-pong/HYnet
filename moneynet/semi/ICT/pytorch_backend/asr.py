@@ -233,7 +233,7 @@ class CustomUpdater(StandardUpdater):
         self.forward_count = 0
         # compute the gradient norm to check if it is normal or not
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.grad_clip_threshold)
+            self.model.enc.parameters(), self.grad_clip_threshold)
         logging.info('grad norm={}'.format(grad_norm))
         if math.isnan(grad_norm):
             logging.warning('grad norm is nan. Do not update model.')
@@ -492,50 +492,24 @@ def train(args):
     # Setup an optimizer
     if args.opt == "adadelta":
         optimizer = torch.optim.Adadelta(
-            model.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
+            model.enc.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
         )
     elif args.opt == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay)
+        optimizer = torch.optim.Adam(model.enc.parameters(), weight_decay=args.weight_decay)
     elif args.opt == "noam":
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
         optimizer = get_std_opt(
-            model, args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model.enc, args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
     elif args.opt == "rmsprop":
-        optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
+        optimizer = torch.optim.RMSprop(model.enc.parameters(), lr=0.0008, alpha=0.95)
     elif args.opt == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=1, momentum=0.95, nesterov=True)
+        optimizer = torch.optim.SGD(model.enc.parameters(), lr=1, momentum=0.9, nesterov=True)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    # setup apex.amp
-    if args.train_dtype in ("O0", "O1", "O2", "O3"):
-        try:
-            from apex import amp
-        except ImportError as e:
-            logging.error(
-                f"You need to install apex for --train-dtype {args.train_dtype}. "
-                "See https://github.com/NVIDIA/apex#linux"
-            )
-            raise e
-        if args.opt == "noam":
-            model, optimizer.optimizer = amp.initialize(
-                model, optimizer.optimizer, opt_level=args.train_dtype
-            )
-        else:
-            model, optimizer = amp.initialize(
-                model, optimizer, opt_level=args.train_dtype
-            )
-        use_apex = True
-
-        from espnet.nets.pytorch_backend.ctc import CTC
-
-        amp.register_float_function(CTC, "loss_fn")
-        amp.init()
-        logging.warning("register ctc as float function")
-    else:
-        use_apex = False
+    use_apex = False
 
     # FIXME: TOO DIRTY HACK
     setattr(optimizer, "target", reporter)
@@ -786,14 +760,14 @@ def train(args):
                     model, args.outdir + "/model.acc.best", load_fn=torch_load
                 ),
                 trigger=CompareValueTrigger(
-                    "validation/main/teacher_acc",
+                    "validation/main/student_acc",
                     lambda best_value, current_value: best_value > current_value,
                 ),
             )
             trainer.extend(
                 adadelta_eps_decay(args.eps_decay),
                 trigger=CompareValueTrigger(
-                    "validation/main/teacher_acc",
+                    "validation/main/student_acc",
                     lambda best_value, current_value: best_value > current_value,
                 ),
             )
@@ -816,7 +790,7 @@ def train(args):
             )
 
     # lr decay in rmsprop
-    if args.opt == "rmsprop":
+    elif args.opt == "rmsprop" or "sgd":
         if args.criterion == "acc":
             trainer.extend(
                 restore_snapshot(

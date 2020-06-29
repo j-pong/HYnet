@@ -1,10 +1,11 @@
 PYTHON_VERSION := 3.7.3
 CUDA_VERSION := 10.2
 
+# Pytorch version for fairseq
 TH_VERSION := 1.5.0
 
 # Use a prebuild Kaldi to omit the installation
-KALDI :=
+KALDI := kaldi
 WGET := wget --tries=3
 
 # Both Miniconda2/3 can install any Python versions
@@ -27,11 +28,16 @@ kaldi.done:
 	touch kaldi.done
 else
 kaldi.done:
-	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi.git
-	cd kaldi/tools; extras/check_dependencies.sh;
-	cd kaldi/tools; make -j 8;
-	cd kaldi/tools; extras/install_irstlm.sh;
-	cd kaldi/src; ./configure --shared --use-cuda=no; make depend -j 8; make -j 8;
+	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi kaldi && \
+    cd kaldi/tools && \
+    extras/install_mkl.sh -s && \
+    extras/check_dependencies.sh && \
+    make -j 4 && \
+    extras/install_irstlm.sh && \
+    cd ../src/ && \
+    ./configure && \
+    make depend -j 4 && \
+    make -j 4
 	touch kaldi.done
 endif
 
@@ -47,19 +53,24 @@ venv: miniconda.sh
 	. venv/bin/activate && conda info -a
 
 espnet.done: venv
-	rm -rf espnet
 	git clone https://github.com/espnet/espnet
-	cd espnet/tools && make KALDI=../../${KALDI}
+	cd espnet/tools && make KALDI=../../${KALDI} kaldi.done && \
+	make venv && \
+	make espnet.done && \
+	make warp-ctc.done
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
+	# import moneynet to espnet venv
+	cd espnet/tools && . venv/bin/activate && pip install -e ../../..
 	touch espnet.done
 
 fairseq.done: espnet.done
 	rm -rf fairseq
 	git clone https://github.com/pytorch/fairseq
-	cd fairseq && . ../venv/bin/activate && pip install -e .
+	cd fairseq && . ../venv/bin/activate && pip uninstall -y typing && pip install -e .
 	touch fairseq.done
 
 moneynet.done: espnet.done
 	. venv/bin/activate && pip install -e ..
+	. espnet/tools/venv/bin/activate && pip install -e ..
 	touch moneynet.done
