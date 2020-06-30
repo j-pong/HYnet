@@ -61,7 +61,7 @@ class NetTransform(nn.Module):
         group.add_argument("--embed_mem", default=0, type=int)
         group.add_argument("--brewing", default=0, type=int)
         group.add_argument("--eth", default=0.7, type=float)
-        group.add_argument("--field_var", default=20.0, type=float)
+        group.add_argument("--field_var", default=13.0, type=float)
 
         return parser
 
@@ -84,17 +84,10 @@ class NetTransform(nn.Module):
         space = np.linspace(0, self.idim - 1, self.idim)
         self.field = np.expand_dims(
             np.stack([gaussian_func(space, i, self.field_var) for i in range(self.idim)], axis=0), 0)
+        self.field = torch.from_numpy(self.field / np.amax(self.field))
 
         # inference part with action and selection
         self.transform_f = Inference(idim=self.idim, odim=self.idim, args=args)
-        # if self.embed_mem:
-        #     # clustering configuration
-        #     self.embed_dim_high = args.embed_dim_high
-        #     self.embed_dim_low = args.embed_dim_low
-        #     self.low_freq = 2
-        #     self.embed_feat_high = torch.nn.Embedding(self.embed_dim_high, self.odim - self.low_freq)
-        #     self.embed_feat_low = torch.nn.Embedding(self.embed_dim_low, self.low_freq)
-        #     # self.embed_w = torch.nn.Embedding(self.embed_dim, self.idim * self.odim)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -133,15 +126,15 @@ class NetTransform(nn.Module):
         self.buffs = {'score_idx_h': [],
                       'score_idx_l': [],
                       'out': [],
-                      'seq_energy': None}
-
-        # clustering
-        anchors = xs_pad_in.unsqueeze(1).repeat(1, self.tnum, 1, 1)  # B, tnum, Tmax, idim
+                      'seq_energy': None,
+                      'kernel': None}
 
         # non-linearity network training
-        xs_pad_out_hat, ratio_enc, ratio_dec = self.transform_f(anchors)
+        xs_pad_out_hat, h, ratio_enc, ratio_dec, kernel = self.transform_f(xs_pad_in.unsqueeze(1))  # B, 1, Tmax, idim
+
         if self.eval:
             self.buffs['out'].append(xs_pad_out_hat)
+            self.buffs['kernel'] = kernel
 
         # compute loss of total network
         masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
@@ -150,23 +143,27 @@ class NetTransform(nn.Module):
             with torch.no_grad():
                 p_hat = self.transform_f.brew([ratio_enc, ratio_dec])
                 w_hat = p_hat[0]
-                # b_hat = p_hat[1]
+                b_hat = p_hat[1]
 
-                seq_energy_mask = torch.pow(torch.abs(w_hat) - self.field_var, 2).mean(-1).mean(-1).unsqueeze(-1)
+                # calculate movement of each node
+                move_flow = (torch.abs(w_hat) * (1 - self.field.to(w_hat.device))).mean(-1).mean(-1).unsqueeze(-1)
 
-                # # relation with sign
-                # sign_pair = torch.matmul(torch.sign(anchors.view(-1, self.idim).unsqueeze(-1)),
-                #                          torch.sign(xs_pad_out.contiguous().view(-1, self.odim).unsqueeze(
-                #                              -2) - b_hat.unsqueeze(-2)))
-                # w_hat_x = p_hat * sign_pair
-                #
-                # # pos-neg filtering with energy-based weight
-                # w_hat_x_p = torch.relu(w_hat_x)
-                # w_hat_x_n = torch.relu(-w_hat_x)
-                #
-                # # get mask with ratio of positive and negative weight
-                # seq_energy_mask = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
-                # seq_energy_mask[torch.isnan(seq_energy_mask)] = 0.0
+                # relation with sign
+                sign_pair = torch.matmul(torch.sign(h.view(-1, self.hdim).unsqueeze(-1)),
+                                         torch.sign(xs_pad_out.contiguous().view(-1, self.odim).unsqueeze(
+                                             -2) - b_hat.unsqueeze(-2)))
+                w_hat_x = w_hat * sign_pair
+                w_hat_x_p = torch.relu(w_hat_x)
+                w_hat_x_n = torch.relu(-w_hat_x)
+                time_flow = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
+                time_flow[torch.isnan(time_flow)] = 0.0
+
+                seq_energy_mask = move_flow / (torch.abs(time_flow - 1.0) + 1e-6) * torch.abs(
+                    h.view(-1, self.hdim)).mean(-1).unsqueeze(-1)
+                seq_energy_mask = torch.clamp(seq_energy_mask, 0.0, 0.5)
+                # seq_energy_mask = torch.log(seq_energy_mask + 1e-6)
+                # seq_energy_mask[torch.isinf(seq_energy_mask)] = 10.0
+
                 e_loss = seq_energy_mask.mean()
 
                 discontinuity = (seq_energy_mask < self.e_th).float().mean()
@@ -187,21 +184,9 @@ class NetTransform(nn.Module):
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if self.embed_mem:
-            # anchors = []
-            # for _ in six.moves.range(self.iter):
-            #     anchor_h, score_idx_h, _ = self.clustering(xs_pad_in[..., :-self.low_freq], self.embed_feat_high)
-            #     anchor_l, score_idx_l, _ = self.clustering(xs_pad_in[..., -self.low_freq:], self.embed_feat_low)
-            #     anchor = torch.cat([anchor_h, anchor_l], dim=-1)
-            #     if self.iter != 1:
-            #         xs_pad_in = (xs_pad_in - anchor).detach()
-            #     anchors.append(anchor)
-            #     if self.eval:
-            #         self.buffs['score_idx_h'].append(score_idx_h)
-            #         self.buffs['score_idx_l'].append(score_idx_l)
-            # anchors = torch.stack(anchors, dim=1).unsqueeze(1).repeat(1, 1, self.tnum, 1,
-            #                                                           1)  # B, iter, tnum, Tmax, idim
             bsz, tnsz, tsz, csz = anchors.size()
-            self.buffs['seq_energy'] = seq_energy_mask.view(bsz, tnsz, tsz)  # 1 - seq_energy_mask[:, 0, :].float()
+            self.buffs['seq_energy'] = seq_energy_mask.view(bsz, tnsz, tsz)[:, :,
+                                       :400]  # 1 - seq_energy_mask[:, 0, :].float()
 
         return loss
 
@@ -218,14 +203,13 @@ class NetTransform(nn.Module):
     def calculate_images(self, xs_pad_in, xs_pad_out, ilens, ys_pad):
         with torch.no_grad():
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad)
+
         ret = dict()
+
+        ret['kernel'] = self.buffs['kernel'].cpu().numpy()
         if self.embed_mem:
             for i in range(self.tnum):
                 ret['seq_energy_{}'.format(i)] = self.buffs['seq_energy'][:, i, :].cpu().numpy()
-        #     ret['score_idx_h'] = F.one_hot(torch.stack(self.buffs['score_idx_h'], dim=1),
-        #                                    num_classes=self.embed_dim_high).cpu().numpy()
-        #     ret['score_idx_l'] = F.one_hot(torch.stack(self.buffs['score_idx_l'], dim=1),
-        #                                    num_classes=self.embed_dim_low).cpu().numpy()
 
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         return ret

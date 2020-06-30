@@ -24,6 +24,8 @@ class Inference(nn.Module):
         self.decoder = nn.ModuleList([
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
             nn.Linear(self.hdim, self.odim, bias=self.bias)
         ])
 
@@ -85,10 +87,13 @@ class Inference(nn.Module):
 
     def forward(self, x):
         h, ratio_enc = self.forward_(x, module_list=self.encoder)
+
         kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, T, T]
+        h = h.repeat(1, self.tnum, 1, 1)
+
         x, ratio_dec = self.forward_(h, module_list=self.decoder)
 
-        return x, ratio_enc, ratio_dec
+        return x, h, ratio_enc, ratio_dec, kernel
 
     def brew(self, ratios):
         p_hat = self.brew_(self.encoder, ratios[0])
