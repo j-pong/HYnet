@@ -52,7 +52,7 @@ class PlotImageReport(extension.Extension):
                     key
                 )
                 if key == 'out':
-                    img = np.concatenate([batch[1][idx].transpose(0, 1).cpu().numpy()[0:1], img], axis=0)
+                    img = np.concatenate([batch[1][idx].transpose(0, 1).cpu().numpy()[0:1], img[0:1]], axis=0)
                 self._plot_and_save_image(img, filename.format(trainer))
 
     def get_ret(self):

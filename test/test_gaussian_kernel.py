@@ -12,7 +12,7 @@ if __name__ == '__main__':
 
     dim = 83
     x = np.linspace(0, 511, 512)
-    kernel = np.stack([gaussian_func(x, i, 13.0) for i in range(dim)], axis=0)
+    kernel = np.stack([gaussian_func(x, int(i * 512/83), 13.0) for i in range(dim)], axis=0)
     kernel = kernel / np.amax(kernel)
 
     u_k = np.expand_dims(kernel, 0)
