@@ -11,7 +11,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
     dim = 83
-    x = np.linspace(0, 82, 83)
+    x = np.linspace(0, 511, 512)
     kernel = np.stack([gaussian_func(x, i, 13.0) for i in range(dim)], axis=0)
     kernel = kernel / np.amax(kernel)
 

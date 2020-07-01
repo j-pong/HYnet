@@ -13,7 +13,7 @@ class Inference(nn.Module):
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
-        self.cdim = args.cdim
+        self.tnum = args.tnum
 
         self.bias = args.bias
         self.encoder = nn.ModuleList([
@@ -31,9 +31,8 @@ class Inference(nn.Module):
 
     @staticmethod
     def calculate_ratio(x, x_base):
-        with torch.no_grad():
-            rat = x / x_base
-            rat[torch.isnan(rat)] = 0.0
+        rat = x / x_base
+        rat[torch.isnan(rat)] = 0.0
 
         return rat
 
@@ -85,21 +84,10 @@ class Inference(nn.Module):
 
         return w_hat, bias_hat
 
-    def forward(self, x):
-        h, ratio_enc = self.forward_(x, module_list=self.encoder)
+    def forward(self, x, module_list):
+        x, ratio = self.forward_(x, module_list=module_list)
 
-        kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, T, T]
-        h = h.repeat(1, self.tnum, 1, 1)
-
-        x, ratio_dec = self.forward_(h, module_list=self.decoder)
-
-        return x, h, ratio_enc, ratio_dec, kernel
-
-    def brew(self, ratios):
-        p_hat = self.brew_(self.encoder, ratios[0])
-        p_hat = self.brew_(self.decoder, ratios[1], p_hat[0], p_hat[1])
-
-        return p_hat
+        return x, ratio
 
 
 class ExcInference(Inference):
