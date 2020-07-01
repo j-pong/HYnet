@@ -135,9 +135,7 @@ class NetTransform(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
         # monitoring buffer
-        self.buffs = {'score_idx_h': [],
-                      'score_idx_l': [],
-                      'out': [],
+        self.buffs = {'out': [],
                       'seq_energy': None,
                       'kernel': None}
 
