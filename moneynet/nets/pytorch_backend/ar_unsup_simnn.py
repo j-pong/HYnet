@@ -97,7 +97,9 @@ class NetTransform(nn.Module):
         denom = p.size(dim) - 1
         return torch.sum(numer, dim=-1) / denom
 
-    def calculate_energy(self, start_state, end_state, func, ratio):
+    def calculate_energy(self, start_state, end_state, func, ratio, flows={'s': None,
+                                                                           't': None,
+                                                                           'e': None}):
         with torch.no_grad():
             # prepare data
             p_hat = self.engine.brew_(module_list=func, ratio=ratio)
@@ -122,11 +124,21 @@ class NetTransform(nn.Module):
             time_flow[torch.isnan(time_flow)] = 0.0
 
             # calculate energy
-            seq_energy_mask = move_flow / (torch.abs(time_flow - 1.0) + 1e-6) * \
-                              torch.abs(start_state).mean(-1).unsqueeze(-1)
+            mass = torch.abs(start_state).mean(-1).unsqueeze(-1)
+            seq_energy_mask = move_flow / (torch.abs(time_flow - 1.0) + 1e-6) * mass
             seq_energy_mask = torch.clamp(seq_energy_mask, 0.0, 0.5)
 
-            return seq_energy_mask.view(bsz, tnsz, tsz)
+            for key in flows.keys():
+                if key == 's':
+                    flows[key] = move_flow
+                elif key == 't':
+                    flows[key] = time_flow
+                elif key == 'e':
+                    flows[key] = seq_energy_mask.view(bsz, tnsz, tsz)
+                else:
+                    raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
+
+            return flows
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # prepare data
@@ -140,9 +152,14 @@ class NetTransform(nn.Module):
                       'kernel': None}
 
         masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
-        # non-linearity network training
-        h, _ = self.engine(xs_pad_in.unsqueeze(1), self.engine.encoder)  # B, 1, Tmax, idim -> B, tnum, Tmax, idim
-        kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, T, T]
+
+        # embedding task
+        h, ratio = self.engine(xs_pad_in.unsqueeze(1), self.engine.encoder)  # B, 1, Tmax, idim
+        kernel = torch.matmul(h, h.transpose(-2, -1))  # B, T, T
+        # make hidden space to energy reservation space
+        loss_h = torch.pow(torch.mean(torch.abs(h)) - torch.mean(torch.abs(xs_pad_in)), 2)
+
+        # long time prediction task
         h = h.repeat(1, self.tnum, 1, 1)
         xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
 
@@ -152,25 +169,27 @@ class NetTransform(nn.Module):
 
         # compute loss of total network
         if self.brewing:
-            seq_energy_mask = self.calculate_energy(start_state=h, end_state=xs_pad_out.contiguous(),
-                                                    func=self.engine.decoder, ratio=ratio)
+            flows = self.calculate_energy(start_state=h, end_state=xs_pad_out.contiguous(),
+                                          func=self.engine.decoder,
+                                          ratio=ratio,
+                                          flows={'e': None})  # B, Tmax, 1
+            seq_energy_mask = flows['e']
 
-            e_loss = seq_energy_mask.mean()
+            loss_e = seq_energy_mask.mean()
             discontinuity = 0.0
 
             if buffering:
                 self.buffs['seq_energy'] = seq_energy_mask[:, :, :400]
 
         else:
-            e_loss = 0.0
+            loss_e = 0.0
             discontinuity = 0.0
 
-        # compute loss and filtering
         loss = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                               xs_pad_out.contiguous().view(-1, self.idim),
-                              masks).mean()
-        if not torch.isnan(loss) or not torch.isnan(e_loss):
-            self.reporter.report(float(loss), float(e_loss), float(discontinuity))
+                              masks).mean() + loss_h
+        if not torch.isnan(loss) or not torch.isnan(loss_e):
+            self.reporter.report(float(loss), float(loss_e), float(discontinuity))
         else:
             print("loss (=%f) is not c\orrect", float(loss))
             logging.warning("loss (=%f) is not correct", float(loss))

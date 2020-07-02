@@ -140,8 +140,8 @@ class ExcInference(Inference):
 
     def forward(self, x, mask_prev=None):
         x, _ = pad_for_shift(key=x, pad=self.input_extra,
-                             window=self.input_extra + self.idim)  # (B, Tmax, *, idim)
-        h = self.encoder(x)  # (B, Tmax, *, hdim)
+                             window=self.input_extra + self.idim)  # B, Tmax, *, idim
+        h = self.encoder(x)  # B, Tmax, *, hdim
         # max pooling along shift size
         h, h_ind = self.energy_pooling(h)
         if mask_prev is not None:
