@@ -125,20 +125,20 @@ class NetTransform(nn.Module):
 
             # calculate energy
             mass = torch.abs(start_state).mean(-1).unsqueeze(-1)
-            seq_energy_mask = move_flow / (torch.abs(time_flow - 1.0) + 1e-6) * mass
+            seq_energy_mask = move_flow / torch.abs(time_flow - 2.0) * mass
             seq_energy_mask = torch.clamp(seq_energy_mask, 0.0, 0.5)
 
             for key in flows.keys():
                 if key == 's':
-                    flows[key] = move_flow
+                    flows[key] = move_flow.view(bsz, tnsz, tsz)
                 elif key == 't':
-                    flows[key] = time_flow
+                    flows[key] = time_flow.view(bsz, tnsz, tsz)
                 elif key == 'e':
                     flows[key] = seq_energy_mask.view(bsz, tnsz, tsz)
                 else:
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 
-            return flows
+        return flows
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # prepare data
@@ -156,8 +156,6 @@ class NetTransform(nn.Module):
         # embedding task
         h, ratio = self.engine(xs_pad_in.unsqueeze(1), self.engine.encoder)  # B, 1, Tmax, idim
         kernel = torch.matmul(h, h.transpose(-2, -1))  # B, T, T
-        # make hidden space to energy reservation space
-        loss_h = torch.pow(torch.mean(torch.abs(h)) - torch.mean(torch.abs(xs_pad_in)), 2)
 
         # long time prediction task
         h = h.repeat(1, self.tnum, 1, 1)
@@ -174,13 +172,11 @@ class NetTransform(nn.Module):
                                           ratio=ratio,
                                           flows={'e': None})  # B, Tmax, 1
             seq_energy_mask = flows['e']
-
-            loss_e = seq_energy_mask.mean()
-            discontinuity = 0.0
-
             if buffering:
                 self.buffs['seq_energy'] = seq_energy_mask[:, :, :400]
 
+            loss_e = seq_energy_mask.mean()
+            discontinuity = 0.0
         else:
             loss_e = 0.0
             discontinuity = 0.0
