@@ -30,11 +30,10 @@ def gaussian_func(x, m=0.0, sigma=1.0):
 class Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
 
-    def report(self, loss, e_loss, discontinuity):
+    def report(self, buffs):
         """Report at every step."""
-        reporter.report({"loss": loss}, self)
-        reporter.report({"e_loss": e_loss}, self)
-        reporter.report({"discontinuity": discontinuity}, self)
+        for buff_key in buffs.keys():
+            reporter.report({buff_key: buffs[buff_key]}, self)
 
 
 class NetTransform(nn.Module):
@@ -89,14 +88,6 @@ class NetTransform(nn.Module):
         # initialize parameter
         initialize(self)
 
-    @staticmethod
-    def max_variance(p, dim=-1):
-        mean = torch.max(p, dim=dim, keepdim=True)[0]  # (B, T, 1)
-        # get normalized confidence
-        numer = (mean - p).pow(2)
-        denom = p.size(dim) - 1
-        return torch.sum(numer, dim=-1) / denom
-
     def calculate_energy(self, start_state, end_state, func, ratio, flows={'s': None,
                                                                            't': None,
                                                                            'e': None}):
@@ -111,22 +102,22 @@ class NetTransform(nn.Module):
             start_state = start_state.view(-1, start_dim)
             end_state = end_state.view(-1, end_dim) - b_hat
 
-            # calculate movement of each node
+            # calculate movement of each node : transition state for field
             move_flow = (torch.abs(w_hat) * (1 - self.field.to(w_hat.device))).mean(-1).mean(-1).unsqueeze(-1)
 
-            # relation with sign
+            # relation with sign : how much state change in amplitude space
             sign_pair = torch.matmul(torch.sign(start_state.unsqueeze(-1)),
                                      torch.sign(end_state.unsqueeze(-2)))
             w_hat_x = w_hat * sign_pair
             w_hat_x_p = torch.relu(w_hat_x)
             w_hat_x_n = torch.relu(-w_hat_x)
             time_flow = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
-            time_flow[torch.isnan(time_flow)] = 0.0
+            time_flow[torch.isnan(time_flow)] = 0.0  # if time flow is high, the quntity is low confidnece
 
             # calculate energy
             mass = torch.abs(start_state).mean(-1).unsqueeze(-1)
-            seq_energy_mask = move_flow / torch.abs(time_flow - 2.0) * mass
-            seq_energy_mask = torch.clamp(seq_energy_mask, 0.0, 0.5)
+            seq_energy_mask = move_flow / (torch.abs(time_flow - 1.0)) * mass
+            seq_energy_mask = torch.clamp(seq_energy_mask, 0.0, 10)
 
             for key in flows.keys():
                 if key == 's':
@@ -142,7 +133,7 @@ class NetTransform(nn.Module):
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # prepare data
-        xs_pad_in = xs_pad_in[:, :max(ilens)]  # for data parallel
+        xs_pad_in = xs_pad_in[:, :max(ilens)].unsqueeze(1)  # for data parallel
         xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
@@ -154,13 +145,30 @@ class NetTransform(nn.Module):
         masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
 
         # embedding task
-        h, ratio = self.engine(xs_pad_in.unsqueeze(1), self.engine.encoder)  # B, 1, Tmax, idim
+        h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
+        m_h = torch.mean(h, dim=-1, keepdim=True)
+        v_h = torch.mean(torch.pow(h - m_h, 2), dim=-1, keepdim=True)
+        h = (h - m_h) / v_h
+        m_h = torch.mean(xs_pad_in, dim=-1, keepdim=True)
+        v_h = torch.mean(torch.pow(xs_pad_in - m_h, 2), dim=-1, keepdim=True)
+        h = h * v_h + m_h
+
+        if self.brewing:
+            flows = self.calculate_energy(start_state=xs_pad_in.unsqueeze(1).contiguous(), end_state=h,
+                                          func=self.engine.encoder,
+                                          ratio=ratio,
+                                          flows={'e': None})  # B, Tmax, 1
+            seq_energy_mask = flows['e']
+            if buffering:
+                self.buffs['seq_energy_enc'] = seq_energy_mask[:, :, :400]
+
+
+        # evaluate hidden space similarity
         kernel = torch.matmul(h, h.transpose(-2, -1))  # B, T, T
 
         # long time prediction task
         h = h.repeat(1, self.tnum, 1, 1)
         xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
-
         if buffering:
             self.buffs['out'].append(xs_pad_out_hat)
             self.buffs['kernel'] = kernel
@@ -173,7 +181,7 @@ class NetTransform(nn.Module):
                                           flows={'e': None})  # B, Tmax, 1
             seq_energy_mask = flows['e']
             if buffering:
-                self.buffs['seq_energy'] = seq_energy_mask[:, :, :400]
+                self.buffs['seq_energy_dec'] = seq_energy_mask[:, :, :400]
 
             loss_e = seq_energy_mask.mean()
             discontinuity = 0.0
@@ -183,9 +191,12 @@ class NetTransform(nn.Module):
 
         loss = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                               xs_pad_out.contiguous().view(-1, self.idim),
-                              masks).mean() + loss_h
+                              masks).mean()
         if not torch.isnan(loss) or not torch.isnan(loss_e):
-            self.reporter.report(float(loss), float(loss_e), float(discontinuity))
+
+            self.reporter.report({'loss':float(loss),
+                                  'e_loss':float(loss_e),
+                                  'discontinuity':float(discontinuity)})
         else:
             print("loss (=%f) is not c\orrect", float(loss))
             logging.warning("loss (=%f) is not correct", float(loss))
@@ -197,6 +208,10 @@ class NetTransform(nn.Module):
         x = torch.as_tensor(x).unsqueeze(0)
 
         return x
+
+    """
+    Evaluation related
+    """
 
     @property
     def images_plot_class(self):
@@ -211,5 +226,6 @@ class NetTransform(nn.Module):
         ret['kernel'] = self.buffs['kernel'].cpu().numpy()
         ret['out'] = self.buffs['out'][0].cpu().numpy()
         if self.brewing:
-            ret['seq_energy_{}'.format(0)] = self.buffs['seq_energy'][:, 0, :].cpu().numpy()
+            ret['seq_energy_enc'] = self.buffs['seq_energy_enc'][:, 0, :].cpu().numpy()
+            ret['seq_energy_dec'] = self.buffs['seq_energy_dec'][:, 0, :].cpu().numpy()
         return ret
