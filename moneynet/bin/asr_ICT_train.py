@@ -118,6 +118,18 @@ def get_parser(parser=None, required=True):
         help="Filename of train label data (json)",
     )
     parser.add_argument(
+        "--label-train-json",
+        type=str,
+        default=None,
+        help="Filename of train label data (json)",
+    )
+    parser.add_argument(
+        "--unlabel-train-json",
+        type=str,
+        default=None,
+        help="Filename of train unlabel data (json)",
+    )
+    parser.add_argument(
         "--valid-json",
         type=str,
         default=None,

@@ -35,6 +35,7 @@ from espnet.nets.pytorch_backend.nets_utils import to_device
 from espnet.nets.pytorch_backend.nets_utils import to_torch_tensor
 from espnet.nets.pytorch_backend.rnn.attentions import att_for
 from espnet.nets.scorers.ctc import CTCPrefixScorer
+from espnet.utils.cli_utils import strtobool
 
 from moneynet.nets.pytorch_backend.initialization import lecun_normal_init_parameters
 from moneynet.nets.pytorch_backend.initialization import orthogonal_init_parameters
@@ -122,6 +123,9 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         group.add_argument(
             "--dropout-rate", default=None, type=float, help="dropout in rnn layers. use --dropout-rate if None is set"
+        )
+        group.add_argument(
+            "--bnorm", default=False, type=strtobool, help="boolean option to use batch normalization"
         )
         group.add_argument(
             "--subsample",
@@ -284,68 +288,41 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: loss value
         :rtype: torch.Tensor
         """
+
+        # Forward for cross entropy loss
         # 0. Frontend
         if self.frontend is not None:
             hs_pad, hlens, mask = self.frontend(to_torch_tensor(xs_pad), ilens)
             hs_pad, hlens = self.feature_transform(hs_pad, hlens)
-            ul_hs_pad, ul_hlens, ul_mask = self.frontend(to_torch_tensor(ul_xs_pad), ul_ilens)
-            ul_hs_pad, ul_hlens = self.feature_transform(ul_hs_pad, ul_hlens)
         else:
-            hs_pad, hlens, ul_hs_pad, ul_hlens = xs_pad, ilens, ul_xs_pad, ul_ilens
-
-        # Calculating student model accuracy consumes twice the time.
-        # Recommend to keep show-student-model-acc argument False
-        if self.show_student_model_acc:
-            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad, ul_hlens)
-            ul_pred_pad, ul_ys_pad = self.match_pad(ul_pred_pad, ul_ys_pad)
-            self.stu_acc = th_accuracy(
-                ul_pred_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
-            )
-        else:
-            self.stu_acc = None
+            hs_pad, hlens = xs_pad, ilens
 
         # 1. Mixup feature
         if self.mixup_alpha > 0.0:
             hs_pad, ys_pad, ys_pad_b, _, lam = mixup_data(hs_pad, ys_pad, hlens, self.mixup_alpha, self.scheme)
-            ul_hs_pad_mixed, ul_ys_pad, _, ul_shuf_idx, ul_lam = mixup_data(ul_hs_pad, ul_ys_pad, ul_hlens, self.mixup_alpha, self.scheme)
 
         # 2. RNN Encoder
-        pred_pad, hlens, _ = self.enc(hs_pad, hlens)
-        if self.mixup_alpha > 0.0:
-            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad_mixed, ul_hlens)
-        else:
-            ul_pred_pad, ul_hlens, _ = self.enc(ul_hs_pad, ul_hlens)
-        ema_ul_pred_pad, ema_ul_hlens, _ = self.ema_enc(ul_hs_pad, ul_hlens)
+        hs_pad, hlens, _ = self.enc(hs_pad, hlens)
 
         # 3. post-processing layer for target dimension
-        pred_pad, ys_pad = self.match_pad(pred_pad, ys_pad)
+        hs_pad, ys_pad = self.match_pad(hs_pad, ys_pad)
         if self.mixup_alpha > 0.0:
-            pred_pad, ys_pad_b = self.match_pad(pred_pad, ys_pad_b)
-        ul_pred_pad, ul_ys_pad = self.match_pad(ul_pred_pad, ul_ys_pad)
-        ema_ul_pred_pad, ul_ys_pad = self.match_pad(ema_ul_pred_pad, ul_ys_pad)
+            hs_pad, ys_pad_b = self.match_pad(hs_pad, ys_pad_b)
 
-        # 4. mixup ema model output
-        # Calculate EMA model accuracy before mixup
-        self.ema_acc = th_accuracy(
-            ema_ul_pred_pad.view(-1, self.odim), ul_ys_pad, ignore_label=self.ignore_id
-        )
-        if self.mixup_alpha > 0.0:
-            ema_ul_pred_pad = mixup_logit(ema_ul_pred_pad, ul_hlens, ul_shuf_idx, ul_lam, self.scheme)
-
-        # 5. Supervised loss
+        # 4. Supervised loss
         if LooseVersion(torch.__version__) < LooseVersion("1.0"):
             reduction_str = "elementwise_mean"
         else:
             reduction_str = "mean"
         if self.mixup_alpha > 0.0:
             loss_ce_a = F.cross_entropy(
-                pred_pad.view(-1, self.odim),
+                hs_pad.view(-1, self.odim),
                 ys_pad.view(-1),
                 ignore_index=self.ignore_id,
                 reduction=reduction_str,
             )
             loss_ce_b = F.cross_entropy(
-                pred_pad.view(-1, self.odim),
+                hs_pad.view(-1, self.odim),
                 ys_pad_b.view(-1),
                 ignore_index=self.ignore_id,
                 reduction=reduction_str,
@@ -353,20 +330,61 @@ class E2E(ASRInterface, torch.nn.Module):
             self.loss_ce = lam * loss_ce_a + (1 - lam) * loss_ce_b
         else:
             self.loss_ce = F.cross_entropy(
-                pred_pad.view(-1, self.odim),
+                hs_pad.view(-1, self.odim),
                 ys_pad.view(-1),
                 ignore_index=self.ignore_id,
                 reduction=reduction_str,
             )
 
-        # 6. Consistency loss
+        # Forward for consistency loss
+        # 0. Frontend
+        if self.frontend is not None:
+            hs_pad, hlens, mask = self.frontend(to_torch_tensor(ul_xs_pad), ul_ilens)
+            hs_pad, hlens = self.feature_transform(hs_pad, hlens)
+        else:
+            hs_pad, hlens = ul_xs_pad, ul_ilens
+
+        # Calculating student model accuracy consumes twice the time.
+        if self.show_student_model_acc:
+            ul_pred_pad, ul_hlens, _ = self.enc(hs_pad, hlens)
+            ul_pred_pad, ul_ys_pad_temp = self.match_pad(ul_pred_pad, ul_ys_pad)
+            self.stu_acc = th_accuracy(
+                ul_pred_pad.view(-1, self.odim), ul_ys_pad_temp, ignore_label=self.ignore_id
+            )
+            # empty used cuda variable
+            ul_pred_pad, ul_ys_pad_temp = (None, None)
+        else:
+            self.stu_acc = 0
+
+        # 1. Mixup feature
+        if self.mixup_alpha > 0.0:
+            hs_pad, ys_pad, _, shuf_idx, lam = mixup_data(hs_pad, ul_ys_pad, hlens, self.mixup_alpha,
+                                                          self.scheme)
+
+        # 2. RNN Encoder
+        ema_ul_hs_pad, ema_ul_hlens, _ = self.ema_enc(hs_pad, hlens)
+        hs_pad, hlens, _ = self.enc(hs_pad, hlens)
+
+        # 3. post-processing layer for target dimension
+        ema_ul_hs_pad, ema_ul_ys_pad = self.match_pad(ema_ul_hs_pad, ul_ys_pad)
+        hs_pad, ul_ys_pad = self.match_pad(hs_pad, ul_ys_pad)
+
+        # 4. mixup ema model output
+        # Calculate EMA model accuracy before mixup
+        self.ema_acc = th_accuracy(
+            ema_ul_hs_pad.view(-1, self.odim), ema_ul_ys_pad, ignore_label=self.ignore_id
+        )
+        if self.mixup_alpha > 0.0:
+            ema_ul_hs_pad = mixup_logit(ema_ul_hs_pad, ema_ul_hlens, shuf_idx, lam, self.scheme)
+
+        # 5. Consistency loss
         self.loss_mse = F.mse_loss(
-            ul_pred_pad.view(-1, self.odim),
-            ema_ul_pred_pad.view(-1, self.odim),
+            hs_pad.view(-1, self.odim),
+            ema_ul_hs_pad.view(-1, self.odim),
             reduction=reduction_str
         )
 
-        # 7. Total loss
+        # 6. Total loss
         if process_info is not None:
             if process_info["epoch"] < self.consistency_rampup_starts:
                 consistency_weight = 0
@@ -436,6 +454,40 @@ class E2E(ASRInterface, torch.nn.Module):
         hyps = hyps.view(-1, self.odim)
 
         logging.info("input lengths: " + str(hyps.size(0)))
+
+        return hyps
+
+    def recognize_batch(self, xs, recog_args, char_list, rnnlm=None):
+        """E2E beam search.
+
+        :param list xs: list of input acoustic feature arrays [(T_1, D), (T_2, D), ...]
+        :param Namespace recog_args: argument Namespace containing options
+        :param list char_list: list of characters
+        :param torch.nn.Module rnnlm: language model module
+        :return: N-best decoding results
+        :rtype: list
+        """
+        prev = self.training
+        self.eval()
+        ilens = np.fromiter((xx.shape[0] for xx in xs), dtype=np.int64)
+
+        # subsample frame
+        xs = [xx[:: self.subsample[0], :] for xx in xs]
+        xs = [to_device(self, to_torch_tensor(xx).float()) for xx in xs]
+        xs_pad = pad_list(xs, 0.0)
+
+        # 0. Frontend
+        if self.frontend is not None:
+            enhanced, hlens, mask = self.frontend(xs_pad, ilens)
+            hs_pad, hlens = self.feature_transform(enhanced, hlens)
+        else:
+            hs_pad, hlens = xs_pad, ilens
+
+        batchsize = hs_pad.size(0)
+
+        # 1. Encoder
+        hyps, hlens, _ = self.enc(hs_pad, hlens)
+        hyps = hyps.view(batchsize, -1, self.odim)
 
         return hyps
 
