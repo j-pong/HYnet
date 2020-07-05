@@ -11,10 +11,6 @@
 # Modified 2018 Mirco Ravanelli Univeristé de Montréal - Mila
 
 # Modified 2020 King God General Emperor Prof. Jun Hyuk Chang
-graphdir=$1
-alidir=$2
-data=$3
-out_folder=$4
 
 # Reading the options in the cfg file
 ./path.sh
@@ -52,6 +48,11 @@ if [ $# != 4 ]; then
    echo "  --max-arcs <arcs>                        # default -1"
    exit 1;
 fi
+
+graphdir=$1
+alidir=$2
+data=$3
+out_folder=$4
 
 dir=`echo $out_folder | sed 's:/$::g'` # remove any trailing slash.
 srcdir=`dirname $dir`; # assume model directory one level up from decoding directory.

@@ -65,6 +65,11 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+if sys.version_info[0] == 2:
+    from itertools import izip_longest as zip_longest
+else:
+    from itertools import zip_longest as zip_longest
+
 
 def _recursive_to(xs, device):
     if torch.is_tensor(xs):
@@ -215,11 +220,11 @@ class CustomUpdater(StandardUpdater):
 
         # learning rate cosine rampdown for SGD optimizer
         # TODO: make it only for sgd
-        if epoch > self.cosine_rampdown_starts:
-            for p in optimizer.param_groups:
-                p["lr"] *= cosine_rampdown(epoch - self.cosine_rampdown_starts,
-                            self.cosine_rampdown_ends - self.cosine_rampdown_starts)
-            logging.info("learning rate decayed to " + str(p["lr"]))
+        # if epoch > self.cosine_rampdown_starts:
+        #     for p in optimizer.param_groups:
+        #         p["lr"] *= cosine_rampdown(epoch - self.cosine_rampdown_starts,
+        #                     self.cosine_rampdown_ends - self.cosine_rampdown_starts)
+        #     logging.info("learning rate decayed to " + str(p["lr"]))
 
         # gradient noise injection
         if self.grad_noise:
@@ -233,13 +238,14 @@ class CustomUpdater(StandardUpdater):
         self.forward_count = 0
         # compute the gradient norm to check if it is normal or not
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.grad_clip_threshold)
+            self.model.enc.parameters(), self.grad_clip_threshold)
         logging.info('grad norm={}'.format(grad_norm))
         if math.isnan(grad_norm):
             logging.warning('grad norm is nan. Do not update model.')
         else:
             optimizer.step()
-            global_step = epoch * train_iter.len + train_iter.current_position
+            global_step = (epoch - self.consistency_rampup_starts) * train_iter.len + train_iter.current_position
+            global_step = global_step if global_step > 0 else 0
             if epoch < self.consistency_rampup_starts:
                 update_ema_variables(self.model.enc, self.model.ema_enc, 0, global_step)
             elif epoch < self.consistency_rampup_ends:
@@ -492,50 +498,24 @@ def train(args):
     # Setup an optimizer
     if args.opt == "adadelta":
         optimizer = torch.optim.Adadelta(
-            model.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
+            model.enc.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
         )
     elif args.opt == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay)
+        optimizer = torch.optim.Adam(model.enc.parameters(), weight_decay=args.weight_decay)
     elif args.opt == "noam":
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
         optimizer = get_std_opt(
-            model, args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model.enc, args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
     elif args.opt == "rmsprop":
-        optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
+        optimizer = torch.optim.RMSprop(model.enc.parameters(), lr=0.0008, alpha=0.95)
     elif args.opt == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=1, momentum=0.95, nesterov=True)
+        optimizer = torch.optim.SGD(model.enc.parameters(), lr=1, momentum=0.9, nesterov=True)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
-    # setup apex.amp
-    if args.train_dtype in ("O0", "O1", "O2", "O3"):
-        try:
-            from apex import amp
-        except ImportError as e:
-            logging.error(
-                f"You need to install apex for --train-dtype {args.train_dtype}. "
-                "See https://github.com/NVIDIA/apex#linux"
-            )
-            raise e
-        if args.opt == "noam":
-            model, optimizer.optimizer = amp.initialize(
-                model, optimizer.optimizer, opt_level=args.train_dtype
-            )
-        else:
-            model, optimizer = amp.initialize(
-                model, optimizer, opt_level=args.train_dtype
-            )
-        use_apex = True
-
-        from espnet.nets.pytorch_backend.ctc import CTC
-
-        amp.register_float_function(CTC, "loss_fn")
-        amp.init()
-        logging.warning("register ctc as float function")
-    else:
-        use_apex = False
+    use_apex = False
 
     # FIXME: TOO DIRTY HACK
     setattr(optimizer, "target", reporter)
@@ -550,32 +530,40 @@ def train(args):
         )
 
     # read json data
-    with open(args.train_json, 'rb') as f:
-        train_json = json.load(f)['utts']
-    with open(args.valid_json, 'rb') as f:
-        valid_json = json.load(f)['utts']
     assert 0.0 < args.utt_using_ratio < 1.0, "utt-using-ratio should not be 0 or 1"
 
-    train_labeled_json_path = args.train_json.replace('.json', '_labeled_{}.json'.
-                                                                  format(int(args.utt_using_ratio * 100)))
-    train_unlabeled_json_path = args.train_json.replace('.json', '_unlabeled_{}.json'.
-                                                        format(100 - int(args.utt_using_ratio * 100)))
-    if os.path.exists(train_labeled_json_path):
-        with open(train_labeled_json_path, 'rb') as f:
-            train_labeled_json = json.load(f)['utts']
-        with open(train_unlabeled_json_path, 'rb') as f:
-            train_unlabeled_json = json.load(f)['utts']
+    with open(args.valid_json, 'rb') as f:
+        valid_json = json.load(f)['utts']
+
+    if args.train_json is not None:
+        with open(args.train_json, 'rb') as f:
+            train_json = json.load(f)['utts']
+
+        train_labeled_json_path = args.train_json.replace('.json', '_labeled_{}.json'.
+                                                                      format(int(args.utt_using_ratio * 100)))
+        train_unlabeled_json_path = args.train_json.replace('.json', '_unlabeled_{}.json'.
+                                                            format(100 - int(args.utt_using_ratio * 100)))
+        if os.path.exists(train_labeled_json_path):
+            with open(train_labeled_json_path, 'rb') as f:
+                train_labeled_json = json.load(f)['utts']
+            with open(train_unlabeled_json_path, 'rb') as f:
+                train_unlabeled_json = json.load(f)['utts']
+        else:
+            # split json for each task
+            split_point = [int(len(train_json) * args.utt_using_ratio)]
+            train_labeled_json = dict(list(train_json.items())[:split_point[0]])
+            train_unlabeled_json = dict(list(train_json.items())[split_point[0]:])
+            with codecs.open(train_labeled_json_path, 'w+', encoding='utf8') as f:
+                json.dump({'utts': train_labeled_json}, f, indent=4, sort_keys=True,
+                          ensure_ascii=False, separators=(',', ': '))
+            with codecs.open(train_unlabeled_json_path, 'w+', encoding='utf8') as f:
+                json.dump({'utts': train_unlabeled_json}, f, indent=4, sort_keys=True,
+                          ensure_ascii=False, separators=(',', ': '))
     else:
-        # split json for each task
-        split_point = [int(len(train_json) * args.utt_using_ratio)]
-        train_labeled_json = dict(list(train_json.items())[:split_point[0]])
-        train_unlabeled_json = dict(list(train_json.items())[split_point[0]:])
-        with codecs.open(train_labeled_json_path, 'w+', encoding='utf8') as f:
-            json.dump({'utts': train_labeled_json}, f, indent=4, sort_keys=True,
-                      ensure_ascii=False, separators=(',', ': '))
-        with codecs.open(train_unlabeled_json_path, 'w+', encoding='utf8') as f:
-            json.dump({'utts': train_unlabeled_json}, f, indent=4, sort_keys=True,
-                      ensure_ascii=False, separators=(',', ': '))
+        with open(args.label_train_json, 'rb') as f:
+            train_labeled_json = json.load(f)['utts']
+        with open(args.unlabel_train_json, 'rb') as f:
+            train_unlabeled_json = json.load(f)['utts']
 
     valid_labeled_json_path = args.valid_json.replace('.json', '_labeled_{}.json'.
                                                       format(int(args.utt_using_ratio * 100)))
@@ -610,7 +598,7 @@ def train(args):
                           batch_frames_out=args.batch_frames_out,
                           batch_frames_inout=args.batch_frames_inout,
                           iaxis=0, oaxis=0)
-    valid = make_batchset(valid_json, args.batch_size,
+    valid = make_batchset(valid_labeled_json, args.batch_size,
                           args.maxlen_in, args.maxlen_out, args.minibatches,
                           min_batch_size=args.ngpu if args.ngpu > 1 else 1,
                           count=args.batch_count,
@@ -622,7 +610,6 @@ def train(args):
     ul_train = make_batchset(train_unlabeled_json, args.batch_size,
                               args.maxlen_in, args.maxlen_out, args.minibatches,
                               min_batch_size=args.ngpu if args.ngpu > 1 else 1,
-                              shortest_first=use_sortagrad,
                               count=args.batch_count,
                               batch_bins=args.batch_bins,
                               batch_frames_in=args.batch_frames_in,
@@ -676,7 +663,7 @@ def train(args):
     ul_train_iter = ChainerDataLoader(
         dataset=TransformDataset(ul_train, lambda data: converter([load_ul_tr(data)])),
         batch_size=1,
-        shuffle=False,
+        shuffle=True,
         collate_fn=lambda x: x[0],
         num_workers=args.n_iter_processes,
     )
@@ -786,14 +773,14 @@ def train(args):
                     model, args.outdir + "/model.acc.best", load_fn=torch_load
                 ),
                 trigger=CompareValueTrigger(
-                    "validation/main/teacher_acc",
+                    "validation/main/student_acc",
                     lambda best_value, current_value: best_value > current_value,
                 ),
             )
             trainer.extend(
                 adadelta_eps_decay(args.eps_decay),
                 trigger=CompareValueTrigger(
-                    "validation/main/teacher_acc",
+                    "validation/main/student_acc",
                     lambda best_value, current_value: best_value > current_value,
                 ),
             )
@@ -816,7 +803,7 @@ def train(args):
             )
 
     # lr decay in rmsprop
-    if args.opt == "rmsprop":
+    elif args.opt == "rmsprop" or "sgd":
         if args.criterion == "acc":
             trainer.extend(
                 restore_snapshot(
@@ -967,3 +954,38 @@ def recog(args):
                 hyps = hyps.squeeze(1)
                 hyps = hyps.data.numpy()
                 write_mat(ark_file, hyps, key=name)
+
+    else:
+        def grouper(n, iterable, fillvalue=None):
+            kargs = [iter(iterable)] * n
+            return zip_longest(*kargs, fillvalue=fillvalue)
+
+        keys = list(js.keys())
+        if args.batchsize > 1:
+            feat_lens = [js[key]["input"][0]["shape"][0] for key in keys]
+            sorted_index = sorted(range(len(feat_lens)), key=lambda i: -feat_lens[i])
+            keys = [keys[i] for i in sorted_index]
+
+        with torch.no_grad():
+            iteration = 1
+            for names in grouper(args.batchsize, keys, None):
+                dec_idx = iteration * len(names)
+                logging.info("(%d/%d) decoding ", dec_idx, len(keys))
+                names = [name for name in names if name]
+                batch = [(name, js[name]) for name in names]
+                feats = (
+                    load_inputs_and_targets(batch)[0]
+                    if args.num_encs == 1
+                    else load_inputs_and_targets(batch)
+                )
+
+                hyps = model.recognize_batch(
+                    feats, args, train_args.char_list, rnnlm=rnnlm
+                )
+
+                # TODO: is there any way to overwrite decoding results into new js?
+                hyps = hyps.data.cpu().numpy()
+                for idx, hyp in enumerate(hyps):
+                    write_mat(ark_file, hyp, key=names[idx])
+
+                iteration+=1
