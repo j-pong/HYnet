@@ -11,6 +11,7 @@ backend=pytorch
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
 ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
+ngpu_id=0,1,2,3
 nj=32
 debugmode=1
 dumpdir=dump   # directory to dump full features
@@ -22,6 +23,7 @@ unsup_resume=
 # feature configuration
 do_delta=false
 
+preprocess_unsup_config=conf/specaug.yaml
 train_unsup_config=conf/train_unsup.yaml
 
 preprocess_config=conf/specaug.yaml
@@ -158,8 +160,9 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Unsupervised Training"
     . ./path_fair.sh || exit 1;
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        KALDI_ROOT=${KALDI_ROOT} unsup_train.py \
+        KALDI_ROOT=${KALDI_ROOT} CUDA_VISIBLE_DEVICES=${ngpu_id} unsup_train.py \
         --config ${train_unsup_config} \
+        --preprocess-conf ${preprocess_unsup_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
         --outdir ${expdir}/results \
@@ -251,4 +254,77 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         --resume ${resume} \
         --train-json ${dumpdir}/${train_small_set}/unsup/data_${bpemode}${nbpe}.json \
         --valid-json ${dumpdir}/${train_dev}/unsup/data_${bpemode}${nbpe}.json
+fi
+
+nj=14
+if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+    echo "stage 7: Decoding"
+    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
+        # Average ASR models
+        if ${use_valbest_average}; then
+            recog_model=model.val${n_average}.avg.best
+            opt="--log ${expdir}/results/log"
+        else
+            recog_model=model.last${n_average}.avg.best
+            opt="--log"
+        fi
+        average_checkpoints.py \
+            ${opt} \
+            --backend ${backend} \
+            --snapshots ${expdir}/results/snapshot.ep.* \
+            --out ${expdir}/results/${recog_model} \
+            --num ${n_average}
+
+        # Average LM models
+        if [ ${lm_n_average} -eq 0 ]; then
+            lang_model=rnnlm.model.best
+        else
+            if ${use_lm_valbest_average}; then
+                lang_model=rnnlm.val${lm_n_average}.avg.best
+                opt="--log ${lmexpdir}/log"
+            else
+                lang_model=rnnlm.last${lm_n_average}.avg.best
+                opt="--log"
+            fi
+            average_checkpoints.py \
+                ${opt} \
+                --backend ${backend} \
+                --snapshots ${lmexpdir}/snapshot.ep.* \
+                --out ${lmexpdir}/${lang_model} \
+                --num ${lm_n_average}
+        fi
+    fi
+
+    pids=() # initialize pids
+    for rtask in ${recog_set}; do
+    (
+        decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})
+        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+
+        # split data
+        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+
+        #### use CPU for decoding
+        ngpu=0
+
+        # set batchsize 0 to disable batch decoding
+        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            asr_recog.py \
+            --config ${decode_config} \
+            --ngpu ${ngpu} \
+            --backend ${backend} \
+            --batchsize 0 \
+            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-label ${expdir}/${decode_dir}/data.JOB.json \
+            --model ${expdir}/results/${recog_model}  \
+            --api v2
+
+        score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}
+
+    ) &
+    pids+=($!) # store background pids
+    done
+    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
+    echo "Finished"
 fi

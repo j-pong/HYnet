@@ -27,13 +27,13 @@ from torch.nn.parallel import data_parallel
 
 from kaldi_io import write_mat
 
-from espnet.asr.asr_utils import adadelta_eps_decay
+# from espnet.asr.asr_utils import adadelta_eps_decay
 # from espnet.asr.asr_utils import add_results_to_json
-from espnet.asr.asr_utils import CompareValueTrigger
+# from espnet.asr.asr_utils import CompareValueTrigger
 # from espnet.asr.asr_utils import format_mulenc_args
 # from espnet.asr.asr_utils import get_model_conf
 # from espnet.asr.asr_utils import plot_spectrogram
-from espnet.asr.asr_utils import restore_snapshot
+# from espnet.asr.asr_utils import restore_snapshot
 from espnet.asr.asr_utils import snapshot_object
 from espnet.asr.asr_utils import torch_load
 from espnet.asr.asr_utils import torch_resume
@@ -53,13 +53,14 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
-from espnet.utils.io_utils import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler
-from espnet.utils.training.tensorboard_logger import TensorboardLogger
-from espnet.utils.training.train_utils import check_early_stop
-from espnet.utils.training.train_utils import set_early_stop
+# from espnet.utils.training.tensorboard_logger import TensorboardLogger
+# from espnet.utils.training.train_utils import check_early_stop
+# from espnet.utils.training.train_utils import set_early_stop
+
+from moneynet.utils.chainer_pipe.io_utils import LoadInputsAndTargets
 
 import matplotlib
 
@@ -286,18 +287,18 @@ class CustomConverter(object):
             xs = [x[:: self.subsampling_factor, :] for x in xs]
 
         # get batch of lengths of input sequences
-        ilens = np.array([x.shape[0] for x in xs])
+        ilens = np.array([x.shape[0] for x in xs[0]])
         xs_pad_in = pad_list(
             [torch.from_numpy(x[:-self.tnum]).float()
-             for x in xs],
+             for x in xs[0]],
             0
         ).to(device, dtype=self.dtype)
         xs_pad_out = pad_list(
             [
                 torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
                              if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
-                             for i in range(self.tnum)], dim=-2)
-                for x in xs],
+                             for i in range(self.tnum)], dim=1)
+                for x in xs[1]],
             0
         ).to(device, dtype=self.dtype)
 
@@ -313,7 +314,7 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad_in, xs_pad_out, ilens, ys_pad
+        return xs_pad_in[:, :, :-3], xs_pad_out[:, :, :, :-3], ilens, ys_pad
 
 
 def train(args):
@@ -337,9 +338,8 @@ def train(args):
     odim = int(valid_json[utts[0]]["output"][0]["shape"][-1])
     logging.info("#output dims: " + str(odim))
 
-    # ToDo(j-pong): load model function add to these lines
+    # dynamic model
     model_class = dynamic_import(args.model_module)
-    # pre-train model using AR task
     model = model_class(idim, idim, args)
 
     # write model config
@@ -384,7 +384,7 @@ def train(args):
             model.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
         )
     elif args.opt == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay)
+        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
     elif args.opt == "noam":
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
@@ -526,31 +526,30 @@ def train(args):
                        trigger=(args.save_interval_iters, "iteration"), )
     else:
         trainer.extend(CustomEvaluator(model, {"main": valid_iter}, reporter, device, args.ngpu))
-    # # Save attention weight each epoch
-    # if args.num_save_attention > 0 and args.mtlalpha != 1.0:
-    #     data = sorted(
-    #         list(valid_json.items())[: args.num_save_attention],
-    #         key=lambda x: int(x[1]["input"][0]["shape"][1]),
-    #         reverse=True,
-    #     )
-    #     if hasattr(model, "module"):
-    #         att_vis_fn = model.module.calculate_all_attentions
-    #         plot_class = model.module.attention_plot_class
-    #     else:
-    #         att_vis_fn = model.calculate_all_attentions
-    #         plot_class = model.attention_plot_class
-    #     att_reporter = plot_class(
-    #         att_vis_fn,
-    #         data,
-    #         args.outdir + "/att_ws",
-    #         converter=converter,
-    #         transform=load_cv,
-    #         device=device,
-    #     )
-    #     trainer.extend(att_reporter, trigger=(1, "epoch"))
-    # else:
-    att_reporter = None
-    trainer.extend(extensions.PlotReport(["main/loss", "validation/main/loss"], "epoch", file_name="loss.png", ))
+
+    data = sorted(
+        list(valid_json.items())[: args.num_save_attention],
+        key=lambda x: int(x[1]["input"][0]["shape"][1]),
+        reverse=True,
+    )
+    vis_fn = model.calculate_images
+    plot_class = model.images_plot_class
+    img_reporter = plot_class(
+        vis_fn,
+        data,
+        args.outdir + "/images",
+        converter=converter,
+        transform=load_cv,
+        device=device,
+    )
+    trainer.extend(img_reporter, trigger=(1000, "iteration"))
+
+    trainer.extend(extensions.PlotReport(["main/loss",
+                                          "validation/main/loss"], "epoch", file_name="loss.png", ))
+    trainer.extend(extensions.PlotReport(["main/e_loss",
+                                          "validation/main/e_loss"], "epoch", file_name="energy.png", ))
+    trainer.extend(extensions.PlotReport(["main/discontinuity",
+                                          "validation/main/discontinuity"], "epoch", file_name="discontinuity.png", ))
 
     # Save best models
     trainer.extend(
@@ -571,7 +570,9 @@ def train(args):
         "epoch",
         "iteration",
         "main/loss",
-        "validation/main/loss",
+        "main/e_loss",
+        "validation/main/loss"
+        "validation/main/e_loss",
         "elapsed_time",
     ]
     if args.opt == "adadelta":
@@ -582,31 +583,23 @@ def train(args):
         report_keys.append("eps")
     trainer.extend(extensions.PrintReport(report_keys), trigger=(args.report_interval_iters, "iteration"), )
     trainer.extend(extensions.ProgressBar(update_interval=args.report_interval_iters))
-    set_early_stop(trainer, args)
-    if args.tensorboard_dir is not None and args.tensorboard_dir != "":
-        trainer.extend(TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
-                       trigger=(args.report_interval_iters, "iteration"), )
+
     # Run the training
     trainer.run()
-    check_early_stop(trainer, args.epochs)
 
 
 def recog(args):
     set_deterministic_pytorch(args)
 
-    # from espnet.asr.asr_utils import get_model_conf, torch_load
-    # idim, odim, train_args = get_model_conf(
-    #     args.model, os.path.join(os.path.dirname(args.model), "model.json")
-    # )
-    # model_module = train_args.model_module
-    # model_class = dynamic_import(model_module)
-    # print(idim, odim)
-    # exit()
-    # model = model_class(idim, odim, train_args)
-    #
-    # torch_load(args.model, model)
-    # exit()
-    model, train_args = load_trained_model(args.model)
+    from espnet.asr.asr_utils import get_model_conf, torch_load
+    # read training config
+    idim, odim, train_args = get_model_conf(args.model, args.model_conf)
+
+    # load trained model parameters
+    model_class = dynamic_import(train_args.model_module)
+    model = model_class(idim, odim, train_args)
+    torch_load(args.model, model)
+    # model, train_args = load_trained_model(args.model)
     model.recog_args = args
 
     # gpu
@@ -638,7 +631,7 @@ def recog(args):
                 feat = (feat[0][0])
 
                 hyps = model.recognize(feat)
-                hyps = hyps.squeeze(1)
+                hyps = hyps.squeeze(0)
                 hyps = hyps.data.numpy()
 
                 write_mat(ark_file, hyps, key=name)

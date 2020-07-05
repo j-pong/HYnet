@@ -70,10 +70,10 @@ def get_parser(parser=None, required=True):
         help="Backend library",
     )
     parser.add_argument(
-        "--outdir", type=str, required=required, help="Output directory"
+        "--outdir", type=str, help="Output directory"
     )
     parser.add_argument("--debugmode", default=1, type=int, help="Debugmode")
-    parser.add_argument("--dict", required=required, help="Dictionary")
+    parser.add_argument("--dict", help="Dictionary")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--debugdir", type=str, help="Output directory for debugging")
     parser.add_argument(
