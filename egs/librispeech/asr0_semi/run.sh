@@ -1,1 +1,1 @@
-scripts/run_100h_fmllr_3gram_1gpu.sh
+scripts/run_100h_fmllr_3gram_1gpu_batch_decoding.sh
