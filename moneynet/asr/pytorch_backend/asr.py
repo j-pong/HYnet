@@ -61,6 +61,10 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+if sys.version_info[0] == 2:
+    from itertools import izip_longest as zip_longest
+else:
+    from itertools import zip_longest as zip_longest
 
 def _recursive_to(xs, device):
     if torch.is_tensor(xs):
@@ -918,3 +922,38 @@ def recog(args):
                 hyps = hyps.squeeze(1)
                 hyps = hyps.data.numpy()
                 write_mat(ark_file, hyps, key=name)
+
+    else:
+        def grouper(n, iterable, fillvalue=None):
+            kargs = [iter(iterable)] * n
+            return zip_longest(*kargs, fillvalue=fillvalue)
+
+        keys = list(js.keys())
+        if args.batchsize > 1:
+            feat_lens = [js[key]["input"][0]["shape"][0] for key in keys]
+            sorted_index = sorted(range(len(feat_lens)), key=lambda i: -feat_lens[i])
+            keys = [keys[i] for i in sorted_index]
+
+        with torch.no_grad():
+            iteration = 1
+            for names in grouper(args.batchsize, keys, None):
+                dec_idx = iteration * len(names)
+                logging.info("(%d/%d) decoding ", dec_idx, len(keys))
+                names = [name for name in names if name]
+                batch = [(name, js[name]) for name in names]
+                feats = (
+                    load_inputs_and_targets(batch)[0]
+                    if args.num_encs == 1
+                    else load_inputs_and_targets(batch)
+                )
+
+                hyps = model.recognize_batch(
+                    feats, args, train_args.char_list, rnnlm=rnnlm
+                )
+
+                # TODO: is there any way to overwrite decoding results into new js?
+                hyps = hyps.data.cpu().numpy()
+                for idx, hyp in enumerate(hyps):
+                    write_mat(ark_file, hyp, key=names[idx])
+
+                iteration+=1

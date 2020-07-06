@@ -2,14 +2,13 @@
 model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:NetTransform"
 
 # minibatch related
-accum-grad: 4
-batch-bins: 4500000
+accum-grad: 8
+batch-bins: 100000
 
 # optimization related
 opt: adam
 grad-clip: 1
 lr: 0.001
-eth: 1.5
 
 # scheduling related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
@@ -17,7 +16,5 @@ epochs: 40
 
 # model architecture
 tnum: 5
-iter: 1
 hdim: 320
 brewing: 1
-embed_mem: 0

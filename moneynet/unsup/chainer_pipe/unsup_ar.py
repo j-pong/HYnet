@@ -314,7 +314,7 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad_in, xs_pad_out, ilens, ys_pad
+        return xs_pad_in[:, :, :-3], xs_pad_out[:, :, :, :-3], ilens, ys_pad
 
 
 def train(args):
@@ -338,9 +338,8 @@ def train(args):
     odim = int(valid_json[utts[0]]["output"][0]["shape"][-1])
     logging.info("#output dims: " + str(odim))
 
-    # ToDo(j-pong): load model function add to these lines
+    # dynamic model
     model_class = dynamic_import(args.model_module)
-    # pre-train model using AR task
     model = model_class(idim, idim, args)
 
     # write model config
@@ -543,7 +542,7 @@ def train(args):
         transform=load_cv,
         device=device,
     )
-    trainer.extend(img_reporter, trigger=(1, "epoch"))
+    trainer.extend(img_reporter, trigger=(1000, "iteration"))
 
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))
@@ -592,19 +591,15 @@ def train(args):
 def recog(args):
     set_deterministic_pytorch(args)
 
-    # from espnet.asr.asr_utils import get_model_conf, torch_load
-    # idim, odim, train_args = get_model_conf(
-    #     args.model, os.path.join(os.path.dirname(args.model), "model.json")
-    # )
-    # model_module = train_args.model_module
-    # model_class = dynamic_import(model_module)
-    # print(idim, odim)
-    # exit()
-    # model = model_class(idim, odim, train_args)
-    #
-    # torch_load(args.model, model)
-    # exit()
-    model, train_args = load_trained_model(args.model)
+    from espnet.asr.asr_utils import get_model_conf, torch_load
+    # read training config
+    idim, odim, train_args = get_model_conf(args.model, args.model_conf)
+
+    # load trained model parameters
+    model_class = dynamic_import(train_args.model_module)
+    model = model_class(idim, odim, train_args)
+    torch_load(args.model, model)
+    # model, train_args = load_trained_model(args.model)
     model.recog_args = args
 
     # gpu
@@ -636,7 +631,7 @@ def recog(args):
                 feat = (feat[0][0])
 
                 hyps = model.recognize(feat)
-                hyps = hyps.squeeze(1)
+                hyps = hyps.squeeze(0)
                 hyps = hyps.data.numpy()
 
                 write_mat(ark_file, hyps, key=name)

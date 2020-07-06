@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from fairseq.models.wav2vec import ConvAggegator
+from fairseq.models.wav2vec import Wav2VecModel
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
@@ -13,14 +13,17 @@ class Inference(nn.Module):
         self.idim = idim
         self.odim = odim
         self.hdim = args.hdim
-        self.cdim = args.cdim
+        self.tnum = args.tnum
 
         self.bias = args.bias
         self.encoder = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU()
+            nn.ReLU(),
+            nn.Linear(self.hdim, odim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
+            nn.Linear(odim, self.hdim, bias=self.bias),
+            nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, self.odim, bias=self.bias)
@@ -28,9 +31,8 @@ class Inference(nn.Module):
 
     @staticmethod
     def calculate_ratio(x, x_base):
-        with torch.no_grad():
-            rat = x / x_base
-            rat[torch.isnan(rat)] = 0.0
+        rat = x / x_base
+        rat[torch.isnan(rat)] = 0.0
 
         return rat
 
@@ -82,17 +84,11 @@ class Inference(nn.Module):
 
         return w_hat, bias_hat
 
-    def forward(self, x):
-        x, ratio_enc = self.forward_(x, module_list=self.encoder)
-        x, ratio_dec = self.forward_(x, module_list=self.decoder)
+    def forward(self, x, module_list):
+        x, ratio = self.forward_(x, module_list=module_list)
 
-        return x, ratio_enc, ratio_dec
+        return x, ratio
 
-    def brew(self, ratios):
-        p_hat = self.brew_(self.encoder, ratios[0])
-        p_hat = self.brew_(self.decoder, ratios[1], p_hat[0], p_hat[1])
-
-        return p_hat
 
 class ExcInference(Inference):
     def __init__(self, idim, odim, args):

@@ -435,6 +435,50 @@ class E2E(ASRInterface, torch.nn.Module):
 
         return hyps
 
+    def recognize_batch(self, xs, recog_args, char_list, rnnlm=None):
+        """E2E beam search.
+
+        :param list xs: list of input acoustic feature arrays [(T_1, D), (T_2, D), ...]
+        :param Namespace recog_args: argument Namespace containing options
+        :param list char_list: list of characters
+        :param torch.nn.Module rnnlm: language model module
+        :return: N-best decoding results
+        :rtype: list
+        """
+        prev = self.training
+        self.eval()
+        ilens = np.fromiter((xx.shape[0] for xx in xs), dtype=np.int64)
+
+        # subsample frame
+        xs = [xx[:: self.subsample[0], :] for xx in xs]
+        xs = [to_device(self, to_torch_tensor(xx).float()) for xx in xs]
+        xs_pad = pad_list(xs, 0.0)
+
+        # 0. Frontend
+        if self.frontend is not None:
+            enhanced, hlens, mask = self.frontend(xs_pad, ilens)
+            hs_pad, hlens = self.feature_transform(enhanced, hlens)
+        else:
+            hs_pad, hlens = xs_pad, ilens
+
+        batchsize = hs_pad.size(0)
+
+        # 1. Encoder
+        hs_pad, hlens, _ = self.enc(hs_pad, hlens)
+
+        # calculate log P(z_t|X) for CTC scores
+        if recog_args.ctc_weight > 0.0:
+            lpz = self.ctc.log_softmax(hs_pad)
+            normalize_score = False
+        else:
+            lpz = None
+            normalize_score = True
+
+        hyps = self.poster(hs_pad)
+        hyps = hyps.view(batchsize, -1, self.odim)
+
+        return hyps
+
     def subsample_frames(self, x):
         """Subsample speeh frames in the encoder."""
         # subsample frame
