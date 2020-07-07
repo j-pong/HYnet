@@ -88,6 +88,13 @@ class NetTransform(nn.Module):
         # initialize parameter
         initialize(self)
 
+    @staticmethod
+    def mvn(x):
+        m = torch.mean(x, dim=-1, keepdim=True)
+        v = torch.mean(torch.pow(x - m, 2), dim=-1, keepdim=True)
+        x = (x - m) / v
+        return x
+
     def calculate_energy(self, start_state, end_state, func, ratio, flows={'s': None,
                                                                            't': None,
                                                                            'e': None}):
@@ -102,23 +109,21 @@ class NetTransform(nn.Module):
             start_state = start_state.view(-1, start_dim)
             end_state = end_state.view(-1, end_dim) - b_hat
 
-            # calculate movement of each node : transition state for field
-            move_flow = (torch.abs(w_hat) * (1 - self.field.to(w_hat.device))).mean(-1).mean(-1).unsqueeze(-1)
-
-            # relation with sign : how much state change in amplitude space
+            # make data-pair field for tracing positive-negative
             sign_pair = torch.matmul(torch.sign(start_state.unsqueeze(-1)),
                                      torch.sign(end_state.unsqueeze(-2)))
             w_hat_x = w_hat * sign_pair
             w_hat_x_p = torch.relu(w_hat_x)
             w_hat_x_n = torch.relu(-w_hat_x)
-            time_flow = (w_hat_x_p.sum(-1).sum(-1) / w_hat_x_n.sum(-1).sum(-1)).unsqueeze(-1)
-            time_flow[torch.isnan(time_flow)] = 0.0  # if time flow is high, the quntity is low confidnece
+
+            # calculate movement of each node : transition state for field
+            move_flow = (torch.abs(w_hat_x) * self.field.to(w_hat.device)).mean(-1).mean(-1).unsqueeze(-1)
+            # relation with sign : how much state change in amplitude space
+            time_flow = (torch.abs(start_state) * w_hat_x_n.sum(-1)).mean(-1, keepdim=True) / \
+                        (torch.abs(start_state) * w_hat_x_p.sum(-1)).mean(-1, keepdim=True)
 
             # calculate energy
-            mass = torch.abs(start_state).mean(-1).unsqueeze(-1)
-            seq_energy_mask = move_flow / (torch.abs(time_flow - 1.0)) * mass
-            seq_energy_mask = torch.clamp(seq_energy_mask, 0.0, 10)
-
+            seq_energy_mask = time_flow
             for key in flows.keys():
                 if key == 's':
                     flows[key] = move_flow.view(bsz, tnsz, tsz)
@@ -137,6 +142,11 @@ class NetTransform(nn.Module):
         xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
 
+        xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
+        xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
+        xs_pad_out_m = torch.mean(xs_pad_out, dim=-1, keepdim=True)
+        xs_pad_out_v = torch.mean(torch.pow(xs_pad_out - xs_pad_out_m, 2), dim=-1, keepdim=True)
+
         # monitoring buffer
         self.buffs = {'out': [],
                       'seq_energy': None,
@@ -146,15 +156,11 @@ class NetTransform(nn.Module):
 
         # embedding task
         h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
-        m_h = torch.mean(h, dim=-1, keepdim=True)
-        v_h = torch.mean(torch.pow(h - m_h, 2), dim=-1, keepdim=True)
-        h = (h - m_h) / v_h
-        m_h = torch.mean(xs_pad_in, dim=-1, keepdim=True)
-        v_h = torch.mean(torch.pow(xs_pad_in - m_h, 2), dim=-1, keepdim=True)
-        h = h * v_h + m_h
+        h = self.mvn(h)
+        h = h * xs_pad_in_v + xs_pad_in_m
 
         if self.brewing:
-            flows = self.calculate_energy(start_state=xs_pad_in.unsqueeze(1).contiguous(), end_state=h,
+            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h,
                                           func=self.engine.encoder,
                                           ratio=ratio,
                                           flows={'e': None})  # B, Tmax, 1
@@ -162,13 +168,14 @@ class NetTransform(nn.Module):
             if buffering:
                 self.buffs['seq_energy_enc'] = seq_energy_mask[:, :, :400]
 
-
         # evaluate hidden space similarity
         kernel = torch.matmul(h, h.transpose(-2, -1))  # B, T, T
 
         # long time prediction task
         h = h.repeat(1, self.tnum, 1, 1)
         xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
+        xs_pad_out_hat = self.mvn(xs_pad_out_hat)
+        xs_pad_out_hat = xs_pad_out_hat * xs_pad_out_v + xs_pad_out_m
         if buffering:
             self.buffs['out'].append(xs_pad_out_hat)
             self.buffs['kernel'] = kernel
@@ -183,7 +190,7 @@ class NetTransform(nn.Module):
             if buffering:
                 self.buffs['seq_energy_dec'] = seq_energy_mask[:, :, :400]
 
-            loss_e = seq_energy_mask.mean()
+            loss_e = seq_energy_mask.view(-1, 1).masked_fill(masks[0], 0).mean()
             discontinuity = 0.0
         else:
             loss_e = 0.0
@@ -194,20 +201,14 @@ class NetTransform(nn.Module):
                               masks).mean()
         if not torch.isnan(loss) or not torch.isnan(loss_e):
 
-            self.reporter.report({'loss':float(loss),
-                                  'e_loss':float(loss_e),
-                                  'discontinuity':float(discontinuity)})
+            self.reporter.report({'loss': float(loss),
+                                  'e_loss': float(loss_e),
+                                  'discontinuity': float(discontinuity)})
         else:
             print("loss (=%f) is not c\orrect", float(loss))
             logging.warning("loss (=%f) is not correct", float(loss))
 
         return loss
-
-    def recognize(self, x):
-        self.eval()
-        x = torch.as_tensor(x).unsqueeze(0)
-
-        return x
 
     """
     Evaluation related
@@ -229,3 +230,9 @@ class NetTransform(nn.Module):
             ret['seq_energy_enc'] = self.buffs['seq_energy_enc'][:, 0, :].cpu().numpy()
             ret['seq_energy_dec'] = self.buffs['seq_energy_dec'][:, 0, :].cpu().numpy()
         return ret
+
+    def recognize(self, x):
+        self.eval()
+        x = torch.as_tensor(x).unsqueeze(0)
+
+        return x

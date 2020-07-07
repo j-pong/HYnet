@@ -52,7 +52,8 @@ class PlotImageReport(extension.Extension):
                     key
                 )
                 if key == 'out':
-                    img = np.concatenate([batch[1][idx].transpose(0, 1).cpu().numpy()[0:1,:400], img[0:1,:400]], axis=0)
+                    img = np.concatenate([batch[1][idx].transpose(0, 1).cpu().numpy()[0:1, :400], img[0:1, :400]],
+                                         axis=0)
                 self._plot_and_save_image(img, filename.format(trainer))
 
     def get_ret(self):
@@ -73,6 +74,7 @@ class PlotImageReport(extension.Extension):
                 plt.imshow(im.T, aspect="auto")
                 plt.ylabel("dim")
                 plt.xlabel("time")
+                plt.colorbar()
         elif len(img.shape) == 1:
             plt.plot(img)
             plt.xlabel("time")
@@ -82,10 +84,13 @@ class PlotImageReport(extension.Extension):
             plt.imshow(img.T, aspect="auto")
             plt.xlabel("index")
             plt.ylabel("time")
+            plt.colorbar()
         plt.tight_layout()
         return plt
 
     def _plot_and_save_image(self, img, filename):
         plt = self.draw_image(img)
+        if len(img.shape) == 1:
+            np.save(filename.replace('png', 'npy'), img)
         plt.savefig(filename)
         plt.close()
