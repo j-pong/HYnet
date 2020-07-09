@@ -96,23 +96,125 @@ class NetTransform(nn.Module):
         return x
 
     @staticmethod
-    def fb(x):
-        xs = []
-        for i in range(x.size(-1)):
-            if i != 0:
-                x_f = torch.cumsum(x[:, :, i:], dim=-1)
-                x_b = torch.cumsum(x[:, :, :i].flip(dims=[-1]), dim=-1).flip(dims=[-1])
-                xs.append(torch.cat([x_b, x_f], dim=-1))
-            else:
-                xs.append(torch.cumsum(x[:, :, :], dim=-1))
-        xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
-        norm = torch.max(xs)
-        if  norm == 0.0:
-            raise ValueError('Energy maximum value is {}'.format(torch.max(xs)))
+    def minimaxn(x):
+        max_x = torch.max(x)
+        min_x = torch.min(x)
+        if (max_x - min_x) == 0.0:
+            raise ValueError('Divided by the zero with max-min value : {}'.format((max_x - min_x)))
         else:
-            xs = 1.0 - xs / norm
+            x = (x - min_x) / (max_x - min_x)
+
+        return x
+
+    def fb(self, x, mode='batch'):
+        if mode == 'batch':
+            # TODO(j-pong): multi-target energy
+            x = 1.0 - self.minimaxn(x[:, 0])
+            bsz, tsz = x.size()
+            xs = x.unsqueeze(-1).repeat(1, 1, tsz)
+            ret = []
+            for x in xs:
+                m_f = torch.triu(torch.ones(tsz, tsz)).to(x.device)
+                x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2) - m_f
+                m_b = torch.tril(torch.ones(tsz, tsz)).to(x.device)
+                x_b = torch.cumprod((torch.triu(x) + m_b).flip(dims=[-2]), dim=-2).flip(dims=[-2]) - m_b
+                ret.append(x_b + x_f)
+            xs = torch.stack(ret, dim=0).unsqueeze(1) / 2  # B, 1, T, T
+        else:
+            x = 1.0 - self.minimaxn(x[:,0:1])
+            xs = []
+            for i in range(x.size(-1)):
+                if i != 0:
+                    x_f = torch.cumprod(x[:, :, i:], dim=-1)
+                    x_b = torch.cumprod(x[:, :, :i].flip(dims=[-1]), dim=-1).flip(dims=[-1])
+                    xs.append(torch.cat([x_b, x_f], dim=-1))
+                else:
+                    xs.append(torch.cumprod(x[:, :, :], dim=-1))
+            xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
 
         return xs
+
+    def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
+        # prepare data
+        xs_pad_in = xs_pad_in[:, :max(ilens)].unsqueeze(1)  # for data parallel
+        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
+        seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
+        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
+
+        xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
+        xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
+        xs_pad_out_m = torch.mean(xs_pad_out, dim=-1, keepdim=True)
+        xs_pad_out_v = torch.mean(torch.pow(xs_pad_out - xs_pad_out_m, 2), dim=-1, keepdim=True)
+
+        # monitoring buffer
+        self.buffs = {'out': [],
+                      'seq_energy': None,
+                      'kernel': None}
+
+        # embedding task
+        h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
+        if self.brewing:
+            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h,
+                                          func=self.engine.encoder,
+                                          ratio=ratio,
+                                          flows={'e': None})
+            energy = flows['e']
+            if buffering:
+                self.buffs['seq_energy_enc'] = energy
+        h = self.mvn(h)
+        h = h * xs_pad_in_v + xs_pad_in_m
+
+        # evaluate hidden space similarity
+        kernel = torch.matmul(h, h.transpose(-2, -1))  # B, 1, T, T
+
+        # long time prediction task
+        h = h.repeat(1, self.tnum, 1, 1)
+        xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
+        if self.brewing:
+            flows = self.calculate_energy(start_state=h.contiguous(), end_state=xs_pad_out.contiguous(),
+                                          func=self.engine.decoder,
+                                          ratio=ratio,
+                                          flows={'e': None})
+            energy = flows['e']
+            kernel_target = self.fb(energy)
+            if buffering:
+                self.buffs['seq_energy_dec'] = kernel_target[:, :, :400, :400]
+
+            # compute loss of hidden space
+            seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
+                                                (~seq_mask).unsqueeze(1).float())).bool()
+            tsz = seq_mask_kernel.size(1)
+            loss_e = self.criterion_h(input=torch.sigmoid(kernel), target=kernel_target.detach())
+            loss_e = loss_e.view(-1, tsz, tsz).masked_fill(seq_mask_kernel, 0).mean()
+            if torch.isnan(kernel_target.sum()):
+                print("target nan")
+            if torch.isnan(kernel.sum()):
+                print("output nan")
+            discontinuity = 0.0
+        else:
+            loss_e = 0.0
+            discontinuity = 0.0
+        xs_pad_out_hat = self.mvn(xs_pad_out_hat)
+        xs_pad_out_hat = xs_pad_out_hat * xs_pad_out_v + xs_pad_out_m
+        if buffering:
+            self.buffs['out'].append(xs_pad_out_hat)
+            self.buffs['kernel'] = kernel
+
+        # compute loss of total network
+        loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
+                                xs_pad_out.contiguous().view(-1, self.idim),
+                                masks).mean()
+        loss = loss_g + loss_e
+        if not torch.isnan(loss):
+            self.reporter.report({'loss': float(loss),
+                                  'e_loss': float(loss_e),
+                                  'g_loss': float(loss_g),
+                                  'discontinuity': float(discontinuity)})
+        else:
+            print("loss (=%f) is not c\orrect", float(loss))
+            logging.warning("loss (=%f) is not correct", float(loss))
+
+        return loss
 
     def calculate_energy(self, start_state, end_state, func, ratio, flows={'e': None}):
         with torch.no_grad():
@@ -148,88 +250,6 @@ class NetTransform(nn.Module):
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 
         return flows
-
-    def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
-        # prepare data
-        xs_pad_in = xs_pad_in[:, :max(ilens)].unsqueeze(1)  # for data parallel
-        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
-        seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
-        masks = [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)]
-
-        xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
-        xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
-        xs_pad_out_m = torch.mean(xs_pad_out, dim=-1, keepdim=True)
-        xs_pad_out_v = torch.mean(torch.pow(xs_pad_out - xs_pad_out_m, 2), dim=-1, keepdim=True)
-
-        # monitoring buffer
-        self.buffs = {'out': [],
-                      'seq_energy': None,
-                      'kernel': None}
-
-        # embedding task
-        h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
-        if self.brewing:
-            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h,
-                                          func=self.engine.encoder,
-                                          ratio=ratio,
-                                          flows={'e': None})  # B, Tmax, 1
-            energy = flows['e']
-            if buffering:
-                self.buffs['seq_energy_enc'] = energy[:, :, :400]
-        h = self.mvn(h)
-        h = h * xs_pad_in_v + xs_pad_in_m
-
-        # evaluate hidden space similarity
-        kernel = torch.matmul(h, h.transpose(-2, -1))  # B, 1, T, T
-
-        # long time prediction task
-        h = h.repeat(1, self.tnum, 1, 1)
-        xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
-        if self.brewing:
-            flows = self.calculate_energy(start_state=h, end_state=xs_pad_out.contiguous(),
-                                          func=self.engine.decoder,
-                                          ratio=ratio,
-                                          flows={'e': None})  # B, Tmax, 1
-            energy = flows['e']
-            kernel_target = self.fb(energy)
-            if buffering:
-                self.buffs['seq_energy_dec'] = kernel_target[:, :, :400, :400]
-
-            # compute loss of hidden space
-            seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
-                                                (~seq_mask).unsqueeze(1).float())).bool()
-            tsz = seq_mask_kernel.size(1)
-            loss_e = self.criterion_h(input=torch.sigmoid(kernel), target=kernel_target[:, 0:1].detach())
-            loss_e = loss_e.view(-1, tsz, tsz).masked_fill(seq_mask_kernel, 0).mean()
-            if torch.isnan(kernel_target.sum()):
-                print("target nan")
-            if torch.isnan(kernel.sum()):
-                print("output nan")
-            discontinuity = 0.0
-        else:
-            loss_e = 0.0
-            discontinuity = 0.0
-        xs_pad_out_hat = self.mvn(xs_pad_out_hat)
-        xs_pad_out_hat = xs_pad_out_hat * xs_pad_out_v + xs_pad_out_m
-        if buffering:
-            self.buffs['out'].append(xs_pad_out_hat)
-            self.buffs['kernel'] = kernel
-
-        # compute loss of total network
-        loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
-                                xs_pad_out.contiguous().view(-1, self.idim),
-                                masks).mean()
-        loss = loss_g + loss_e
-        if not torch.isnan(loss):
-            self.reporter.report({'loss': float(loss),
-                                  'e_loss': float(loss_e),
-                                  'g_loss': float(loss_g),
-                                  'discontinuity': float(discontinuity)})
-        else:
-            print("loss (=%f) is not c\orrect", float(loss))
-            logging.warning("loss (=%f) is not correct", float(loss))
-
-        return loss
 
     """
     Evaluation related
