@@ -542,7 +542,7 @@ def train(args):
         transform=load_cv,
         device=device,
     )
-    trainer.extend(img_reporter, trigger=(1, "epoch"))
+    trainer.extend(img_reporter, trigger=(1000, "iteration"))
 
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))

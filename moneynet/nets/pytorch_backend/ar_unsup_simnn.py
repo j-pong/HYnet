@@ -121,7 +121,7 @@ class NetTransform(nn.Module):
                 ret.append(x_b + x_f)
             xs = torch.stack(ret, dim=0).unsqueeze(1) / 2  # B, 1, T, T
         else:
-            x = 1.0 - self.minimaxn(x[:,0:1])
+            x = 1.0 - self.minimaxn(x[:, 0:1])
             xs = []
             for i in range(x.size(-1)):
                 if i != 0:
@@ -135,7 +135,7 @@ class NetTransform(nn.Module):
         return xs
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
-        # prepare data
+        # 0. prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens)].unsqueeze(1)  # for data parallel
         xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
@@ -151,7 +151,7 @@ class NetTransform(nn.Module):
                       'seq_energy': None,
                       'kernel': None}
 
-        # embedding task
+        # 1. embedding task
         h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
         if self.brewing:
             flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h,
@@ -164,11 +164,12 @@ class NetTransform(nn.Module):
         h = self.mvn(h)
         h = h * xs_pad_in_v + xs_pad_in_m
 
-        # evaluate hidden space similarity
-        kernel = torch.matmul(h, h.transpose(-2, -1))  # B, 1, T, T
-
-        # long time prediction task
+        # 1.1.prepare long time prediction task
         h = h.repeat(1, self.tnum, 1, 1)
+        # 1.2 evaluate hidden space similarity
+        kernel = torch.matmul(h, h.transpose(-2, -1))[:, 0:1, :, :]  # B, 1, T, T
+
+        # 2. decoder
         xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
         if self.brewing:
             flows = self.calculate_energy(start_state=h.contiguous(), end_state=xs_pad_out.contiguous(),
@@ -187,9 +188,9 @@ class NetTransform(nn.Module):
             loss_e = self.criterion_h(input=torch.sigmoid(kernel), target=kernel_target.detach())
             loss_e = loss_e.view(-1, tsz, tsz).masked_fill(seq_mask_kernel, 0).mean()
             if torch.isnan(kernel_target.sum()):
-                print("target nan")
+                raise ValueError("kernel target value has nan")
             if torch.isnan(kernel.sum()):
-                print("output nan")
+                raise ValueError("kernel value has nan")
             discontinuity = 0.0
         else:
             loss_e = 0.0
@@ -238,7 +239,7 @@ class NetTransform(nn.Module):
             # relation with sign : how much state change in amplitude space
             energy = (torch.abs(start_state) * w_hat_x_n.sum(-1)).mean(-1, keepdim=True) / \
                      (torch.abs(start_state) * w_hat_x_p.sum(-1)).mean(-1, keepdim=True)
-            energy[torch.isnan(energy)] = 0.0
+            energy[torch.isnan(energy)] = 1.0
             # energy[torch.isinf(energy)] = 0.0
             energy = 1.0 - energy
 

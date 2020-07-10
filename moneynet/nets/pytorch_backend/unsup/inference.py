@@ -19,12 +19,14 @@ class Inference(nn.Module):
         self.encoder = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
             nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
             nn.Linear(self.hdim, odim, bias=self.bias)
         ])
         self.decoder = nn.ModuleList([
             nn.Linear(odim, self.hdim, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, self.odim, bias=self.bias)
         ])
