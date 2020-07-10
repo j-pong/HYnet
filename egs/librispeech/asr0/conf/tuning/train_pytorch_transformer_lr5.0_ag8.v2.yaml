@@ -1,5 +1,5 @@
-# transformer AM parameter tuning #1
-# test_clean(WER) :  5.60% , training time : 15~17 hours
+# transformer AM parameter tuning #3
+# test_clean(WER) :  5.54% , training time : 18~20 hours
 accum-grad: 4 #8
 adim: 512 #256
 aheads: 8 #4
@@ -16,10 +16,10 @@ grad-clip: 5
 lsm-weight: 0.1
 model-module: moneynet.nets.pytorch_backend.e2e_asr_transformer:E2E
 mtlalpha: 0.0 #0.3
-opt: noam
+opt: adam #noam
 patience: 0
 sortagrad: 0
-transformer-attn-dropout-rate: 0.0
+transformer-attn-dropout-rate: 0.1 #0.0
 transformer-init: pytorch
 transformer-input-layer: conv2d
 transformer-length-normalized-loss: false
