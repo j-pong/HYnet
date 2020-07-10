@@ -82,6 +82,11 @@ class NetTransform(nn.Module):
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
         self.criterion_h = nn.BCELoss(reduction='none')
 
+        # monitoring buffer
+        self.buffs = {'out': [],
+                      'seq_energy': None,
+                      'kernel': None}
+
         # reporter for monitoring
         self.reporter = Reporter()
 
@@ -146,28 +151,50 @@ class NetTransform(nn.Module):
         xs_pad_out_m = torch.mean(xs_pad_out, dim=-1, keepdim=True)
         xs_pad_out_v = torch.mean(torch.pow(xs_pad_out - xs_pad_out_m, 2), dim=-1, keepdim=True)
 
-        # monitoring buffer
+        # initialization buffer
         self.buffs = {'out': [],
                       'seq_energy': None,
                       'kernel': None}
 
         # 1. embedding task
         h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
+        h = self.mvn(h)
+        h = h * xs_pad_in_v + xs_pad_in_m
         if self.brewing:
             flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h,
                                           func=self.engine.encoder,
                                           ratio=ratio,
                                           flows={'e': None})
             energy = flows['e']
+            kernel_target = self.fb(energy)
             if buffering:
                 self.buffs['seq_energy_enc'] = energy
-        h = self.mvn(h)
-        h = h * xs_pad_in_v + xs_pad_in_m
+                self.buffs['kernel_target'] = kernel_target
+
+            # # compute loss of hidden space
+            # seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
+            #                                     (~seq_mask).unsqueeze(1).float())).bool()
+            # h = (kernel_target.unsqueeze(-1) *
+            #      h.unsqueeze(-2).repeat(1, 1, 1, h.size(-2), 1)).mean(-2)
+
+            loss_e = 0.0
+        else:
+            loss_e = 0.0
 
         # 1.1.prepare long time prediction task
         h = h.repeat(1, self.tnum, 1, 1)
         # 1.2 evaluate hidden space similarity
-        kernel = torch.matmul(h, h.transpose(-2, -1))[:, 0:1, :, :]  # B, 1, T, T
+        kernel = torch.sigmoid(torch.matmul(h, h.transpose(-2, -1)))  # B, 1, T, T
+        # if self.brewing:
+        #     tsz = seq_mask_kernel.size(1)
+        #     loss_e = self.criterion_h(input=kernel, target=kernel_target.detach())
+        #     loss_e = loss_e.view(-1, tsz, tsz).masked_fill(seq_mask_kernel, 0).mean()
+        #     if torch.isnan(kernel_target.sum()):
+        #         raise ValueError("kernel target value has nan")
+        #     if torch.isnan(kernel.sum()):
+        #         raise ValueError("kernel value has nan")
+        # else:
+        #     pass
 
         # 2. decoder
         xs_pad_out_hat, ratio = self.engine(h, self.engine.decoder)
@@ -177,23 +204,10 @@ class NetTransform(nn.Module):
                                           ratio=ratio,
                                           flows={'e': None})
             energy = flows['e']
-            kernel_target = self.fb(energy)
             if buffering:
-                self.buffs['seq_energy_dec'] = kernel_target[:, :, :400, :400]
-
-            # compute loss of hidden space
-            seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
-                                                (~seq_mask).unsqueeze(1).float())).bool()
-            tsz = seq_mask_kernel.size(1)
-            loss_e = self.criterion_h(input=torch.sigmoid(kernel), target=kernel_target.detach())
-            loss_e = loss_e.view(-1, tsz, tsz).masked_fill(seq_mask_kernel, 0).mean()
-            if torch.isnan(kernel_target.sum()):
-                raise ValueError("kernel target value has nan")
-            if torch.isnan(kernel.sum()):
-                raise ValueError("kernel value has nan")
+                self.buffs['seq_energy_dec'] = energy
             discontinuity = 0.0
         else:
-            loss_e = 0.0
             discontinuity = 0.0
         xs_pad_out_hat = self.mvn(xs_pad_out_hat)
         xs_pad_out_hat = xs_pad_out_hat * xs_pad_out_v + xs_pad_out_m
@@ -205,7 +219,7 @@ class NetTransform(nn.Module):
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 masks).mean()
-        loss = loss_g + loss_e
+        loss = loss_g
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'e_loss': float(loss_e),
@@ -271,6 +285,7 @@ class NetTransform(nn.Module):
         if self.brewing:
             ret['seq_energy_enc'] = self.buffs['seq_energy_enc'][:, 0, :].cpu().numpy()
             ret['seq_energy_dec'] = self.buffs['seq_energy_dec'][:, 0, :].cpu().numpy()
+            ret['kernel_target'] = self.buffs['kernel_target'][:, 0].cpu().numpy()
         return ret
 
     def recognize(self, x):
