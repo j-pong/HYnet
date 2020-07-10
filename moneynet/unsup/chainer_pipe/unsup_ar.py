@@ -547,7 +547,9 @@ def train(args):
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))
     trainer.extend(extensions.PlotReport(["main/e_loss",
-                                          "validation/main/e_loss"], "epoch", file_name="energy.png", ))
+                                          "validation/main/e_loss"], "epoch", file_name="e_loss.png", ))
+    trainer.extend(extensions.PlotReport(["main/g_loss",
+                                          "validation/main/g_loss"], "epoch", file_name="g_loss.png", ))
     trainer.extend(extensions.PlotReport(["main/discontinuity",
                                           "validation/main/discontinuity"], "epoch", file_name="discontinuity.png", ))
 
@@ -570,9 +572,7 @@ def train(args):
         "epoch",
         "iteration",
         "main/loss",
-        "main/e_loss",
-        "validation/main/loss"
-        "validation/main/e_loss",
+        "validation/main/loss",
         "elapsed_time",
     ]
     if args.opt == "adadelta":
