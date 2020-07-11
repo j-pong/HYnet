@@ -15,6 +15,8 @@ def initialize(model, init_type="xavier_normal"):
                 nn.init.kaiming_uniform_(p.data, nonlinearity="relu")
             elif init_type == "kaiming_normal":
                 nn.init.kaiming_normal_(p.data, nonlinearity="relu")
+            elif init_type == "orthogonal":
+                nn.init.orthogonal_(p.data, gain=1)
             else:
                 raise ValueError("Unknown initialization: " + init_type)
     # bias init

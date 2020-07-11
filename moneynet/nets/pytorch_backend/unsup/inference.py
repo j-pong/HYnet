@@ -23,9 +23,14 @@ class Inference(nn.Module):
             nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(self.hdim, odim, bias=self.bias)
+            nn.Linear(self.hdim, odim * 2, bias=self.bias)
         ])
-        self.decoder = nn.ModuleList([
+        self.decoder_high = nn.ModuleList([
+            nn.Linear(odim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.odim, bias=self.bias)
+        ])
+        self.decoder_low = nn.ModuleList([
             nn.Linear(odim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, self.odim, bias=self.bias)
