@@ -157,35 +157,37 @@ class NetTransform(nn.Module):
 
         # 1. embedding task
         h, ratio = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
+        # split for low-high decoder
+        h_h = h[:, :, :, :self.odim]
+        ratio[-1] = ratio[-1][:, :, :, :self.odim]
+        # h_l = h[:, :, :, self.odim:].repeat(1, self.tnum, 1, 1)
         if self.brewing:
-            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h,
+            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h_h,
                                           func=self.engine.encoder,
                                           ratio=ratio,
-                                          flows={'e': None})
+                                          flows={'e': None},
+                                          split_dim=1)
             energy = flows['e']
             if buffering:
                 self.buffs['seq_energy_enc'] = energy
         # normalization feature from input space mean-variance
-        h = self.mvn(h)
-        h = h * xs_pad_in_v + xs_pad_in_m
-        # split for low-high decoder
-        h_h = h[:, :, :, :self.odim]
-        h_l = h[:, :, :, self.odim:].repeat(1, self.tnum, 1, 1)
+        h_h = self.mvn(h_h)
+        h_h = h_h * xs_pad_in_v + xs_pad_in_m
         # calculate similarity matrix
         kernel = torch.sigmoid(torch.matmul(h_h, h_h.transpose(-2, -1)))  # B, 1, T, T
         if buffering:
             self.buffs['kernel'] = kernel
 
         # 2. decoder
-        xs_pad_out_l_hat, ratio_l = self.engine(h_l, self.engine.decoder_low)
+        # xs_pad_out_l_hat, ratio_l = self.engine(h_l, self.engine.decoder_low)
         xs_pad_out_h_hat, ratio_h = self.engine(h_h, self.engine.decoder_high)
         if self.brewing:
-            flows = self.calculate_energy(start_state=h_l.contiguous(), end_state=xs_pad_out.contiguous(),
-                                          func=self.engine.decoder_low,
-                                          ratio=ratio_l,
-                                          flows={'e': None})
-            energy_d_l = flows['e']
-            kernel_target_l = self.fb(energy_d_l)
+            # flows = self.calculate_energy(start_state=h_l.contiguous(), end_state=xs_pad_out.contiguous(),
+            #                               func=self.engine.decoder_low,
+            #                               ratio=ratio_l,
+            #                               flows={'e': None})
+            # energy_d_l = flows['e']
+            # kernel_target_l = self.fb(energy_d_l)
             flows = self.calculate_energy(start_state=h_h.contiguous(), end_state=xs_pad_out[:, 0:1].contiguous(),
                                           func=self.engine.decoder_high,
                                           ratio=ratio_h,
@@ -194,7 +196,7 @@ class NetTransform(nn.Module):
             kernel_target_h = self.fb(energy_d_h)
             if buffering:
                 self.buffs['seq_energy_dec'] = energy_d_h
-                self.buffs['kernel_target_l'] = kernel_target_l
+                # self.buffs['kernel_target_l'] = kernel_target_l
                 self.buffs['kernel_target_h'] = kernel_target_h
 
             # # compute loss of hidden space
@@ -211,37 +213,37 @@ class NetTransform(nn.Module):
             loss_e = 0.0
         else:
             loss_e = 0.0
-        xs_pad_out_l_hat = self.mvn(xs_pad_out_l_hat)
-        xs_pad_out_l_hat = xs_pad_out_l_hat * xs_pad_out_v[:, 0:1] + xs_pad_out_m[:, 0:1]
+        # xs_pad_out_l_hat = self.mvn(xs_pad_out_l_hat)
+        # xs_pad_out_l_hat = xs_pad_out_l_hat * xs_pad_out_v[:, 0:1] + xs_pad_out_m[:, 0:1]
         xs_pad_out_h_hat = self.mvn(xs_pad_out_h_hat)
         xs_pad_out_h_hat = xs_pad_out_h_hat * xs_pad_out_v[:, 0:1] + xs_pad_out_m[:, 0:1]
         if buffering:
             self.buffs['out'] = xs_pad_out_h_hat
 
-        # compute loss of total network
-        loss_l_g = self.criterion(xs_pad_out_l_hat.view(-1, self.idim),
-                                  xs_pad_out.contiguous().view(-1, self.idim),
-                                  [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)],
-                                  'none')
-        if self.brewing:
-            kernel_weights = []
-            for i in range(self.tnum):
-                kernel_weight = torch.diagonal(kernel_target_h, i, dim1=-2, dim2=-1)
-                if i > 0:
-                    padding = torch.zeros_like(kernel_weight[:, :, 0:i])
-                    kernel_weight = torch.cat([kernel_weight, padding], dim=-1)
-                kernel_weights.append(kernel_weight)
-            kernel_weights = torch.cat(kernel_weights, dim=1)
-            loss_l_g = loss_l_g * kernel_weights.view(-1, 1)
-            loss_l_g = loss_l_g.sum()
+        # # compute loss of total network
+        # loss_l_g = self.criterion(xs_pad_out_l_hat.view(-1, self.idim),
+        #                           xs_pad_out.contiguous().view(-1, self.idim),
+        #                           [seq_mask.unsqueeze(1).repeat(1, self.tnum, 1).view(-1, 1)],
+        #                           'none')
+        # if self.brewing:
+        #     kernel_weights = []
+        #     for i in range(self.tnum):
+        #         kernel_weight = torch.diagonal(kernel_target_h, i, dim1=-2, dim2=-1)
+        #         if i > 0:
+        #             padding = torch.zeros_like(kernel_weight[:, :, 0:i])
+        #             kernel_weight = torch.cat([kernel_weight, padding], dim=-1)
+        #         kernel_weights.append(kernel_weight)
+        #     kernel_weights = torch.cat(kernel_weights, dim=1)
+        #     loss_l_g = loss_l_g * kernel_weights.view(-1, 1)
+        #     loss_l_g = loss_l_g.sum()
         loss_h_g = self.criterion(xs_pad_out_h_hat.view(-1, self.idim),
                                   xs_pad_out[:, 0:1].contiguous().view(-1, self.idim),
-                                  [seq_mask.view(-1, 1)]).sum()
-        loss = loss_l_g + loss_h_g + loss_e
+                                  [seq_mask.view(-1, 1)])
+        loss = loss_h_g
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'e_loss': float(loss_e),
-                                  'l_loss': float(loss_l_g),
+                                  'l_loss': float(0.0),
                                   'h_loss': float(loss_h_g)})
         else:
             print("loss (=%f) is not c\orrect", float(loss))
@@ -249,10 +251,10 @@ class NetTransform(nn.Module):
 
         return loss
 
-    def calculate_energy(self, start_state, end_state, func, ratio, flows={'e': None}):
+    def calculate_energy(self, start_state, end_state, func, ratio, flows={'e': None}, split_dim=None):
         with torch.no_grad():
             # prepare data
-            p_hat = self.engine.brew_(module_list=func, ratio=ratio)
+            p_hat = self.engine.brew_(module_list=func, ratio=ratio, split_dim=split_dim)
             w_hat = p_hat[0]
             b_hat = p_hat[1]
 
@@ -304,7 +306,7 @@ class NetTransform(nn.Module):
             ret['seq_energy_enc'] = self.buffs['seq_energy_enc'][:, 0, :].cpu().numpy()
             ret['seq_energy_dec'] = self.buffs['seq_energy_dec'][:, 0, :].cpu().numpy()
             ret['kernel_target_h'] = self.buffs['kernel_target_h'][:, 0].cpu().numpy()
-            ret['kernel_target_l'] = self.buffs['kernel_target_l'][:, 0].cpu().numpy()
+            # ret['kernel_target_l'] = self.buffs['kernel_target_l'][:, 0].cpu().numpy()
         return ret
 
     def recognize(self, x):

@@ -62,20 +62,37 @@ class Inference(nn.Module):
         return x, ratio
 
     @staticmethod
-    def brew_(module_list, ratio, w_hat=None, bias_hat=None):
+    def brew_(module_list, ratio, split_dim=None, w_hat=None, bias_hat=None):
         i = 0
         for module in module_list:
             if isinstance(module, nn.Linear):
-                w = module.weight
+                if split_dim is None:
+                    w = module.weight
+                elif split_dim > 0:
+                    w = module.weight[:split_dim * ratio[i].size(-1)]
+                elif split_dim < 0:
+                    w = module.weight[-split_dim * ratio[i].size(-1):]
+                else:
+                    raise AttributeError
+
                 if w_hat is None:
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w.transpose(-2, -1).unsqueeze(
-                        0)  # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
+                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
+                            w.transpose(-2, -1).unsqueeze(0)
+                    # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
                 else:
                     w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
                     w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
 
                 if module.bias is not None:
-                    b = module.bias
+                    if split_dim is None:
+                        b = module.bias
+                    elif split_dim > 0:
+                        b = module.bias[:split_dim * ratio[i].size(-1)]
+                    elif split_dim < 0:
+                        b = module.bias[-split_dim * ratio[i].size(-1):]
+                    else:
+                        raise AttributeError
+
                     if bias_hat is None:
                         bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
                     else:
