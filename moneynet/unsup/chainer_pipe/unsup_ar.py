@@ -546,12 +546,6 @@ def train(args):
 
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))
-    trainer.extend(extensions.PlotReport(["main/e_loss",
-                                          "validation/main/e_loss"], "epoch", file_name="e_loss.png", ))
-    trainer.extend(extensions.PlotReport(["main/l_loss",
-                                          "validation/main/l_loss"], "epoch", file_name="l_loss.png", ))
-    trainer.extend(extensions.PlotReport(["main/h_loss",
-                                          "validation/main/h_loss"], "epoch", file_name="h_loss.png", ))
 
     # Save best models
     trainer.extend(

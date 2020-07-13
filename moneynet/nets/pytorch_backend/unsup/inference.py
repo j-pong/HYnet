@@ -16,24 +16,26 @@ class Inference(nn.Module):
         self.tnum = args.tnum
 
         self.bias = args.bias
-        self.encoder = nn.ModuleList([
+
+        self.embed = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(self.hdim, odim * 2, bias=self.bias)
+            nn.Linear(self.hdim, self.hdim, bias=self.bias)
         ])
-        self.decoder_high = nn.ModuleList([
-            nn.Linear(odim, self.hdim, bias=self.bias),
+        self.transform = nn.ModuleList([
+            nn.Linear(idim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(self.hdim, self.odim, bias=self.bias)
-        ])
-        self.decoder_low = nn.ModuleList([
-            nn.Linear(odim, self.hdim, bias=self.bias),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(self.hdim, self.odim, bias=self.bias)
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, odim, bias=self.bias)
         ])
 
     @staticmethod
@@ -42,24 +44,6 @@ class Inference(nn.Module):
         rat[torch.isnan(rat)] = 0.0
 
         return rat
-
-    def forward_(self, x, module_list):
-        ratio = []
-        for idx, module in enumerate(module_list):
-            if isinstance(module, nn.Linear):
-                if idx > 0:
-                    ratio.append(self.calculate_ratio(x, x_base))
-                x_base = module(x)
-                x = x_base
-            elif isinstance(module, nn.ReLU):
-                x = module(x)
-            else:
-                raise AttributeError("Current network architecture is not supported!")
-
-            if len(module_list) - 1 == idx:
-                ratio.append(self.calculate_ratio(x, x_base))
-
-        return x, ratio
 
     @staticmethod
     def brew_(module_list, ratio, split_dim=None, w_hat=None, bias_hat=None):
@@ -109,7 +93,20 @@ class Inference(nn.Module):
         return w_hat, bias_hat
 
     def forward(self, x, module_list):
-        x, ratio = self.forward_(x, module_list=module_list)
+        ratio = []
+        for idx, module in enumerate(module_list):
+            if isinstance(module, nn.Linear):
+                if idx > 0:
+                    ratio.append(self.calculate_ratio(x, x_base))
+                x_base = module(x)
+                x = x_base
+            elif isinstance(module, nn.ReLU):
+                x = module(x)
+            else:
+                raise AttributeError("Current network architecture is not supported!")
+
+            if len(module_list) - 1 == idx:
+                ratio.append(self.calculate_ratio(x, x_base))
 
         return x, ratio
 

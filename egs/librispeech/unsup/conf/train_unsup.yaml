@@ -1,5 +1,5 @@
 # model name for training
-model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:NetTransform"
+model-module: "moneynet.nets.pytorch_backend.ar_unsup_gate:NetTransform"
 
 # minibatch related
 accum-grad: 8
