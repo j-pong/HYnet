@@ -1,8 +1,6 @@
 import torch
 from torch import nn
 
-from fairseq.models.wav2vec import Wav2VecModel
-
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
 

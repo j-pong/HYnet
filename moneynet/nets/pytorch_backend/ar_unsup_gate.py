@@ -54,6 +54,7 @@ class NetTransform(nn.Module):
         # task related
         group.add_argument("--brewing", default=0, type=int)
         group.add_argument("--field_var", default=13.0, type=float)
+        group.add_argument("--target_type", default='residual', type=str)
 
         return parser
 
@@ -69,6 +70,7 @@ class NetTransform(nn.Module):
 
         # related task
         self.brewing = args.brewing
+        self.target_type = args.target_type
 
         # inference part with action and selection
         self.engine = Inference(idim=self.idim, odim=self.idim, args=args)
@@ -96,11 +98,40 @@ class NetTransform(nn.Module):
         max_x = torch.max(x)
         min_x = torch.min(x)
         if (max_x - min_x) == 0.0:
-            raise ValueError('Divided by the zero with max-min value : {}'.format((max_x - min_x)))
+            logging.warning('Divided by the zero with max-min value : {}, Thus return None'.format((max_x - min_x)))
+            x = None
         else:
             x = (x - min_x) / (max_x - min_x)
 
         return x
+
+    @staticmethod
+    def fb(x, mode='batch'):
+        # TODO(j-pong): multi-target energy
+        if mode == 'batch':
+            x = x[:, 0]
+            bsz, tsz = x.size()
+            xs = x.unsqueeze(-1).repeat(1, 1, tsz)
+            ret = []
+            for x in xs:
+                m_f = torch.triu(torch.ones(tsz, tsz)).to(x.device)
+                x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2) - m_f
+                m_b = torch.tril(torch.ones(tsz, tsz)).to(x.device)
+                x_b = torch.cumprod((torch.triu(x) + m_b).flip(dims=[-2]), dim=-2).flip(dims=[-2]) - m_b
+                ret.append(x_b + x_f)
+            xs = torch.stack(ret, dim=0).unsqueeze(1) / 2  # B, 1, T, T
+        else:
+            xs = []
+            for i in range(x.size(-1)):
+                if i != 0:
+                    x_f = torch.cumprod(x[:, :, i:], dim=-1)
+                    x_b = torch.cumprod(x[:, :, :i].flip(dims=[-1]), dim=-1).flip(dims=[-1])
+                    xs.append(torch.cat([x_b, x_f], dim=-1))
+                else:
+                    xs.append(torch.cumprod(x[:, :, :], dim=-1))
+            xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
+
+        return xs
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
@@ -129,18 +160,21 @@ class NetTransform(nn.Module):
                                           flows={'e': None})
             energy_e = flows['e']
             # Todo(j-pong): one step similarity test
-            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=xs_pad_out[:, 0:1].contiguous(),
+            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=xs_pad_out_hat.contiguous(),
                                           func=self.engine.transform,
                                           ratio=ratio_t,
                                           flows={'e': None})
             energy_t = flows['e']
             # kernel_target_e = self.fb(energy_e)
             kernel_target_t = self.fb(energy_t)
-        xs_pad_out_hat = self.mvn(xs_pad_out_hat)
-        xs_pad_out_hat = xs_pad_out_hat * xs_pad_in_v[:, 0:1] + xs_pad_in_m[:, 0:1]
+        if self.target_type == 'mvn':
+            xs_pad_out_hat = self.mvn(xs_pad_out_hat)
+            xs_pad_out_hat = xs_pad_out_hat * xs_pad_in_v + xs_pad_in_m
+        elif self.target_type == 'residual':
+            xs_pad_out_hat += xs_pad_in
 
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
-                                xs_pad_out[:, 0:1].contiguous().view(-1, self.idim),
+                                xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)])
         loss = loss_g
         if not torch.isnan(loss):
@@ -185,7 +219,11 @@ class NetTransform(nn.Module):
             if num_nan > 0.1:
                 logging.warning("Energy sequence impose the nan {}".format(num_nan))
             energy[torch.isnan(energy)] = 1.0
-            # energy = torch.relu(1.0 - energy)
+
+            if self.target_type == 'mvn':
+                energy = self.minimaxn(torch.pow(energy, 2))
+            elif self.target_type == 'residual':
+                energy = self.minimaxn(1.0 - torch.pow(1.0 - energy, 2))
 
             # calculate energy
             for key in flows.keys():
@@ -195,34 +233,6 @@ class NetTransform(nn.Module):
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 
         return flows
-
-    def fb(self, x, mode='batch'):
-        if mode == 'batch':
-            # TODO(j-pong): multi-target energy
-            x = 1.0 - self.minimaxn(x[:, 0])
-            bsz, tsz = x.size()
-            xs = x.unsqueeze(-1).repeat(1, 1, tsz)
-            ret = []
-            for x in xs:
-                m_f = torch.triu(torch.ones(tsz, tsz)).to(x.device)
-                x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2) - m_f
-                m_b = torch.tril(torch.ones(tsz, tsz)).to(x.device)
-                x_b = torch.cumprod((torch.triu(x) + m_b).flip(dims=[-2]), dim=-2).flip(dims=[-2]) - m_b
-                ret.append(x_b + x_f)
-            xs = torch.stack(ret, dim=0).unsqueeze(1) / 2  # B, 1, T, T
-        else:
-            x = 1.0 - self.minimaxn(x[:, 0:1])
-            xs = []
-            for i in range(x.size(-1)):
-                if i != 0:
-                    x_f = torch.cumprod(x[:, :, i:], dim=-1)
-                    x_b = torch.cumprod(x[:, :, :i].flip(dims=[-1]), dim=-1).flip(dims=[-1])
-                    xs.append(torch.cat([x_b, x_f], dim=-1))
-                else:
-                    xs.append(torch.cumprod(x[:, :, :], dim=-1))
-            xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
-
-        return xs
 
     """
     Evaluation related
@@ -237,7 +247,7 @@ class NetTransform(nn.Module):
             self.forward(xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=True)
 
         dump = dict()
-        for key in self.reporter_buffs.keys:
+        for key in self.reporter_buffs.keys():
             dump[key] = self.reporter_buffs[key].cpu().numpy()
 
         return dump
