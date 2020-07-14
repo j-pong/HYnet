@@ -567,6 +567,10 @@ def train(args):
         "iteration",
         "main/loss",
         "validation/main/loss",
+        "main/loss_g",
+        "validation/main/loss_g"
+        "main/loss_e",
+        "validation/main/loss_e"
         "elapsed_time",
     ]
     if args.opt == "adadelta":

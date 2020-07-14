@@ -77,7 +77,7 @@ class NetTransform(nn.Module):
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
-        self.criterion_h = nn.BCELoss(reduction='none')
+        self.criterion_kernel = SeqMultiMaskLoss(criterion=nn.BCELoss(reduction='none'))
 
         # reporter for monitoring
         self.reporter = Reporter()
@@ -138,6 +138,8 @@ class NetTransform(nn.Module):
         xs_pad_in = xs_pad_in[:, :max(ilens)].unsqueeze(1)  # for data parallel
         xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
+        seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
+                                            (~seq_mask).unsqueeze(1).float())).bool()
 
         xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
         xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
@@ -145,51 +147,76 @@ class NetTransform(nn.Module):
         # initialization buffer
         self.reporter_buffs = {}
 
-        # 1. embedding task
-        h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
-
-        # 2. calculate similarity matrix
-        kernel = torch.sigmoid(torch.matmul(h, h.transpose(-2, -1)))  # B, 1, T, T
-
-        # 3. transform for checking similarity
+        # 1. transform for checking similarity
         xs_pad_out_hat, ratio_t = self.engine(xs_pad_in, self.engine.transform)
+        if self.target_type == 'mvn':
+            xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
+            xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
+        elif self.target_type == 'residual':
+            xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
+
+        loss_g = self.criterion(xs_pad_out_hat_.view(-1, self.idim),
+                                xs_pad_out.contiguous().view(-1, self.idim),
+                                [seq_mask.view(-1, 1)],
+                                reduction='none')
+        # bsz, tnsz, tsz = energy_t.size()
+        # energy_field = 1.0 - self.minimaxn(loss_g.detach().mean(-1, keepdim=True).view(bsz, tnsz, tsz))
+
+        # 2. calculate energy of sequence
         if self.brewing:
-            flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h.contiguous(),
-                                          func=self.engine.embed,
-                                          ratio=ratio_e,
-                                          flows={'e': None})
-            energy_e = flows['e']
             # Todo(j-pong): one step similarity test
             flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=xs_pad_out_hat.contiguous(),
                                           func=self.engine.transform,
                                           ratio=ratio_t,
                                           flows={'e': None})
             energy_t = flows['e']
-            # kernel_target_e = self.fb(energy_e)
             kernel_target_t = self.fb(energy_t)
-        if self.target_type == 'mvn':
-            xs_pad_out_hat = self.mvn(xs_pad_out_hat)
-            xs_pad_out_hat = xs_pad_out_hat * xs_pad_in_v + xs_pad_in_m
-        elif self.target_type == 'residual':
-            xs_pad_out_hat += xs_pad_in
 
-        loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
-                                xs_pad_out.contiguous().view(-1, self.idim),
-                                [seq_mask.view(-1, 1)])
-        loss = loss_g
+        # 3. embedding task
+        h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
+        # if self.brewing:
+        #     flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h.contiguous(),
+        #                                   func=self.engine.embed,
+        #                                   ratio=ratio_e,
+        #                                   flows={'e': None})
+        #     energy_e = flows['e']
+
+        # 4. calculate similarity matrix
+        kernel = torch.sigmoid(torch.matmul(h, h.transpose(-2, -1)))  # B, 1, T, T
+
+        if self.brewing:
+            tsz = seq_mask_kernel.size(1)
+            kernel_mask = kernel_target_t.view(-1, tsz, tsz) > 0.1
+            loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
+                                           kernel_target_t.view(-1, tsz, tsz).detach(),
+                                           [seq_mask_kernel, ~kernel_mask],
+                                           reduction='none')
+            # loss_e_n = self.criterion_kernel(kernel.view(-1, tsz, tsz),
+            #                                  kernel_target_t_negative.view(-1, tsz, tsz).detach(),
+            #                                  [seq_mask_kernel, kernel_mask],
+            #                                  reduction='none')
+            if torch.isnan(kernel_target_t.sum()):
+                raise ValueError("kernel target value has nan")
+            if torch.isnan(kernel.sum()):
+                raise ValueError("kernel value has nan")
+
+        # 5. summary all task
+        loss = loss_g.sum() + loss_e.sum()
         if not torch.isnan(loss):
-            self.reporter.report({'loss': float(loss)})
+            self.reporter.report({'loss': float(loss),
+                                  'loss_g': float(loss_g.sum()),
+                                  'loss_e': float(loss_e.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
-            self.reporter_buffs['out'] = xs_pad_out_hat
+            self.reporter_buffs['out'] = xs_pad_out_hat_
             self.reporter_buffs['kernel'] = kernel
             if self.brewing:
-                self.reporter_buffs['energy_e'] = energy_e[:, 0]
+                # self.reporter_buffs['energy_e'] = energy_e[:, 0]
                 self.reporter_buffs['energy_t'] = energy_t[:, 0]
-                # self.reporter_buffs['kernel_target_e'] = kernel_target_e[:, 0]
                 self.reporter_buffs['kernel_target_t'] = kernel_target_t[:, 0]
+                self.reporter_buffs['kernel_mask'] = kernel_mask[:, 0]
 
         return loss
 
@@ -233,6 +260,12 @@ class NetTransform(nn.Module):
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 
         return flows
+
+    # def sample(self, x, energy):
+    #     bsz, tnsz, tsz, fsz = x.size()
+    #     with torch.no_grad():
+    #         xs = []
+    #         for i in range(tsz):
 
     """
     Evaluation related
