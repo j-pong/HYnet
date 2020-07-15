@@ -114,12 +114,14 @@ class NetTransform(nn.Module):
             xs = x.unsqueeze(-1).repeat(1, 1, tsz)
             ret = []
             for x in xs:
-                m_f = torch.triu(torch.ones(tsz, tsz)).to(x.device)
-                x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2) - m_f
-                m_b = torch.tril(torch.ones(tsz, tsz)).to(x.device)
-                x_b = torch.cumprod((torch.triu(x) + m_b).flip(dims=[-2]), dim=-2).flip(dims=[-2]) - m_b
-                ret.append(x_b + x_f)
-            xs = torch.stack(ret, dim=0).unsqueeze(1) / 2  # B, 1, T, T
+                ones = torch.ones(tsz, tsz).to(x.device)
+
+                m_f = torch.triu(ones, diagonal=1)
+                x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2)
+                x_f = torch.cat([ones[0:1], x_f[:-1]], dim=0) - m_f
+
+                ret.append(x_f)
+            xs = torch.stack(ret, dim=0).unsqueeze(1)  # B, 1, T, T
         else:
             xs = []
             for i in range(x.size(-1)):
@@ -216,7 +218,7 @@ class NetTransform(nn.Module):
                 # self.reporter_buffs['energy_e'] = energy_e[:, 0]
                 self.reporter_buffs['energy_t'] = energy_t[:, 0]
                 self.reporter_buffs['kernel_target_t'] = kernel_target_t[:, 0]
-                self.reporter_buffs['kernel_mask'] = kernel_mask[:, 0]
+                self.reporter_buffs['kernel_mask'] = kernel_mask
 
         return loss
 
