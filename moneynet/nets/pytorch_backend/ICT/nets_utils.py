@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 def mixup_data(x, y, ilens, alpha, scheme="global"):
     '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
@@ -80,3 +81,15 @@ def update_ema_variables(model, ema_model, alpha, global_step):
     alpha = min(1 - 1 / (global_step + 1), alpha)
     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
         ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
+
+def softmax_mse_loss(input_logits, target_logits, reduction_str=None):
+    """Takes softmax on both sides and returns MSE loss
+    Note:
+    - Returns the sum over all examples. Divide by the batch size afterwards
+      if you want the mean.
+    - Sends gradients to inputs but not the targets.
+    """
+    assert input_logits.size() == target_logits.size()
+    input_softmax = F.softmax(input_logits, dim=1)
+    target_softmax = F.softmax(target_logits, dim=1)
+    return F.mse_loss(input_softmax, target_softmax, reduction=reduction_str)
