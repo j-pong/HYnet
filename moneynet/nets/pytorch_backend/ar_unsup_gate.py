@@ -172,7 +172,6 @@ class NetTransform(nn.Module):
                                           ratio=ratio_t,
                                           flows={'e': None})
             energy_t = flows['e']
-            kernel_target_t = self.fb(energy_t)
 
         # 3. embedding task
         h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
@@ -187,16 +186,35 @@ class NetTransform(nn.Module):
         kernel = torch.sigmoid(torch.matmul(h, h.transpose(-2, -1)))  # B, 1, T, T
 
         if self.brewing:
+            # get size of sequence
             tsz = seq_mask_kernel.size(1)
+
+            # get energy group mask
+            mask = []
+            for en in (1.0 - energy_t):
+                if self.tnum == 1:
+                    num_neg = int(en[0].sum(-1))
+                    indices = torch.topk(en, k=num_neg, dim=-1)[-1]
+                    # indices = indices.sort()[0]
+                else:
+                    raise AttributeError('Number of the target > 1 is not support yet!')
+                m = torch.ones_like(en[0])
+                m[indices] = 0.0
+                mask.append(m.unsqueeze(0).bool())
+            mask = torch.stack(mask, dim=0)
+
+            # filtering low energy sample
+            energy_t[mask] = 1.0
+
+            # get target mask
+            kernel_target_t = self.fb(energy_t)
             kernel_mask = kernel_target_t.view(-1, tsz, tsz) > 0.1
+
+            # calculate energy
             loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
                                            kernel_target_t.view(-1, tsz, tsz).detach(),
                                            [seq_mask_kernel, ~kernel_mask],
                                            reduction='none')
-            # loss_e_n = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-            #                                  kernel_target_t_negative.view(-1, tsz, tsz).detach(),
-            #                                  [seq_mask_kernel, kernel_mask],
-            #                                  reduction='none')
             if torch.isnan(kernel_target_t.sum()):
                 raise ValueError("kernel target value has nan")
             if torch.isnan(kernel.sum()):
@@ -262,12 +280,6 @@ class NetTransform(nn.Module):
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 
         return flows
-
-    # def sample(self, x, energy):
-    #     bsz, tnsz, tsz, fsz = x.size()
-    #     with torch.no_grad():
-    #         xs = []
-    #         for i in range(tsz):
 
     """
     Evaluation related
