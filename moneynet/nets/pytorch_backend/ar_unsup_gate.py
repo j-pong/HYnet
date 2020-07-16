@@ -55,7 +55,7 @@ class NetTransform(nn.Module):
         # task related
         group.add_argument("--field-var", default=13.0, type=float)
         group.add_argument("--target-type", default='residual', type=str)
-
+        group.add_argument("--cutting_gauge", default=0, type=int)
 
         return parser
 
@@ -70,8 +70,8 @@ class NetTransform(nn.Module):
         self.subsample = [1]
 
         # related task
-        self.brewing = args.brewing
         self.target_type = args.target_type
+        self.cutting_gauge = args.cutting_gauge
         ## instance task
         self.task1 = False
         self.task2 = True
@@ -143,7 +143,31 @@ class NetTransform(nn.Module):
                     xs.append(torch.cumprod(x[:, :, :], dim=-1))
             xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
 
+        if torch.isnan(xs.sum()):
+            raise ValueError("kernel target value has nan")
+
         return xs
+
+    def clustering(self, xs):
+        """
+        xs: (B, tnum, Tmax)
+
+        return: (B, 1, Tmax)
+        """
+        with torch.no_grad():
+            ms = []
+            for x in (1.0 - xs):
+                if self.tnum == 1:
+                    num_neg = int(x[0].sum(-1))
+                    indices = torch.topk(x, k=num_neg, dim=-1)[-1]
+                else:
+                    raise AttributeError('Number of the target > 1 is not support yet!')
+                m = torch.zeros_like(x[0])
+                m[indices] = 1.0
+                ms.append(m.unsqueeze(0).bool())
+            ms = torch.stack(ms, dim=0)
+
+        return ms
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
@@ -191,28 +215,18 @@ class NetTransform(nn.Module):
         #     energy_e = flows['e']
 
         # get energy group mask
-        mask = []
-        for en in (1.0 - energy_t):
-            if self.tnum == 1:
-                num_neg = int(en[0].sum(-1))
-                indices = torch.topk(en, k=num_neg, dim=-1)[-1]
-                # indices = indices.sort()[0]
-            else:
-                raise AttributeError('Number of the target > 1 is not support yet!')
-            m = torch.zeros_like(en[0])
-            m[indices] = 1.0
-            mask.append(m.unsqueeze(0).bool())
-        mask = torch.stack(mask, dim=0)
 
-        # filtering low energy sample
-        energy_t[mask] = 0.0
+        # 4. clustering with energy
+        mask = self.clustering(energy_t)
+
+        # 5. causal assumption
+        if self.cutting_gauge:
+            energy_t[mask] = 0.0
         kernel_target_t = self.fb(energy_t)
-        if torch.isnan(kernel_target_t.sum()):
-            raise ValueError("kernel target value has nan")
-        kernel_mask = kernel_target_t.view(-1, tsz, tsz) > 0.1
 
-        # calculate similarity matrix
-        h_agg = torch.matmul(kernel_target_t.transpose(-2, -1), h)  # B, 1, T', T x B, 1, T, hdim
+        # 6. calculate similarity matrix
+        h_agg = torch.matmul(kernel_target_t.transpose(-2, -1), h) / \
+                kernel_target_t.sum(-1, keepdim=True).detach()  # B, 1, T', T x B, 1, T, hdim
         kernel = torch.matmul(h_agg, h.transpose(-2, -1))  # B, 1, T, T
         if torch.isnan(kernel.sum()):
             raise ValueError("kernel value has nan")
@@ -221,27 +235,23 @@ class NetTransform(nn.Module):
             # calculate energy loss
             loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
                                            kernel_target_t.view(-1, tsz, tsz).detach(),
-                                           [seq_mask_kernel, ~kernel_mask],
+                                           [seq_mask_kernel, ~(kernel_target_t.view(-1, tsz, tsz) > 0.0)],
                                            reduction='none')
         elif self.task2:
-            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=-1, dim1=-2, dim2=-1).reshape(-1, 1)  # B * tnum, Tmax-1
+            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=-1, dim1=-2, dim2=-1).\
+                reshape(-1, 1)  # B * tnum, Tmax-1
             # truncate mask for diagonal prediction
             seq_mask = seq_mask[:, :-1]
             mask = mask[:, :, :-1].detach()
 
-            # denom = (~(seq_mask | mask)).float().sum()
-            # loss_e = (1 - mask) * torch.log(torch.sigmoid(prediction)) + mask * torch.log(
-            #     torch.sigmoid(-prediction))
-            # loss_e = -loss_e.masked_fill(seq_mask, 0.0) / denom
-
             target = mask.float().view(-1, 1).detach()
             loss_e = self.criterion_kernel(prediction,
                                            (1 - target).view(-1, 1).detach(),
-                                           [seq_mask.reshape(-1,1), ~mask.reshape(-1,1)],
+                                           [seq_mask.reshape(-1, 1), ~mask.reshape(-1, 1)],
                                            reduction='none') + \
                      self.criterion_kernel(-prediction,
                                            target.view(-1, 1).detach(),
-                                           [seq_mask.reshape(-1,1), mask.reshape(-1,1)],
+                                           [seq_mask.reshape(-1, 1), mask.reshape(-1, 1)],
                                            reduction='none')
 
         # summary all task
@@ -256,11 +266,10 @@ class NetTransform(nn.Module):
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat_
             self.reporter_buffs['kernel'] = torch.sigmoid(kernel)
-            if self.brewing:
-                # self.reporter_buffs['energy_e'] = energy_e[:, 0]
-                self.reporter_buffs['energy_t'] = energy_t[:, 0]
-                self.reporter_buffs['kernel_target_t'] = kernel_target_t[:, 0]
-                self.reporter_buffs['kernel_mask'] = kernel_mask
+
+            # self.reporter_buffs['energy_e'] = energy_e[:, 0]
+            self.reporter_buffs['energy_t'] = energy_t[:, 0]
+            self.reporter_buffs['kernel_target_t'] = kernel_target_t[:, 0]
 
         return loss
 
