@@ -286,11 +286,19 @@ class CustomConverter(object):
         if self.subsampling_factor > 1:
             xs = [x[:: self.subsampling_factor, :] for x in xs]
 
+        if len(xs) == 2:
+            logging.info("input and target are different form by transform")
+            xs_in = xs[0]
+            xs_out = xs[1]
+        else:
+            xs_in = xs
+            xs_out = xs
+
         # get batch of lengths of input sequences
-        ilens = np.array([x.shape[0] for x in xs[0]])
+        ilens = np.array([x.shape[0] for x in xs_in])
         xs_pad_in = pad_list(
             [torch.from_numpy(x[:-self.tnum]).float()
-             for x in xs[0]],
+             for x in xs_in],
             0
         ).to(device, dtype=self.dtype)
         xs_pad_out = pad_list(
@@ -298,7 +306,7 @@ class CustomConverter(object):
                 torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
                              if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
                              for i in range(self.tnum)], dim=1)
-                for x in xs[1]],
+                for x in xs_out],
             0
         ).to(device, dtype=self.dtype)
 
@@ -568,9 +576,11 @@ def train(args):
         "main/loss",
         "validation/main/loss",
         "main/loss_g",
-        "validation/main/loss_g"
+        "validation/main/loss_g",
         "main/loss_e",
-        "validation/main/loss_e"
+        "validation/main/loss_e",
+        "main/loss_e_neg",
+        "validation/main/loss_e_neg",
         "elapsed_time",
     ]
     if args.opt == "adadelta":

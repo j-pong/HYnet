@@ -71,13 +71,23 @@ class NetTransform(nn.Module):
         # related task
         self.brewing = args.brewing
         self.target_type = args.target_type
+        ## instance task
+        self.task1 = False
+        self.task1_1 = False
+        self.task2 = True
+
+        # self.field_var = args.field_var
+        # space = np.linspace(0, self.odim - 1, self.odim)
+        # self.field = np.expand_dims(
+        #     np.stack([gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
+        # self.field = torch.from_numpy(2.0 - self.field / np.amax(self.field))
 
         # inference part with action and selection
         self.engine = Inference(idim=self.idim, odim=self.idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
-        self.criterion_kernel = SeqMultiMaskLoss(criterion=nn.BCELoss(reduction='none'))
+        self.criterion_kernel = SeqMultiMaskLoss(criterion=nn.BCEWithLogitsLoss(reduction='none'))
 
         # reporter for monitoring
         self.reporter = Reporter()
@@ -183,7 +193,9 @@ class NetTransform(nn.Module):
         #     energy_e = flows['e']
 
         # 4. calculate similarity matrix
-        kernel = torch.sigmoid(torch.matmul(h, h.transpose(-2, -1)))  # B, 1, T, T
+        kernel = torch.matmul(h, h.transpose(-2, -1)) / torch.sqrt(h.size(-1))  # B, 1, T, T
+        if torch.isnan(kernel.sum()):
+            raise ValueError("kernel value has nan")
 
         if self.brewing:
             # get size of sequence
@@ -198,40 +210,74 @@ class NetTransform(nn.Module):
                     # indices = indices.sort()[0]
                 else:
                     raise AttributeError('Number of the target > 1 is not support yet!')
-                m = torch.ones_like(en[0])
-                m[indices] = 0.0
+                m = torch.zeros_like(en[0])
+                m[indices] = 1.0
                 mask.append(m.unsqueeze(0).bool())
             mask = torch.stack(mask, dim=0)
 
             # filtering low energy sample
-            energy_t[mask] = 1.0
-
-            # get target mask
+            energy_t[mask] = 0.0
             kernel_target_t = self.fb(energy_t)
-            kernel_mask = kernel_target_t.view(-1, tsz, tsz) > 0.1
-
-            # calculate energy
-            loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                           kernel_target_t.view(-1, tsz, tsz).detach(),
-                                           [seq_mask_kernel, ~kernel_mask],
-                                           reduction='none')
             if torch.isnan(kernel_target_t.sum()):
                 raise ValueError("kernel target value has nan")
-            if torch.isnan(kernel.sum()):
-                raise ValueError("kernel value has nan")
+            kernel_mask = kernel_target_t.view(-1, tsz, tsz) > 0.1
 
-        # 5. summary all task
-        loss = loss_g.sum() + loss_e.sum()
-        if not torch.isnan(loss):
-            self.reporter.report({'loss': float(loss),
-                                  'loss_g': float(loss_g.sum()),
-                                  'loss_e': float(loss_e.sum())})
-        else:
-            logging.warning("loss (=%f) is not correct", float(loss))
+            prediction = -kernel.view(-1, tsz, tsz).diagonal(offset=-1, dim1=-2, dim2=-1)  # B * tnum, Tmax-1
+
+            if self.task1:
+                # calculate energy loss
+                loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
+                                               kernel_target_t.view(-1, tsz, tsz).detach(),
+                                               [seq_mask_kernel, ~kernel_mask],
+                                               reduction='none')
+                if self.task1_1:
+                    # truncate mask for diagonal prediction
+                    seq_mask = seq_mask[:, :-1]
+                    mask = mask[:, :, :-1]
+                    # count available pixel
+                    denom = (~(seq_mask | mask)).float().sum()
+                    mask = mask.float().view(-1, mask.size(-1))
+                    # calculate energy negative loss
+                    loss_e_neg = -mask * torch.log(
+                        torch.sigmoid(prediction))
+                    loss_e_neg = loss_e_neg.masked_fill(seq_mask, 0) / denom
+                else:
+                    loss_e_neg = 0.0
+
+                # 5. summary all task
+                loss = loss_g.sum() + loss_e.sum() + loss_e_neg.sum()
+                if not torch.isnan(loss):
+                    self.reporter.report({'loss': float(loss),
+                                          'loss_g': float(loss_g.sum()),
+                                          'loss_e': float(loss_e.sum()),
+                                          'loss_e_neg': float(loss_e_neg.sum())})
+                else:
+                    logging.warning("loss (=%f) is not correct", float(loss))
+
+            elif self.task2:
+                # truncate mask for diagonal prediction
+                seq_mask = seq_mask[:, :-1]
+                mask = mask[:, :, :-1]
+                # count available pixel
+                denom = (~(seq_mask | mask)).float().sum()
+                mask = mask.float().view(-1, mask.size(-1))
+
+                loss_e = (1 - mask) * torch.log(torch.sigmoid(prediction)) + mask * torch.log(
+                    torch.sigmoid(-prediction))
+                loss_e = -loss_e.masked_fill(seq_mask, 0.0) / denom
+
+                # 5. summary all task
+                loss = loss_g.sum() + loss_e.sum()
+                if not torch.isnan(loss):
+                    self.reporter.report({'loss': float(loss),
+                                          'loss_g': float(loss_g.sum()),
+                                          'loss_e': float(loss_e.sum())})
+                else:
+                    logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat_
-            self.reporter_buffs['kernel'] = kernel
+            self.reporter_buffs['kernel'] = torch.sigmoid(kernel)
             if self.brewing:
                 # self.reporter_buffs['energy_e'] = energy_e[:, 0]
                 self.reporter_buffs['energy_t'] = energy_t[:, 0]
