@@ -7,7 +7,7 @@ batch-bins: 12000000
 
 # optimization related
 opt: adam
-grad-clip: 1
+grad-clip: 5
 lr: 0.001
 
 # scheduling related

@@ -397,7 +397,7 @@ def train(args):
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
         optimizer = get_std_opt(
-            model, args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model, args.hdim, args.warmup_steps, args.lr
         )
     elif args.opt == 'sgd':
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
