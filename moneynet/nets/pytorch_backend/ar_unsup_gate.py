@@ -74,7 +74,9 @@ class NetTransform(nn.Module):
         self.cutting_gauge = args.cutting_gauge
         ## instance task
         self.task1 = False
-        self.task2 = True
+        self.task2 = False
+        self.task3 = False
+        self.task4 = True
 
         # self.field_var = args.field_var
         # space = np.linspace(0, self.odim - 1, self.odim)
@@ -118,30 +120,31 @@ class NetTransform(nn.Module):
     @staticmethod
     def fb(x, mode='batch'):
         # TODO(j-pong): multi-target energy
-        if mode == 'batch':
-            x = x[:, 0]
-            bsz, tsz = x.size()
-            xs = x.unsqueeze(-1).repeat(1, 1, tsz)
-            ret = []
-            for x in xs:
-                ones = torch.ones(tsz, tsz).to(x.device)
+        with torch.no_grad():
+            if mode == 'batch':
+                x = x[:, 0]
+                bsz, tsz = x.size()
+                xs = x.unsqueeze(-1).repeat(1, 1, tsz)
+                ret = []
+                for x in xs:
+                    ones = torch.ones(tsz, tsz).to(x.device)
 
-                m_f = torch.triu(ones, diagonal=1)
-                x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2)
-                x_f = torch.cat([ones[0:1], x_f[:-1]], dim=0) - m_f
+                    m_f = torch.triu(ones, diagonal=1)
+                    x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2)
+                    x_f = torch.cat([ones[0:1], x_f[:-1]], dim=0) - m_f
 
-                ret.append(x_f)
-            xs = torch.stack(ret, dim=0).unsqueeze(1)  # B, 1, T, T
-        else:
-            xs = []
-            for i in range(x.size(-1)):
-                if i != 0:
-                    x_f = torch.cumprod(x[:, :, i:], dim=-1)
-                    x_b = torch.cumprod(x[:, :, :i].flip(dims=[-1]), dim=-1).flip(dims=[-1])
-                    xs.append(torch.cat([x_b, x_f], dim=-1))
-                else:
-                    xs.append(torch.cumprod(x[:, :, :], dim=-1))
-            xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
+                    ret.append(x_f)
+                xs = torch.stack(ret, dim=0).unsqueeze(1)  # B, 1, T, T
+            else:
+                xs = []
+                for i in range(x.size(-1)):
+                    if i != 0:
+                        x_f = torch.cumprod(x[:, :, i:], dim=-1)
+                        x_b = torch.cumprod(x[:, :, :i].flip(dims=[-1]), dim=-1).flip(dims=[-1])
+                        xs.append(torch.cat([x_b, x_f], dim=-1))
+                    else:
+                        xs.append(torch.cumprod(x[:, :, :], dim=-1))
+                xs = torch.stack(xs, dim=-1)  # B, tnum, T, T
 
         if torch.isnan(xs.sum()):
             raise ValueError("kernel target value has nan")
@@ -154,9 +157,10 @@ class NetTransform(nn.Module):
 
         return: (B, 1, Tmax)
         """
+        xs = 1.0 - xs
         with torch.no_grad():
             ms = []
-            for x in (1.0 - xs):
+            for x in xs:
                 if self.tnum == 1:
                     num_neg = int(x[0].sum(-1))
                     indices = torch.topk(x, k=num_neg, dim=-1)[-1]
@@ -203,7 +207,7 @@ class NetTransform(nn.Module):
                                       func=self.engine.transform,
                                       ratio=ratio_t,
                                       flows={'e': None})
-        energy_t = flows['e']
+        energy_t = self.minimaxn(flows['e']).detach()
 
         # 3. embedding task
         h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
@@ -216,42 +220,67 @@ class NetTransform(nn.Module):
 
         # get energy group mask
 
-        # 4. clustering with energy
-        mask = self.clustering(energy_t)
-
-        # 5. causal assumption
+        # clustering with energy
+        energy_t_high_mask = self.clustering(energy_t)
+        # causal assumption
         if self.cutting_gauge:
-            energy_t[mask] = 0.0
-        kernel_target_t = self.fb(energy_t)
+            energy_t[energy_t_high_mask] = 0.0
+        energy_t_cumprod = self.fb(energy_t)
 
-        # 6. calculate similarity matrix
-        h_agg = torch.matmul(kernel_target_t.transpose(-2, -1), h) / \
-                kernel_target_t.sum(-1, keepdim=True).detach()  # B, 1, T', T x B, 1, T, hdim
-        kernel = torch.matmul(h_agg, h.transpose(-2, -1))  # B, 1, T, T
+        # calculate similarity matrix
+        h_agg = torch.matmul(energy_t_cumprod, h) / \
+                energy_t_cumprod.sum(-1, keepdim=True)  # [B, 1, T', T] x [B, 1, T, hdim] -> B, 1, T', hdim
+        h_agg = h_agg.transpose(-2, -1)
+        # h_agg = h.transpose(-2, -1)
+        kernel = torch.matmul(h, h_agg.detach()) + torch.matmul(h.detach(),
+                                                                h_agg)  # [B, 1, T, hdim] x [B, 1, hdim, T'] -> B, 1, T, T'
+        kernel = kernel / 2.0 / np.sqrt(h.size(-1))
         if torch.isnan(kernel.sum()):
             raise ValueError("kernel value has nan")
 
         if self.task1:
-            # calculate energy loss
+            # large segmentation
             loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                           kernel_target_t.view(-1, tsz, tsz).detach(),
-                                           [seq_mask_kernel, ~(kernel_target_t.view(-1, tsz, tsz) > 0.0)],
+                                           energy_t_cumprod.view(-1, tsz, tsz),
+                                           [seq_mask_kernel, ~(energy_t_cumprod.view(-1, tsz, tsz) > 0.0)],
                                            reduction='none')
         elif self.task2:
-            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=-1, dim1=-2, dim2=-1).\
-                reshape(-1, 1)  # B * tnum, Tmax-1
-            # truncate mask for diagonal prediction
-            seq_mask = seq_mask[:, :-1]
-            mask = mask[:, :, :-1].detach()
+            # wav2vec
+            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=1, dim1=-2, dim2=-1)  # B * tnum, (Tmax - offset)
 
-            target = mask.float().view(-1, 1).detach()
-            loss_e = self.criterion_kernel(prediction,
-                                           (1 - target).view(-1, 1).detach(),
-                                           [seq_mask.reshape(-1, 1), ~mask.reshape(-1, 1)],
-                                           reduction='none') + \
-                     self.criterion_kernel(-prediction,
-                                           target.view(-1, 1).detach(),
-                                           [seq_mask.reshape(-1, 1), mask.reshape(-1, 1)],
+            if prediction.size(-1) != tsz:
+                seq_mask = seq_mask[:, :prediction.size(-1)].contiguous()
+                energy_t_high_mask = energy_t_high_mask[:, :, :prediction.size(-1)].contiguous()
+            neg_target = energy_t_high_mask.float().view(-1, 1)
+
+            lam = neg_target.sum() / (1 - neg_target).sum()
+            loss_e = lam * self.criterion_kernel(prediction.reshape(-1, 1),
+                                                 (1 - neg_target).view(-1, 1),
+                                                 [seq_mask.view(-1, 1), energy_t_high_mask.view(-1, 1)],
+                                                 reduction='none') + \
+                     self.criterion_kernel(-prediction.reshape(-1, 1),
+                                           neg_target.view(-1, 1),
+                                           [seq_mask.view(-1, 1), ~energy_t_high_mask.view(-1, 1)],
+                                           reduction='none')
+        elif self.task3:
+            # wav2vec no negative
+            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=1, dim1=-2, dim2=-1)  # B * tnum, (Tmax - offset)
+            if prediction.size(-1) != tsz:
+                seq_mask = seq_mask[:, :prediction.size(-1)].contiguous()
+            neg_target = energy_t_high_mask.float().view(-1, 1)
+            loss_e = self.criterion_kernel(prediction.reshape(-1, 1),
+                                           (1 - neg_target).view(-1, 1),
+                                           [seq_mask.view(-1, 1)],
+                                           reduction='none')
+        elif self.task4:
+            # small segmentation
+            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=1, dim1=-2, dim2=-1)  # B * tnum, (Tmax - offset)
+            if prediction.size(-1) != tsz:
+                seq_mask = seq_mask[:, :prediction.size(-1)].contiguous()
+                energy_t = energy_t[:, :, :prediction.size(-1)].contiguous()
+            loss_e = self.criterion_kernel(prediction.reshape(-1, 1),
+                                           energy_t.view(-1, 1),
+                                           [seq_mask.view(-1, 1)],
                                            reduction='none')
 
         # summary all task
@@ -269,7 +298,7 @@ class NetTransform(nn.Module):
 
             # self.reporter_buffs['energy_e'] = energy_e[:, 0]
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
-            self.reporter_buffs['kernel_target_t'] = kernel_target_t[:, 0]
+            self.reporter_buffs['energy_t_cumprod'] = energy_t_cumprod[:, 0]
 
         return loss
 
@@ -301,9 +330,9 @@ class NetTransform(nn.Module):
             energy[torch.isnan(energy)] = 1.0
 
             if self.target_type == 'mvn':
-                energy = self.minimaxn(torch.pow(energy, 2))
+                energy = torch.pow(energy, 2)
             elif self.target_type == 'residual':
-                energy = self.minimaxn(1.0 - torch.pow(1.0 - energy, 2))
+                energy = 1.0 - torch.pow(1.0 - energy, 2)
 
             # calculate energy
             for key in flows.keys():
