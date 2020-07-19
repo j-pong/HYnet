@@ -55,7 +55,6 @@ class NetTransform(nn.Module):
         # task related
         group.add_argument("--field-var", default=13.0, type=float)
         group.add_argument("--target-type", default='residual', type=str)
-        group.add_argument("--cutting_gauge", default=0, type=int)
 
         return parser
 
@@ -71,7 +70,6 @@ class NetTransform(nn.Module):
 
         # related task
         self.target_type = args.target_type
-        self.cutting_gauge = args.cutting_gauge
 
         self.field_var = args.field_var
         space = np.linspace(0, self.odim - 1, self.odim)
@@ -102,13 +100,13 @@ class NetTransform(nn.Module):
 
     @staticmethod
     def minimaxn(x):
-        max_x = torch.max(x)
-        min_x = torch.min(x)
-        if (max_x - min_x) == 0.0:
-            logging.warning('Divided by the zero with max-min value : {}, Thus return None'.format((max_x - min_x)))
-            x = None
-        else:
-            x = (x - min_x) / (max_x - min_x)
+        max_x = torch.max(x, dim=-1, keepdim=True)[0]
+        min_x = torch.min(x, dim=-1, keepdim=True)[0]
+        # if (max_x - min_x) == 0.0:
+        #     logging.warning('Divided by the zero with max-min value : {}, Thus return None'.format((max_x - min_x)))
+        #     x = None
+        # else:
+        x = (x - min_x) / (max_x - min_x)
 
         return x
 
@@ -146,18 +144,23 @@ class NetTransform(nn.Module):
 
         return xs
 
-    def clustering(self, xs):
+    def clustering(self, xs, golden_ratio=3.14):
         """
         xs: (B, tnum, Tmax)
 
         return: (B, 1, Tmax)
         """
-        xs = 1.0 - xs
         with torch.no_grad():
             ms = []
             for x in xs:
                 if self.tnum == 1:
-                    num_neg = int(x[0].sum(-1))
+                    num_neg = int(x[0].sum(-1) * golden_ratio)
+                    if num_neg < 1:
+                        num_neg = 1
+                        logging.warning("num_neg has wrong value < 1")
+                    elif num_neg > x.size(-1):
+                        num_neg = x.size(-1)
+                        logging.warning("num_neg has wrong value > {}".format(num_neg))
                     indices = torch.topk(x, k=num_neg, dim=-1)[-1]
                 else:
                     raise AttributeError('Number of the target > 1 is not support yet!')
@@ -202,18 +205,12 @@ class NetTransform(nn.Module):
                                       func=self.engine.transform,
                                       ratio=ratio_t,
                                       flows={'e': None})
-        energy_t = flows['e'].detach()
+        energy_t = self.minimaxn(flows['e']).detach()
 
         # 3. embedding task
         h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
-
-        # # clustering with energy
-        energy_t_high_mask = self.clustering(energy_t)
-
         # causal assumption
-        if self.cutting_gauge:
-            energy_t[energy_t_high_mask] = 0.0
-        energy_t_cumprod = self.fb(energy_t)
+        energy_t_cumprod = self.fb(1.0 - energy_t)
 
         # calculate similarity matrix
         h_agg = torch.matmul(energy_t_cumprod, h) / \
@@ -221,26 +218,20 @@ class NetTransform(nn.Module):
         h_agg = h_agg.transpose(-2, -1)
 
         kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, 1, T, hdim] x [B, 1, hdim, T'] -> B, 1, T, T'
-        # kernel = kernel / 2.0 / np.sqrt(h.size(-1))
         if torch.isnan(kernel.sum()):
             raise ValueError("kernel value has nan")
 
         loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
                                        energy_t_cumprod.view(-1, tsz, tsz),
-                                       [seq_mask_kernel, ~(energy_t_cumprod.view(-1, tsz, tsz) > 0.0)],
+                                       [seq_mask_kernel, energy_t_cumprod.view(-1, tsz, tsz) < 0.1],
                                        reduction='none')
-
-        # loss_e = self.criterion(h.reshape(-1, self.hdim),
-        #                         h_agg.detach().reshape(-1, self.hdim),
-        #                         [seq_mask.view(-1, 1)],
-        #                         reduction='none') + \
-        #          self.criterion(h_agg.reshape(-1, self.hdim),
-        #                         h.detach().reshape(-1, self.hdim),
-        #                         [seq_mask.view(-1, 1)],
-        #                         reduction='none')
+        # loss_e = self.criterion_kernel(h.reshape(-1, self.hdim),
+        #                                h_agg.detach().reshape(-1, self.hdim),
+        #                                [seq_mask.view(-1, 1)],
+        #                                reduction='none')
 
         # summary all task
-        loss = loss_g.sum()
+        loss = loss_g.sum() + loss_e.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'loss_g': float(loss_g.sum()),
@@ -270,35 +261,55 @@ class NetTransform(nn.Module):
             start_state = start_state.view(-1, start_dim)
             end_state = end_state.view(-1, end_dim) - b_hat
 
-            # velocity
-            vel = F.kl_div(input=torch.log_softmax(torch.abs(w_hat), dim=-1),
-                           target=self.field.to(w_hat.device),
-                           reduction='none')
-            vel = (torch.abs(start_state) * vel.sum(-1)).mean(-1, keepdim=True).float()
+            # distance
+            distance = F.kl_div(input=torch.log_softmax(torch.abs(w_hat), dim=-1),
+                                target=self.field.to(w_hat.device),
+                                reduction='none').float()
+            distance = distance.sum(-1)
 
-            # mass difference
+            # time
             sign_pair = torch.matmul(torch.sign(start_state.unsqueeze(-1)),
                                      torch.sign(end_state.unsqueeze(-2)))
             w_hat_x = w_hat * sign_pair
-            w_hat_x_p = torch.relu(w_hat_x)
-
-            # relation with sign : how much state change in amplitude space
-            mass = torch.abs(start_state) * (w_hat_x_p.sum(-1) / torch.abs(w_hat_x).sum(-1))
-            mass = mass.mean(-1, keepdim=True)
-            num_nan = torch.isnan(mass).float().mean()
+            time = (torch.relu(w_hat_x).sum(-1) / torch.abs(w_hat_x).sum(-1))
+            num_nan = torch.isnan(time).float().mean()
             if num_nan > 0.1:
                 logging.warning("Energy sequence impose the nan {}".format(num_nan))
-            mass[torch.isnan(mass)] = 1.0
+            time[torch.isnan(time)] = 0.5
+            time = torch.abs(time - 0.5) + 1
 
             if self.target_type == 'mvn':
-                energy = torch.pow(mass, 2)
+                energy = torch.pow(time * torch.abs(start_state), 2)
             elif self.target_type == 'residual':
-                energy = (1.0 - (torch.pow(1.0 - mass, 2)))
+                energy = distance * torch.abs(start_state) * time
+                energy = energy.mean(-1)
+                energy = energy.view(bsz, tnsz, tsz)
+
+                # make gaussian filter
+                variance = 5
+                space = np.linspace(0, tsz - 1, tsz)
+                lpass_filter = np.expand_dims(
+                    np.stack([gaussian_func(space, i, variance) for i in range(tsz)], axis=0), 0)
+                lpass_filter = torch.from_numpy(lpass_filter / np.amax(lpass_filter)).to(energy.device)
+                # filtering with gaussain filter
+                energy = torch.matmul(energy.view(bsz, tnsz, tsz), lpass_filter.float())
+                # calculate energy difference
+                energy = torch.cat([energy[:, :, 1:] - energy[:, :, :-1],
+                                    torch.zeros_like(energy[:, :, 0:1]).to(energy.device)], dim=-1)
+                energy = torch.abs(energy)
+                # time step
+                time = time.mean(-1).view(bsz, tnsz, tsz)
+                time = torch.cat([time[:, :, 1:],
+                                  torch.ones_like(time[:, :, 0:1]).to(energy.device)], dim=-1)
+                energy = energy / time
+                energy[:, :, :variance+2] = 0.0
+                energy[:, :, -variance-2:] = 0.0
 
             # calculate energy
             for key in flows.keys():
                 if key == 'e':
-                    flows[key] = vel.view(bsz, tnsz, tsz)
+                    # dump
+                    flows[key] = energy
                 else:
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 
