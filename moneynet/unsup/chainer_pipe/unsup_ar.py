@@ -579,8 +579,8 @@ def train(args):
         "validation/main/loss_g",
         "main/loss_e",
         "validation/main/loss_e",
-        "main/loss_e_neg",
-        "validation/main/loss_e_neg",
+        "main/loss_kernel",
+        "validation/main/loss_kernel",
         "elapsed_time",
     ]
     if args.opt == "adadelta":

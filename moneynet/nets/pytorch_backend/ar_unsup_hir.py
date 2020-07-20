@@ -15,7 +15,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
-from moneynet.nets.pytorch_backend.unsup.inference import Inference
+from moneynet.nets.pytorch_backend.unsup.inference import HirInference
 
 from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 
@@ -78,7 +78,7 @@ class NetTransform(nn.Module):
         self.field = torch.from_numpy(self.field)
 
         # inference part with action and selection
-        self.engine = Inference(idim=self.idim, odim=self.idim, args=args)
+        self.engine = HirInference(idim=self.idim, odim=self.idim, args=args)
 
         # network training related
         self.criterion = SeqMultiMaskLoss(criterion=nn.MSELoss(reduction='none'))
@@ -111,7 +111,7 @@ class NetTransform(nn.Module):
         return x
 
     @staticmethod
-    def fb(x, mode='batch'):
+    def fb(x, mode='batch', offset=1):
         # TODO(j-pong): multi-target energy
         with torch.no_grad():
             if mode == 'batch':
@@ -124,7 +124,10 @@ class NetTransform(nn.Module):
 
                     m_f = torch.triu(ones, diagonal=1)
                     x_f = torch.cumprod(torch.tril(x) + m_f, dim=-2)
-                    x_f = torch.cat([ones[0:1], x_f[:-1]], dim=0) - m_f
+                    if offset > 0:
+                        x_f = torch.cat([ones[0:offset], x_f[:-offset]], dim=0) - m_f
+                    else:
+                        x_f = x_f - m_f
 
                     ret.append(x_f)
                 xs = torch.stack(ret, dim=0).unsqueeze(1)  # B, 1, T, T
@@ -182,7 +185,7 @@ class NetTransform(nn.Module):
         # initialization buffer
         self.reporter_buffs = {}
 
-        # 1. transform for checking similarity
+        # 1. transform
         xs_pad_out_hat, ratio_t = self.engine(xs_pad_in, self.engine.transform)
         if self.target_type == 'mvn':
             xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
@@ -191,54 +194,68 @@ class NetTransform(nn.Module):
             xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
         elif self.target_type == 'residual':
             xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
-
+        # calculate loss of transform
         loss_g = self.criterion(xs_pad_out_hat_.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
                                 reduction='none')
-
-        # 2. calculate energy of sequence
-        # Todo(j-pong): one step similarity test
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=xs_pad_out_hat.contiguous(),
                                       func=self.engine.transform,
                                       ratio=ratio_t,
                                       flows={'e': None})
         energy_t = self.minimaxn(flows['e']).detach()
 
-        # 3. embedding task
-        h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
-        # causal assumption
+        # 2. encoder and decoder
+        h, ratio_e = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
         energy_t_cumprod = self.fb(1.0 - energy_t)
-
-        # calculate similarity matrix
-        h_agg = torch.matmul(energy_t_cumprod, h) / \
-                energy_t_cumprod.sum(-1, keepdim=True)  # [B, 1, T', T] x [B, 1, T, hdim] -> B, 1, T', hdim
-        h_agg = h_agg.transpose(-2, -1)
-
+        ## p1
         kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, 1, T, hdim] x [B, 1, hdim, T'] -> B, 1, T, T'
         if torch.isnan(kernel.sum()):
             raise ValueError("kernel value has nan")
+        ## p2
+        h_agg = torch.matmul(energy_t_cumprod, h) / \
+                energy_t_cumprod.sum(-1, keepdim=True)  # [B, 1, T', T] x [B, 1, T, hdim] -> B, 1, T', hdim
+        xs_pad_out_hat, ratio_d = self.engine(h_agg, self.engine.decoder)  # B, 1, Tmax, idim
+        if self.target_type == 'mvn':
+            xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
+            xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
+            xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
+            xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
+        elif self.target_type == 'residual':
+            xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
 
+        # calculate loss
         tsz = seq_mask_kernel.size(1)
-        loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                       energy_t_cumprod.view(-1, tsz, tsz),
-                                       [seq_mask_kernel, energy_t_cumprod.view(-1, tsz, tsz) < 0.1],
-                                       reduction='none')
+        loss_kerenl = self.criterion_kernel(kernel.view(-1, tsz, tsz),
+                                            energy_t_cumprod.view(-1, tsz, tsz),
+                                            [seq_mask_kernel, energy_t_cumprod.view(-1, tsz, tsz) < 0.1],
+                                            reduction='none')
+        loss_e = self.criterion(xs_pad_out_hat_.view(-1, self.idim),
+                                xs_pad_out.contiguous().view(-1, self.idim),
+                                [seq_mask.view(-1, 1)],
+                                reduction='none')
+        loss_e = loss_e * (1.0 - energy_t).view(-1, 1)
+
+        # flows = self.calculate_energy(start_state=h_agg.contiguous(), end_state=xs_pad_out_hat.contiguous(),
+        #                               func=self.engine.decoder,
+        #                               ratio=ratio_d,
+        #                               flows={'e': None})
+        # energy_d = self.minimaxn(flows['e']).detach()
 
         # summary all task
-        loss = loss_g.sum() + loss_e.sum()
+        loss = loss_g.sum() + loss_e.sum() + loss_kerenl.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'loss_g': float(loss_g.sum()),
-                                  'loss_e': float(loss_e.sum())})
+                                  'loss_e': float(loss_e.sum()),
+                                  'loss_kernel': float(loss_kerenl.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat_
             self.reporter_buffs['kernel'] = torch.sigmoid(kernel)
-
-            # self.reporter_buffs['energy_e'] = energy_e[:, 0]
+            # self.reporter_buffs['energy_d'] = energy_d[:, 0]
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
             self.reporter_buffs['energy_t_cumprod'] = energy_t_cumprod[:, 0]
 

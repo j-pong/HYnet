@@ -108,9 +108,10 @@ class Inference(nn.Module):
 
         return x, ratio
 
+
 class HirInference(Inference):
     def __init__(self, idim, odim, args):
-        super().__init__()
+        super(Inference, self).__init__()
         # configuration
         self.idim = idim
         self.odim = odim
@@ -124,18 +125,23 @@ class HirInference(Inference):
             nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
-            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.Linear(self.hdim, odim, bias=self.bias)
+        ])
+        self.encoder = nn.ModuleList([
+            nn.Linear(idim, self.hdim, bias=self.bias),
             nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+        ])
+        self.decoder = nn.ModuleList([
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.ReLU(),
             nn.Linear(self.hdim, odim, bias=self.bias)
         ])
 
 
-
 class ExcInference(Inference):
     def __init__(self, idim, odim, args):
-        super().__init__()
+        super(Inference, self).__init__()
         assert idim == odim
         # configuration
         self.idim = idim
