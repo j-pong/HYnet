@@ -1,1 +1,1 @@
-scripts/run_960h_fmllr.sh
+scripts/run_deq.sh
