@@ -1,5 +1,5 @@
 # model name for training
-model-module: "moneynet.nets.pytorch_backend.ar_unsup_simnn:NetTransform"
+model-module: "moneynet.nets.pytorch_backend.ar_unsup_gate:NetTransform"
 
 # minibatch related
 accum-grad: 8
@@ -15,6 +15,6 @@ sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epoch
 epochs: 40
 
 # model architecture
-tnum: 5
+tnum: 1
 hdim: 320
 brewing: 1

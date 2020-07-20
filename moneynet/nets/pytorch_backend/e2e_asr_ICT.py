@@ -43,6 +43,7 @@ from moneynet.nets.pytorch_backend.initialization import set_forget_bias_to_one
 from moneynet.nets.pytorch_backend.ICT.encoders import encoder_for
 from moneynet.nets.pytorch_backend.ICT.nets_utils import mixup_data, mixup_logit
 from moneynet.nets.pytorch_backend.ICT.nets_utils import get_current_consistency_weight
+from moneynet.nets.pytorch_backend.ICT.nets_utils import softmax_mse_loss
 
 CTC_LOSS_THRESHOLD = 10000
 
@@ -376,12 +377,13 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         if self.mixup_alpha > 0.0:
             ema_ul_hs_pad = mixup_logit(ema_ul_hs_pad, ema_ul_hlens, shuf_idx, lam, self.scheme)
+        ema_ul_hs_pad = torch.autograd.Variable(ema_ul_hs_pad.detach().data, requires_grad=False)
 
         # 5. Consistency loss
-        self.loss_mse = F.mse_loss(
+        self.loss_mse = softmax_mse_loss(
             hs_pad.view(-1, self.odim),
             ema_ul_hs_pad.view(-1, self.odim),
-            reduction=reduction_str
+            reduction_str=reduction_str
         )
 
         # 6. Total loss
@@ -402,7 +404,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.loss = self.loss_ce + consistency_weight * self.loss_mse
 
         loss_ce_data = float(self.loss_ce)
-        loss_mse_data = float(self.loss_mse)
+        loss_mse_data = float(consistency_weight * self.loss_mse)
         loss_data = float(self.loss)
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
             self.reporter.report(

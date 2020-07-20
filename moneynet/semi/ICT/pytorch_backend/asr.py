@@ -511,7 +511,7 @@ def train(args):
     elif args.opt == "rmsprop":
         optimizer = torch.optim.RMSprop(model.enc.parameters(), lr=0.0008, alpha=0.95)
     elif args.opt == "sgd":
-        optimizer = torch.optim.SGD(model.enc.parameters(), lr=1, momentum=0.9, nesterov=True)
+        optimizer = torch.optim.SGD(model.enc.parameters(), lr=0.5, momentum=0.9, nesterov=True)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 

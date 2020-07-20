@@ -542,14 +542,10 @@ def train(args):
         transform=load_cv,
         device=device,
     )
-    trainer.extend(img_reporter, trigger=(1000, "iteration"))
+    trainer.extend(img_reporter, trigger=(args.report_interval_iters, "iteration"))
 
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))
-    trainer.extend(extensions.PlotReport(["main/e_loss",
-                                          "validation/main/e_loss"], "epoch", file_name="energy.png", ))
-    trainer.extend(extensions.PlotReport(["main/discontinuity",
-                                          "validation/main/discontinuity"], "epoch", file_name="discontinuity.png", ))
 
     # Save best models
     trainer.extend(
@@ -570,9 +566,11 @@ def train(args):
         "epoch",
         "iteration",
         "main/loss",
-        "main/e_loss",
-        "validation/main/loss"
-        "validation/main/e_loss",
+        "validation/main/loss",
+        "main/loss_g",
+        "validation/main/loss_g"
+        "main/loss_e",
+        "validation/main/loss_e"
         "elapsed_time",
     ]
     if args.opt == "adadelta":
