@@ -108,6 +108,30 @@ class Inference(nn.Module):
 
         return x, ratio
 
+class HirInference(Inference):
+    def __init__(self, idim, odim, args):
+        super().__init__()
+        # configuration
+        self.idim = idim
+        self.odim = odim
+        self.hdim = args.hdim
+        self.tnum = args.tnum
+
+        self.bias = args.bias
+
+        self.transform = nn.ModuleList([
+            nn.Linear(idim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, odim, bias=self.bias)
+        ])
+
+
 
 class ExcInference(Inference):
     def __init__(self, idim, odim, args):
