@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 import torch
-from torch import nn, Tensor
+from torch import nn
 import torch.nn.functional as F
 
 import chainer
@@ -18,12 +18,6 @@ from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
 from moneynet.nets.pytorch_backend.unsup.inference import HirInference
 
 from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
-
-
-def gaussian_func(x, m=0.0, sigma=1.0):
-    norm = np.sqrt(2 * np.pi * sigma ** 2)
-    dist = (x - m) ** 2 / (2 * sigma ** 2)
-    return 1 / norm * np.exp(-dist)
 
 
 class Reporter(chainer.Chain):
@@ -61,8 +55,9 @@ class NetTransform(nn.Module):
     def __init__(self, idim, odim, args, ignore_id=-1):
         super().__init__()
         # network hyperparameter
-        self.idim = idim - 3
-        self.odim = idim - 3
+        self.trunk = 3
+        self.idim = idim - self.trunk
+        self.odim = idim - self.trunk
         self.hdim = args.hdim
         self.tnum = args.tnum
         self.ignore_id = ignore_id
@@ -74,8 +69,10 @@ class NetTransform(nn.Module):
         self.field_var = args.field_var
         space = np.linspace(0, self.odim - 1, self.odim)
         self.field = np.expand_dims(
-            np.stack([gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
+            np.stack([self.gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
         self.field = torch.from_numpy(self.field)
+
+        self.energy_level = np.array([13, 8, 5, 3, 2, 1]) / 32
 
         # inference part with action and selection
         self.engine = HirInference(idim=self.idim, odim=self.idim, args=args)
@@ -90,6 +87,12 @@ class NetTransform(nn.Module):
 
         # initialize parameter
         initialize(self)
+
+    @staticmethod
+    def gaussian_func(x, m=0.0, sigma=1.0):
+        norm = np.sqrt(2 * np.pi * sigma ** 2)
+        dist = (x - m) ** 2 / (2 * sigma ** 2)
+        return 1 / norm * np.exp(-dist)
 
     @staticmethod
     def mvn(x):
@@ -174,11 +177,35 @@ class NetTransform(nn.Module):
 
         return ms
 
+    def sampling(self, xs, ens):
+        """
+        Inputs
+        xs: (B, tnum, Tmax*, Tmax)
+        ens: (B, tnum, Tmax)
+
+        return: (B, 1, Tmax)
+        """
+        with torch.no_grad():
+            ms = []
+            for en in ens:
+                indices = torch.topk(x, k=num_neg, dim=-2)[-1]
+
+                m = torch.zeros_like(x[0])
+                m[indices] = 1.0
+                ms.append(m.unsqueeze(0).bool())
+            ms = torch.stack(ms, dim=0)
+
+        return ms
+
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
-        xs_pad_in = xs_pad_in[:, :max(ilens)].unsqueeze(1)  # for data parallel
-        xs_pad_out = xs_pad_out[:, :max(ilens)].transpose(1, 2)
+        xs_pad_in = xs_pad_in[:, :max(ilens), :-self.trunk].unsqueeze(1)  # for data parallel
+        xs_pad_out = xs_pad_out[:, :max(ilens), :, :-self.trunk].transpose(1, 2)
+
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
+
+        tsz = seq_mask.size(-1)
+
         seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
                                             (~seq_mask).unsqueeze(1).float())).bool()
 
@@ -195,69 +222,38 @@ class NetTransform(nn.Module):
         elif self.target_type == 'residual':
             xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
         # calculate loss of transform
-        loss_g = self.criterion(xs_pad_out_hat_.view(-1, self.idim),
-                                xs_pad_out.contiguous().view(-1, self.idim),
-                                [seq_mask.view(-1, 1)],
-                                reduction='none')
-        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=xs_pad_out_hat.contiguous(),
+        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
+                                      end_state=xs_pad_out_hat.contiguous(),
                                       func=self.engine.transform,
                                       ratio=ratio_t,
                                       flows={'e': None})
-        energy_t = self.minimaxn(flows['e']).detach()
+        energy_t = flows['e'].detach()
+        # el_past = None
+        # for el in self.energy_level:
+        #     if el_past is None:
+        #         energy_t[energy_t > el] = el
+        #     else:
+        #         energy_t[(el_past > energy_t) & (energy_t > el)] = el
+        #     el_past = el
 
-        # 2. encoder and decoder
-        h, ratio_e = self.engine(xs_pad_in, self.engine.encoder)  # B, 1, Tmax, idim
-        energy_t_cumprod = self.fb(1.0 - energy_t)
-        ## p1
-        kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, 1, T, hdim] x [B, 1, hdim, T'] -> B, 1, T, T'
-        if torch.isnan(kernel.sum()):
-            raise ValueError("kernel value has nan")
-        ## p2
-        h_agg = torch.matmul(energy_t_cumprod, h) / \
-                energy_t_cumprod.sum(-1, keepdim=True)  # [B, 1, T', T] x [B, 1, T, hdim] -> B, 1, T', hdim
-        xs_pad_out_hat, ratio_d = self.engine(h_agg, self.engine.decoder)  # B, 1, Tmax, idim
-        if self.target_type == 'mvn':
-            xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
-            xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
-            xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
-            xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
-        elif self.target_type == 'residual':
-            xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
-
-        # calculate loss
-        tsz = seq_mask_kernel.size(1)
-        loss_kerenl = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                            energy_t_cumprod.view(-1, tsz, tsz),
-                                            [seq_mask_kernel, energy_t_cumprod.view(-1, tsz, tsz) < 0.1],
-                                            reduction='none')
-        loss_e = self.criterion(xs_pad_out_hat_.view(-1, self.idim),
-                                xs_pad_out.contiguous().view(-1, self.idim),
-                                [seq_mask.view(-1, 1)],
-                                reduction='none')
-        loss_e = loss_e * (1.0 - energy_t).view(-1, 1)
-
-        # flows = self.calculate_energy(start_state=h_agg.contiguous(), end_state=xs_pad_out_hat.contiguous(),
-        #                               func=self.engine.decoder,
-        #                               ratio=ratio_d,
-        #                               flows={'e': None})
-        # energy_d = self.minimaxn(flows['e']).detach()
-
+        kernel = torch.matmul(xs_pad_out, xs_pad_out_hat.transpose(-2, -1))
+        kernel_target = self.sampling(kernel, energy_t)
+        loss_g = self.criterion_kernel(kernel.view(-1, tsz, tsz),
+                                       torch.ones_like(kernel).to(kernel.device).view(-1, tsz, tsz),
+                                       [seq_mask_kernel],
+                                       reduction='none')
         # summary all task
-        loss = loss_g.sum() + loss_e.sum() + loss_kerenl.sum()
+        loss = loss_g.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
-                                  'loss_g': float(loss_g.sum()),
-                                  'loss_e': float(loss_e.sum()),
-                                  'loss_kernel': float(loss_kerenl.sum())})
+                                  'loss_g': float(loss_g.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat_
             self.reporter_buffs['kernel'] = torch.sigmoid(kernel)
-            # self.reporter_buffs['energy_d'] = energy_d[:, 0]
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
-            self.reporter_buffs['energy_t_cumprod'] = energy_t_cumprod[:, 0]
 
         return loss
 
@@ -297,24 +293,24 @@ class NetTransform(nn.Module):
                 energy = energy.mean(-1)
                 energy = energy.view(bsz, tnsz, tsz)
 
-                # make gaussian filter
-                variance = 3
-                space = np.linspace(0, tsz - 1, tsz)
-                lpass_filter = np.expand_dims(
-                    np.stack([gaussian_func(space, i, variance) for i in range(tsz)], axis=0), 0)
-                lpass_filter = torch.from_numpy(lpass_filter / np.amax(lpass_filter)).to(energy.device)
-                lpass_filter = torch.triu(lpass_filter).float()
-                # filtering with gaussain filter
-                energy = torch.matmul(energy.view(bsz, tnsz, tsz), lpass_filter)
-                # calculate energy difference
-                energy = torch.cat([energy[:, :, 1:] - energy[:, :, :-1],
-                                    torch.zeros_like(energy[:, :, 0:1]).to(energy.device)], dim=-1)
-                energy = torch.abs(energy)
-                # time step
-                freq = freq.mean(-1).view(bsz, tnsz, tsz)
-                freq = torch.cat([freq[:, :, 1:],
-                                  torch.ones_like(freq[:, :, 0:1]).to(energy.device)], dim=-1)
-                energy = energy / freq
+                # # make gaussian filter
+                # variance = 3
+                # space = np.linspace(0, tsz - 1, tsz)
+                # lpass_filter = np.expand_dims(
+                #     np.stack([self.gaussian_func(space, i, variance) for i in range(tsz)], axis=0), 0)
+                # lpass_filter = torch.from_numpy(lpass_filter / np.amax(lpass_filter)).to(energy.device)
+                # lpass_filter = torch.triu(lpass_filter).float()
+                # # filtering with gaussain filter
+                # energy = torch.matmul(energy.view(bsz, tnsz, tsz), lpass_filter)
+                # # calculate energy difference
+                # energy = torch.cat([energy[:, :, 1:] - energy[:, :, :-1],
+                #                     torch.zeros_like(energy[:, :, 0:1]).to(energy.device)], dim=-1)
+                # energy = torch.abs(energy)
+                # # time step
+                # freq = freq.mean(-1).view(bsz, tnsz, tsz)
+                # freq = torch.cat([freq[:, :, 1:],
+                #                   torch.ones_like(freq[:, :, 0:1]).to(energy.device)], dim=-1)
+                # energy = energy / freq
 
             # calculate energy
             for key in flows.keys():

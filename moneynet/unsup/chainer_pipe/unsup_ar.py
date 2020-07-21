@@ -38,7 +38,7 @@ from espnet.asr.asr_utils import snapshot_object
 from espnet.asr.asr_utils import torch_load
 from espnet.asr.asr_utils import torch_resume
 from espnet.asr.asr_utils import torch_snapshot
-from espnet.asr.pytorch_backend.asr_init import load_trained_model
+# from espnet.asr.pytorch_backend.asr_init import load_trained_model
 # from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 # import espnet.lm.pytorch_backend.extlm as extlm_pytorch
 # from espnet.nets.asr_interface import ASRInterface
@@ -296,19 +296,32 @@ class CustomConverter(object):
 
         # get batch of lengths of input sequences
         ilens = np.array([x.shape[0] for x in xs_in])
-        xs_pad_in = pad_list(
-            [torch.from_numpy(x[:-self.tnum]).float()
-             for x in xs_in],
-            0
-        ).to(device, dtype=self.dtype)
-        xs_pad_out = pad_list(
-            [
-                torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
-                             if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
-                             for i in range(self.tnum)], dim=1)
-                for x in xs_out],
-            0
-        ).to(device, dtype=self.dtype)
+        if self.tnum > 0:
+            xs_pad_in = pad_list(
+                [torch.from_numpy(x[:-self.tnum]).float()
+                 for x in xs_in],
+                0
+            ).to(device, dtype=self.dtype)
+
+            xs_pad_out = pad_list(
+                [
+                    torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
+                                 if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
+                                 for i in range(self.tnum)], dim=1)
+                    for x in xs_out],
+                0
+            ).to(device, dtype=self.dtype)
+        else:
+            xs_pad_in = pad_list(
+                [torch.from_numpy(x).float()
+                 for x in xs_in],
+                0
+            ).to(device, dtype=self.dtype)
+            xs_pad_out = pad_list(
+                [torch.from_numpy(x).float().unsqueeze(1)
+                 for x in xs_out],
+                0
+            ).to(device, dtype=self.dtype)
 
         ilens = torch.from_numpy(ilens - self.tnum).to(device)
         # NOTE: this is for multi-output (e.g., speech translation)
@@ -322,7 +335,7 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad_in[:, :, :-3], xs_pad_out[:, :, :, :-3], ilens, ys_pad
+        return xs_pad_in, xs_pad_out, ilens, ys_pad
 
 
 def train(args):
