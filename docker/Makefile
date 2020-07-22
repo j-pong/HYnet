@@ -90,7 +90,7 @@ info: ## SSH로 컨테이너에 연결할 때 사용할 커맨드 등 출력
 	$(info HINT: ssh-keygen -t rsa -b 4096 -C "$$(id -un)[$$(id -u)-$$(id -g)]@$$(hostname)")
 	$(info HINT: ssh-copy-id -i ~/.ssh/id_rsa.pub jpong@$(HOST_IP) -p $(SSH_PORT))
 	$(info ----------------------------------------)
-	$(info ==> ssh jpong@$(HOST_IP) -p $(SSH_PORT))
+	$(info ==> ssh username@$(HOST_IP) -p $(SSH_PORT))
 	$(info ----------------------------------------)
 
 logs: ## 컨테이너 내부의 로그를 봅니다.

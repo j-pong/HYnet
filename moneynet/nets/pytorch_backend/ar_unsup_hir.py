@@ -65,13 +65,13 @@ class NetTransform(nn.Module):
 
         # related task
         self.target_type = args.target_type
-
+        ## calculate energy task
         self.field_var = args.field_var
         space = np.linspace(0, self.odim - 1, self.odim)
         self.field = np.expand_dims(
             np.stack([self.gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
         self.field = torch.from_numpy(self.field)
-
+        ## energy post processing task
         self.energy_level = np.array([13, 8, 5, 3, 2, 1]) / 32
 
         # inference part with action and selection
@@ -111,6 +111,16 @@ class NetTransform(nn.Module):
         # else:
         x = (x - min_x) / (max_x - min_x)
 
+        return x
+
+    def energy_quantization(self, x):
+        x_past = None
+        for el in self.energy_level:
+            if x_past is None:
+                x[x > el] = el
+            else:
+                x[(x_past > x) & (x > el)] = el
+            x_past = el
         return x
 
     @staticmethod
@@ -185,11 +195,39 @@ class NetTransform(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
         tsz = seq_mask.size(-1)
 
+        seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
+                                            (~seq_mask).unsqueeze(1).float())).bool()
+
         # initialization buffer
         self.reporter_buffs = {}
 
         # 1. transform
-        xs_pad_out_hat, ratio_t = self.engine(xs_pad_in, self.engine.transform)
+        h, ratio_e = self.engine(xs_pad_in, self.engine.encoder)
+        p_hat = self.engine.brew_(module_lists=[self.engine.encoder], ratio=ratio_e,
+                                  split_dim=None)
+        # self attention based kerenl
+        min_value = float(
+            np.finfo(torch.tensor(0, dtype=torch.float).numpy().dtype).min
+        )
+        q, k = h.split(int(h.size(-1) / 2), dim=-1)
+        kernel = torch.matmul(q, k.transpose(-2, -1))
+        kernel = kernel.masked_fill(seq_mask_kernel.unsqueeze(1), min_value)
+        kernel = torch.softmax(kernel, dim=-1).\
+            masked_fill(seq_mask_kernel.unsqueeze(1), 0.0)
+        h_ = torch.matmul(kernel, q)
+        h = torch.cat([h_, k], dim=-1)
+        # ratio_k = self.engine.calculate_ratio(h_, h)
+        # h = h_
+        # p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+
+        # training key for major feature extraction
+        kernel_explict = torch.matmul(k, k.transpose(-2, -1))
+
+        xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
+        p_hat = self.engine.brew_(module_lists=[self.engine.decoder], ratio=ratio_d,
+                                  split_dim=None,
+                                  w_hat=p_hat[0],
+                                  bias_hat=p_hat[1])
         if self.target_type == 'mvn':
             xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
             xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
@@ -201,51 +239,51 @@ class NetTransform(nn.Module):
         # 2. calculate energy
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
                                       end_state=xs_pad_out_hat.contiguous(),
-                                      func=self.engine.transform,
-                                      ratio=ratio_t,
+                                      p_hat=p_hat,
                                       flows={'e': None})
         energy_t = flows['e'].detach()
-        # el_past = None
-        # for el in self.energy_level:
-        #     if el_past is None:
-        #         energy_t[energy_t > el] = el
-        #     else:
-        #         energy_t[(el_past > energy_t) & (energy_t > el)] = el
-        #     el_past = el
 
-        # 3. kernel for calculating similarity
-        kernel = torch.matmul(xs_pad_out, xs_pad_out_hat.transpose(-2, -1))
+        # 3. calculating similarity
+        fc_mat = torch.matmul(xs_pad_out, xs_pad_out_hat.transpose(-2, -1))
 
         # 4. make target
         with torch.no_grad():
-            # kernel_target = torch.ones_like(kernel).to(kernel.device)
+            # # task 0
+            # fc_target = torch.ones_like(fc_mat).to(fc_mat.device)
 
-            th = []
+            # th = []
             # # task1
             # for i, ke in enumerate(kernel.sort(dim=-2, descending=True)[0]):
             #     ind = ilens[i] * (1.0 - energy_t[i, 0])
             #     th.append(ke[:, ind.long(), range(tsz)])
             # th = torch.stack(th, dim=0).unsqueeze(1)
             # kernel_target = (kernel > th).float()
-            # task2
-            kernel_ = torch.sigmoid(kernel)
-            for i, ke in enumerate(kernel_.sort(dim=-2, descending=True)[0]):
-                ke = torch.cumsum(ke, dim=-2)
-                ke = ke / ke[:, -1, :].unsqueeze(1)
-                ind = torch.argmin(torch.abs(ke - 1 + energy_t[i].unsqueeze(1)), dim=-2)[0]
-                th.append(ke[:, ind.long(), range(tsz)])
-            th = torch.stack(th, dim=0).unsqueeze(1)
-            kernel_target = (kernel_ > th).float()
+
+            # # task2
+            # kernel_ = torch.sigmoid(kernel)
+            # for i, ke in enumerate(kernel_.sort(dim=-2, descending=True)[0]):
+            #     ke = torch.cumsum(ke, dim=-2)
+            #     ke = ke / ke[:, -1, :].unsqueeze(1)
+            #     ind = torch.argmin(torch.abs(ke - 1 + energy_t[i].unsqueeze(1)), dim=-2)[0]
+            #     th.append(ke[:, ind.long(), range(tsz)])
+            # th = torch.stack(th, dim=0).unsqueeze(1)
+            # kernel_target = (kernel_ > th).float()
+
+            # task 4
+            energy_t_inv = (1.0 - self.energy_quantization(energy_t))
+            fc_target = self.fb(energy_t_inv)
 
         # 5. calculate similarity loss
-        seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
-                                            (~seq_mask).unsqueeze(1).float())).bool()
-        loss_g = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                       kernel_target.view(-1, tsz, tsz),
-                                       [seq_mask_kernel],
+        loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
+                                       fc_target.view(-1, tsz, tsz),
+                                       [seq_mask_kernel, fc_target.view(-1, tsz, tsz) < 0.1],
+                                       reduction='none')
+        loss_g = self.criterion_kernel(fc_mat.view(-1, tsz, tsz),
+                                       fc_target.view(-1, tsz, tsz),
+                                       [seq_mask_kernel, fc_target.view(-1, tsz, tsz) < 0.1],
                                        reduction='none')
         # summary all task
-        loss = loss_g.sum()
+        loss = loss_g.sum() + loss_k.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'loss_g': float(loss_g.sum())})
@@ -254,16 +292,19 @@ class NetTransform(nn.Module):
 
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat_
-            self.reporter_buffs['kernel'] = torch.sigmoid(kernel)
-            self.reporter_buffs['kernel_target'] = kernel_target
+
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
+
+            self.reporter_buffs['kernel'] = torch.sigmoid(torch.cat([kernel, kernel_explict], dim=1))
+
+            self.reporter_buffs['fc_target'] = fc_target
+            self.reporter_buffs['fc_mat'] = torch.sigmoid(fc_mat)
 
         return loss
 
-    def calculate_energy(self, start_state, end_state, func, ratio, flows={'e': None}, split_dim=None):
+    def calculate_energy(self, start_state, end_state, p_hat, flows={'e': None}):
         with torch.no_grad():
             # prepare data
-            p_hat = self.engine.brew_(module_list=func, ratio=ratio, split_dim=split_dim)
             w_hat = p_hat[0]
             b_hat = p_hat[1]
 

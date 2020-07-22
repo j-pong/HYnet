@@ -9,14 +9,14 @@ batch-bins: 12000000
 # opt: adadelta
 # grad-clip: 5
 
-# opt: adam
-# grad-clip: 1
-# lr: 0.001
+opt: adam
+grad-clip: 1
+lr: 0.001
 
-opt: noam
-lr: 10.0
-warmup-steps: 25000
-grad-clip: 5
+#opt: noam
+#lr: 10.0
+#warmup-steps: 25000
+#grad-clip: 5
 
 # scheduling related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs

@@ -44,49 +44,62 @@ class Inference(nn.Module):
         return rat
 
     @staticmethod
-    def brew_(module_list, ratio, split_dim=None, w_hat=None, bias_hat=None):
+    def amp(ratio, w=None, bias=None):
+        if w is None and bias is None:
+            raise AttributeError("Both of parameter is None")
+        if w is not None:
+            w = ratio.view(-1, ratio.size(-1)).unsqueeze(1) * w  # (B_new, 1, C*) * (B_new, d, C*)
+        if bias is not None:
+            bias = ratio.view(-1, ratio.size(-1)) * bias  # (B_new, C*) * (B_new, C*)
+        return w, bias
+
+    @staticmethod
+    def brew_(module_lists, ratio, split_dim=None, w_hat=None, bias_hat=None):
         i = 0
-        for module in module_list:
-            if isinstance(module, nn.Linear):
-                if split_dim is None:
-                    w = module.weight
-                elif split_dim > 0:
-                    w = module.weight[:split_dim * ratio[i].size(-1)]
-                elif split_dim < 0:
-                    w = module.weight[-split_dim * ratio[i].size(-1):]
-                else:
-                    raise AttributeError
-
-                if w_hat is None:
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
-                            w.transpose(-2, -1).unsqueeze(0)
-                    # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
-                else:
-                    w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
-
-                if module.bias is not None:
+        for module_list in module_lists:
+            for module in module_list:
+                if isinstance(module, nn.Linear):
                     if split_dim is None:
-                        b = module.bias
+                        w = module.weight
                     elif split_dim > 0:
-                        b = module.bias[:split_dim * ratio[i].size(-1)]
+                        w = module.weight[:split_dim * ratio[i].size(-1)]
                     elif split_dim < 0:
-                        b = module.bias[-split_dim * ratio[i].size(-1):]
+                        w = module.weight[-split_dim * ratio[i].size(-1):]
                     else:
                         raise AttributeError
 
-                    if bias_hat is None:
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+                    if w_hat is None:
+                        w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
+                                w.transpose(-2, -1).unsqueeze(0)
+                        # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
                     else:
-                        bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                        w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
+                        w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(
+                            1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
+
+                    if module.bias is not None:
+                        if split_dim is None:
+                            b = module.bias
+                        elif split_dim > 0:
+                            b = module.bias[:split_dim * ratio[i].size(-1)]
+                        elif split_dim < 0:
+                            b = module.bias[-split_dim * ratio[i].size(-1):]
+                        else:
+                            raise AttributeError
+
+                        if bias_hat is None:
+                            bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+                        else:
+                            bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
+                            bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (
+                                    bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                    else:
+                        bias_hat = None
+                    i += 1
+                elif isinstance(module, nn.ReLU):
+                    pass
                 else:
-                    bias_hat = None
-                i += 1
-            elif isinstance(module, nn.ReLU):
-                pass
-            else:
-                raise AttributeError("Current network architecture, {}, is not supported!".format(module))
+                    raise AttributeError("Current network architecture, {}, is not supported!".format(module))
 
         return w_hat, bias_hat
 
@@ -120,13 +133,13 @@ class HirInference(Inference):
 
         self.bias = args.bias
 
-        self.transform = nn.ModuleList([
-            nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(self.hdim, self.hdim, bias=self.bias),
-            nn.ReLU(),
-            nn.Linear(self.hdim, odim, bias=self.bias)
-        ])
+        # self.transform = nn.ModuleList([
+        #     nn.Linear(idim, self.hdim, bias=self.bias),
+        #     nn.ReLU(),
+        #     nn.Linear(self.hdim, self.hdim, bias=self.bias),
+        #     nn.ReLU(),
+        #     nn.Linear(self.hdim, odim, bias=self.bias)
+        # ])
         self.encoder = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
             nn.ReLU(),
