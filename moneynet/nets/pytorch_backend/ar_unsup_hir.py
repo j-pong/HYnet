@@ -177,37 +177,13 @@ class NetTransform(nn.Module):
 
         return ms
 
-    def sampling(self, xs, ens):
-        """
-        Inputs
-        xs: (B, tnum, Tmax*, Tmax)
-        ens: (B, tnum, Tmax)
-
-        return: (B, 1, Tmax)
-        """
-        with torch.no_grad():
-            ms = []
-            for en in ens:
-                indices = torch.topk(x, k=num_neg, dim=-2)[-1]
-
-                m = torch.zeros_like(x[0])
-                m[indices] = 1.0
-                ms.append(m.unsqueeze(0).bool())
-            ms = torch.stack(ms, dim=0)
-
-        return ms
-
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens), :-self.trunk].unsqueeze(1)  # for data parallel
         xs_pad_out = xs_pad_out[:, :max(ilens), :, :-self.trunk].transpose(1, 2)
 
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
-
         tsz = seq_mask.size(-1)
-
-        seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
-                                            (~seq_mask).unsqueeze(1).float())).bool()
 
         # initialization buffer
         self.reporter_buffs = {}
@@ -221,7 +197,8 @@ class NetTransform(nn.Module):
             xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
         elif self.target_type == 'residual':
             xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
-        # calculate loss of transform
+
+        # 2. calculate energy
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
                                       end_state=xs_pad_out_hat.contiguous(),
                                       func=self.engine.transform,
@@ -236,10 +213,35 @@ class NetTransform(nn.Module):
         #         energy_t[(el_past > energy_t) & (energy_t > el)] = el
         #     el_past = el
 
+        # 3. kernel for calculating similarity
         kernel = torch.matmul(xs_pad_out, xs_pad_out_hat.transpose(-2, -1))
-        kernel_target = self.sampling(kernel, energy_t)
+
+        # 4. make target
+        with torch.no_grad():
+            # kernel_target = torch.ones_like(kernel).to(kernel.device)
+
+            th = []
+            # # task1
+            # for i, ke in enumerate(kernel.sort(dim=-2, descending=True)[0]):
+            #     ind = ilens[i] * (1.0 - energy_t[i, 0])
+            #     th.append(ke[:, ind.long(), range(tsz)])
+            # th = torch.stack(th, dim=0).unsqueeze(1)
+            # kernel_target = (kernel > th).float()
+            # task2
+            kernel_ = torch.sigmoid(kernel)
+            for i, ke in enumerate(kernel_.sort(dim=-2, descending=True)[0]):
+                ke = torch.cumsum(ke, dim=-2)
+                ke = ke / ke[:, -1, :].unsqueeze(1)
+                ind = torch.argmin(torch.abs(ke - 1 + energy_t[i].unsqueeze(1)), dim=-2)[0]
+                th.append(ke[:, ind.long(), range(tsz)])
+            th = torch.stack(th, dim=0).unsqueeze(1)
+            kernel_target = (kernel_ > th).float()
+
+        # 5. calculate similarity loss
+        seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
+                                            (~seq_mask).unsqueeze(1).float())).bool()
         loss_g = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                       torch.ones_like(kernel).to(kernel.device).view(-1, tsz, tsz),
+                                       kernel_target.view(-1, tsz, tsz),
                                        [seq_mask_kernel],
                                        reduction='none')
         # summary all task
@@ -253,6 +255,7 @@ class NetTransform(nn.Module):
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat_
             self.reporter_buffs['kernel'] = torch.sigmoid(kernel)
+            self.reporter_buffs['kernel_target'] = kernel_target
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 
         return loss

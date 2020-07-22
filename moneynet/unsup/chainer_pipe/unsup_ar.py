@@ -323,7 +323,7 @@ class CustomConverter(object):
                 0
             ).to(device, dtype=self.dtype)
 
-        ilens = torch.from_numpy(ilens - self.tnum).to(device)
+        ilens = torch.from_numpy(ilens).to(device) - self.tnum
         # NOTE: this is for multi-output (e.g., speech translation)
         ys_pad = pad_list(
             [
