@@ -113,16 +113,6 @@ class NetTransform(nn.Module):
 
         return x
 
-    def energy_quantization(self, x):
-        x_past = None
-        for el in self.energy_level:
-            if x_past is None:
-                x[x > el] = el
-            else:
-                x[(x_past > x) & (x > el)] = el
-            x_past = el
-        return x
-
     @staticmethod
     def fb(x, mode='batch', offset=1):
         # TODO(j-pong): multi-target energy
@@ -160,32 +150,17 @@ class NetTransform(nn.Module):
 
         return xs
 
-    def clustering(self, xs, golden_ratio=3.14):
-        """
-        xs: (B, tnum, Tmax)
-
-        return: (B, 1, Tmax)
-        """
-        with torch.no_grad():
-            ms = []
-            for x in xs:
-                if self.tnum == 1:
-                    num_neg = int(x[0].sum(-1) * golden_ratio)
-                    if num_neg < 1:
-                        num_neg = 1
-                        logging.warning("num_neg has wrong value < 1")
-                    elif num_neg > x.size(-1):
-                        num_neg = x.size(-1)
-                        logging.warning("num_neg has wrong value > {}".format(num_neg))
-                    indices = torch.topk(x, k=num_neg, dim=-1)[-1]
-                else:
-                    raise AttributeError('Number of the target > 1 is not support yet!')
-                m = torch.zeros_like(x[0])
-                m[indices] = 1.0
-                ms.append(m.unsqueeze(0).bool())
-            ms = torch.stack(ms, dim=0)
-
-        return ms
+    @staticmethod
+    def attn(q, k, mask):
+        min_value = float(
+            np.finfo(torch.tensor(0, dtype=torch.float).numpy().dtype).min
+        )
+        kernel = torch.matmul(k, q.transpose(-2, -1)) / np.sqrt(q.size(-1))
+        kernel = kernel.masked_fill(mask, min_value)
+        kernel = torch.softmax(kernel, dim=-1). \
+            masked_fill(mask, 0.0)
+        c = torch.matmul(kernel, q)
+        return c, kernel
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
@@ -202,39 +177,32 @@ class NetTransform(nn.Module):
         self.reporter_buffs = {}
 
         # 1. transform
-        h, ratio_e = self.engine(xs_pad_in, self.engine.encoder)
-        p_hat = self.engine.brew_(module_lists=[self.engine.encoder], ratio=ratio_e,
-                                  split_dim=None)
-        # self attention based kerenl
-        min_value = float(
-            np.finfo(torch.tensor(0, dtype=torch.float).numpy().dtype).min
-        )
-        q, k = h.split(int(h.size(-1) / 2), dim=-1)
-        kernel = torch.matmul(q, k.transpose(-2, -1))
-        kernel = kernel.masked_fill(seq_mask_kernel.unsqueeze(1), min_value)
-        kernel = torch.softmax(kernel, dim=-1).\
-            masked_fill(seq_mask_kernel.unsqueeze(1), 0.0)
-        h_ = torch.matmul(kernel, q)
-        h = torch.cat([h_, k], dim=-1)
-        # ratio_k = self.engine.calculate_ratio(h_, h)
-        # h = h_
-        # p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
-
-        # training key for major feature extraction
+        k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)
         kernel_explict = torch.matmul(k, k.transpose(-2, -1))
 
+        q, ratio_e_q = self.engine(xs_pad_in, self.engine.encoder_q)
+        p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
+                                  ratio=ratio_e_q,
+                                  split_dim=None)
+        h, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1))
+        # Todo(j-pong): nan error occur. Fix me!
+        # ratio_k = self.engine.calculate_ratio(h_, q)
+        # p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+
+        # decoding contexted hidden layer
         xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
-        p_hat = self.engine.brew_(module_lists=[self.engine.decoder], ratio=ratio_d,
+        p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
+                                  ratio=ratio_d,
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
-        if self.target_type == 'mvn':
-            xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
-            xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
-            xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
-            xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
-        elif self.target_type == 'residual':
-            xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
+        # if self.target_type == 'mvn':
+        #     xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
+        #     xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
+        #     xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
+        #     xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
+        # elif self.target_type == 'residual':
+        #     xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
 
         # 2. calculate energy
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
@@ -248,9 +216,11 @@ class NetTransform(nn.Module):
 
         # 4. make target
         with torch.no_grad():
-            # # task 0
-            # fc_target = torch.ones_like(fc_mat).to(fc_mat.device)
-
+            # task 0
+            # fc_target = torch.randint_like(fc_mat, low=0, high=2, requires_grad=False).to(fc_mat.device)
+            energy_t_inv = (1.0 - self.energy_quantization(energy_t))
+            kernel_target = self.fb(energy_t_inv)
+            fc_target = kernel_target
             # th = []
             # # task1
             # for i, ke in enumerate(kernel.sort(dim=-2, descending=True)[0]):
@@ -269,14 +239,11 @@ class NetTransform(nn.Module):
             # th = torch.stack(th, dim=0).unsqueeze(1)
             # kernel_target = (kernel_ > th).float()
 
-            # task 4
-            energy_t_inv = (1.0 - self.energy_quantization(energy_t))
-            fc_target = self.fb(energy_t_inv)
 
         # 5. calculate similarity loss
         loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
-                                       fc_target.view(-1, tsz, tsz),
-                                       [seq_mask_kernel, fc_target.view(-1, tsz, tsz) < 0.1],
+                                       kernel_target.view(-1, tsz, tsz),
+                                       [seq_mask_kernel, kernel_target.view(-1, tsz, tsz) < 0.1],
                                        reduction='none')
         loss_g = self.criterion_kernel(fc_mat.view(-1, tsz, tsz),
                                        fc_target.view(-1, tsz, tsz),
@@ -291,11 +258,11 @@ class NetTransform(nn.Module):
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
-            self.reporter_buffs['out'] = xs_pad_out_hat_
+            self.reporter_buffs['out'] = xs_pad_out_hat
 
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 
-            self.reporter_buffs['kernel'] = torch.sigmoid(torch.cat([kernel, kernel_explict], dim=1))
+            self.reporter_buffs['kernel'] = torch.cat([kernel, torch.sigmoid(kernel_explict)], dim=1)
 
             self.reporter_buffs['fc_target'] = fc_target
             self.reporter_buffs['fc_mat'] = torch.sigmoid(fc_mat)
@@ -389,3 +356,44 @@ class NetTransform(nn.Module):
         x = torch.as_tensor(x).unsqueeze(0)
 
         return x
+
+    """
+    Improvement
+    """
+
+    def energy_quantization(self, x):
+        x_past = None
+        for el in self.energy_level:
+            if x_past is None:
+                x[x > el] = el
+            else:
+                x[(x_past > x) & (x > el)] = el
+            x_past = el
+        return x
+
+    def clustering(self, xs, golden_ratio=3.14):
+        """
+        xs: (B, tnum, Tmax)
+
+        return: (B, 1, Tmax)
+        """
+        with torch.no_grad():
+            ms = []
+            for x in xs:
+                if self.tnum == 1:
+                    num_neg = int(x[0].sum(-1) * golden_ratio)
+                    if num_neg < 1:
+                        num_neg = 1
+                        logging.warning("num_neg has wrong value < 1")
+                    elif num_neg > x.size(-1):
+                        num_neg = x.size(-1)
+                        logging.warning("num_neg has wrong value > {}".format(num_neg))
+                    indices = torch.topk(x, k=num_neg, dim=-1)[-1]
+                else:
+                    raise AttributeError('Number of the target > 1 is not support yet!')
+                m = torch.zeros_like(x[0])
+                m[indices] = 1.0
+                ms.append(m.unsqueeze(0).bool())
+            ms = torch.stack(ms, dim=0)
+
+        return ms
