@@ -1,9 +1,9 @@
 # model name for training
-model-module: "moneynet.nets.pytorch_backend.ar_unsup_hir:NetTransform"
+model-module: "moneynet.nets.pytorch_backend.ar_unsup_funcbook:NetTransform"
 
 # minibatch related
-accum-grad: 3
-batch-bins: 12000000
+accum-grad: 4
+batch-bins: 8000000
 
 # optimization related
 # opt: adadelta
