@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import chainer
 from chainer import reporter
 
-from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
+from espnet.nets.pytorch_backend.nets_utils import make_pad_mask, pad_list
 
 from moneynet.nets.pytorch_backend.unsup.initialization import initialize
 from moneynet.nets.pytorch_backend.unsup.loss import SeqMultiMaskLoss
@@ -62,6 +62,9 @@ class NetTransform(nn.Module):
         self.tnum = args.tnum
         self.ignore_id = ignore_id
         self.subsample = [1]
+        self.min_value = float(
+            np.finfo(torch.tensor(0, dtype=torch.float).numpy().dtype).min
+        )
 
         # related task
         self.target_type = args.target_type
@@ -151,14 +154,21 @@ class NetTransform(nn.Module):
         return xs
 
     @staticmethod
-    def attn(q, k, mask):
-        min_value = float(
-            np.finfo(torch.tensor(0, dtype=torch.float).numpy().dtype).min
-        )
+    def attn(q, k, mask, min_value, mask_diag=False, mask_max=False):
+        """
+        q : B, 1, T, C
+        K : B, 1, T, C
+        """
+        tsz = q.size(-2)
+
         kernel = torch.matmul(k, q.transpose(-2, -1)) / np.sqrt(q.size(-1))
+        if mask_diag:
+            kernel[:, :, range(tsz), range(tsz)] = min_value
         kernel = kernel.masked_fill(mask, min_value)
         kernel = torch.softmax(kernel, dim=-1). \
             masked_fill(mask, 0.0)
+        if mask_diag:
+            kernel[:, :, range(tsz), range(tsz)] = 0.0
         c = torch.matmul(kernel, q)
         return c, kernel
 
@@ -167,70 +177,82 @@ class NetTransform(nn.Module):
         xs_pad_in = xs_pad_in[:, :max(ilens), :-self.trunk].unsqueeze(1)  # for data parallel
         xs_pad_out = xs_pad_out[:, :max(ilens), :, :-self.trunk].transpose(1, 2)
 
+        # seq_mask related
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
         tsz = seq_mask.size(-1)
-
         seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
                                             (~seq_mask).unsqueeze(1).float())).bool()
+
+        # sample target
+        sampled_xs_pad = []
+        for i, ilen in enumerate(ilens):
+            sampled_ind = torch.randint(size=[ilen], low=0, high=ilen, requires_grad=False).to(seq_mask.device)
+            sampled_xs_pad.append(xs_pad_out[i, 0, sampled_ind])
+        sampled_xs_pad = pad_list(sampled_xs_pad, pad_value=0.0).unsqueeze(1)
+        xs_pad_in = torch.cat([xs_pad_in, sampled_xs_pad], dim=1)
 
         # initialization buffer
         self.reporter_buffs = {}
 
         # 1. transform
-        k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)
+        ## causal transform
+        k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)  # avoid duplicated key
         kernel_explict = torch.matmul(k, k.transpose(-2, -1))
 
         q, ratio_e_q = self.engine(xs_pad_in, self.engine.encoder_q)
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_e_q,
                                   split_dim=None)
-        h, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1))
+
+        h, kernel = self.attn(q, k,
+                              seq_mask_kernel.unsqueeze(1),
+                              mask_diag=True,
+                              min_value=self.min_value)
+
         # Todo(j-pong): nan error occur. Fix me!
-        # ratio_k = self.engine.calculate_ratio(h_, q)
+        # ratio_k = self.engine.calculate_ratio(h, q)
         # p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
 
-        # decoding contexted hidden layer
         xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
                                   ratio=ratio_d,
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
-        # if self.target_type == 'mvn':
-        #     xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
-        #     xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
-        #     xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
-        #     xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
-        # elif self.target_type == 'residual':
-        #     xs_pad_out_hat_ = xs_pad_out_hat + xs_pad_in
 
-        # 2. calculate energy
+        # ## random transform
+        # k, _ = self.engine(sampled_xs_pad_in, self.engine.encoder_k)
+        # agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
+        #                           min_value=self.min_value)
+        # score = (h * agg_q).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), self.min_value)
+        # h = torch.softmax(score, dim=-1).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), 0.0) * h
+        #
+        # sampled_xs_pad_out_hat, _ = self.engine(h, self.engine.decoder)
+
+        # 2. calculate energy for causal transform
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
                                       end_state=xs_pad_out_hat.contiguous(),
                                       p_hat=p_hat,
                                       flows={'e': None})
         energy_t = flows['e'].detach()
 
-        # 3. calculating similarity
-        fc_mat = torch.matmul(xs_pad_out, xs_pad_out_hat.transpose(-2, -1))
-
-        # 4. make target
+        # 3. make target for causal transform
         with torch.no_grad():
-            # task 0
-            # fc_target = torch.randint_like(fc_mat, low=0, high=2, requires_grad=False).to(fc_mat.device)
             energy_t_inv = (1.0 - self.energy_quantization(energy_t))
             kernel_target = self.fb(energy_t_inv)
-            fc_target = kernel_target
 
-        # 5. calculate similarity loss
+        # 4. calculate similarity loss
         loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
                                        kernel_target.view(-1, tsz, tsz),
                                        [seq_mask_kernel, kernel_target.view(-1, tsz, tsz) < 0.1],
                                        reduction='none')
-        loss_g = self.criterion_kernel(fc_mat.view(-1, tsz, tsz),
-                                       fc_target.view(-1, tsz, tsz),
-                                       [seq_mask_kernel, fc_target.view(-1, tsz, tsz) < 0.1],
-                                       reduction='none')
+
+        # 5. calculate generate loss
+        loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
+                                xs_pad_out.contiguous().view(-1, self.idim),
+                                [seq_mask.view(-1, 1)],
+                                reduction='none')
+
         # summary all task
         loss = loss_g.sum() + loss_k.sum()
         if not torch.isnan(loss):
@@ -245,9 +267,6 @@ class NetTransform(nn.Module):
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 
             self.reporter_buffs['kernel'] = torch.cat([kernel, torch.sigmoid(kernel_explict)], dim=1)
-
-            self.reporter_buffs['fc_target'] = fc_target
-            self.reporter_buffs['fc_mat'] = torch.sigmoid(fc_mat)
 
         return loss
 
