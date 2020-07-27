@@ -154,7 +154,7 @@ class NetTransform(nn.Module):
         return xs
 
     @staticmethod
-    def attn(q, k, mask, min_value, mask_diag=False, mask_max=False):
+    def attn(q, k, mask, min_value, mask_diag=False):
         """
         q : B, 1, T, C
         K : B, 1, T, C
@@ -172,6 +172,12 @@ class NetTransform(nn.Module):
         c = torch.matmul(kernel, q)
         return c, kernel
 
+    @staticmethod
+    def ch_attn(q, agg_q, mask, min_value):
+        score = (q * agg_q).masked_fill(mask, min_value)
+        h = torch.softmax(score, dim=-1).masked_fill(mask, 0.0) * q
+        return h
+
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens), :-self.trunk].unsqueeze(1)  # for data parallel
@@ -185,16 +191,17 @@ class NetTransform(nn.Module):
 
         # sample target
         sampled_xs_pad = []
+        sampled_xs_pad_ind = []
         for i, ilen in enumerate(ilens):
             sampled_ind = torch.randint(size=[ilen], low=0, high=ilen, requires_grad=False).to(seq_mask.device)
             sampled_xs_pad.append(xs_pad_out[i, 0, sampled_ind])
+            sampled_xs_pad_ind.append(sampled_ind)
         sampled_xs_pad = pad_list(sampled_xs_pad, pad_value=0.0).unsqueeze(1)
 
         # initialization buffer
         self.reporter_buffs = {}
 
-        # 1. transform
-        ## causal transform
+        # 1. causal transform
         k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)
         kernel_explict = torch.matmul(k, k.transpose(-2, -1))
 
@@ -205,70 +212,88 @@ class NetTransform(nn.Module):
         agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
                                   mask_diag=True,
                                   min_value=self.min_value)
-        score = (q * agg_q).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), self.min_value)
-        h = torch.softmax(score, dim=-1).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), 0.0) * q
+
+        h = self.ch_attn(q, agg_q,
+                         seq_mask.unsqueeze(1).unsqueeze(-1),
+                         min_value=self.min_value)
 
         # fix the parameter for attention amp
         ratio_k = self.engine.calculate_ratio(h, q)
-        p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+        p_hat_cau = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
 
         xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
-        p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
-                                  ratio=ratio_d,
-                                  split_dim=None,
-                                  w_hat=p_hat[0],
-                                  bias_hat=p_hat[1])
+        p_hat_cau = self.engine.brew_(module_lists=[self.engine.decoder],
+                                      ratio=ratio_d,
+                                      split_dim=None,
+                                      w_hat=p_hat_cau[0],
+                                      bias_hat=p_hat_cau[1])
 
         # 2. calculate energy for causal transform
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
                                       end_state=xs_pad_out_hat.contiguous(),
-                                      p_hat=p_hat,
+                                      p_hat=p_hat_cau,
                                       flows={'e': None})
         energy_t = flows['e'].detach()
 
-        # 3. make target for causal transform
-        with torch.no_grad():
-            energy_t_inv = (1.0 - self.energy_quantization(energy_t))
-            kernel_target = self.fb(energy_t_inv)
-
-        """
-        aux start
-        """
-        ## random transform
+        # 3. random transform
         k, _ = self.engine(sampled_xs_pad, self.engine.encoder_k)
 
         agg_q, _ = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
                              min_value=self.min_value)
 
-        score = (q * agg_q).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), self.min_value)
-        h = torch.softmax(score, dim=-1).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), 0.0) * q
+        h = self.ch_attn(q, agg_q,
+                         seq_mask.unsqueeze(1).unsqueeze(-1),
+                         min_value=self.min_value)
 
-        sampled_xs_pad_out_hat, _ = self.engine(h, self.engine.decoder)
-        """
-        aux stop
-        """
+        # fix the parameter for attention amp
+        ratio_k = self.engine.calculate_ratio(h, q)
+        p_hat_ran = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
 
-        # 4. calculate similarity loss
+        sampled_xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
+        p_hat_cau = self.engine.brew_(module_lists=[self.engine.decoder],
+                                      ratio=ratio_d,
+                                      split_dim=None,
+                                      w_hat=p_hat_ran[0],
+                                      bias_hat=p_hat_ran[1])
+
+        # 4. calculate energy for random transform
+        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
+                                      end_state=sampled_xs_pad_out_hat.contiguous(),
+                                      p_hat=p_hat_cau,
+                                      flows={'e': None})
+        energy_t = flows['e'].detach()
+
+        # 5. make target for causal transform
+        with torch.no_grad():
+            # # task 0
+            # energy_t_inv = (1.0 - self.energy_quantization(energy_t))
+            # kernel_target = self.fb(energy_t_inv)
+
+            # task 1
+            kernel_target = torch.zeros_like(seq_mask_kernel)
+            kernel_target[:, :, range(tsz), range(tsz)] = 1.0
+
+        # 6. calculate similarity loss
         loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
                                        kernel_target.view(-1, tsz, tsz),
                                        [seq_mask_kernel, kernel_target.view(-1, tsz, tsz) < 0.1],
                                        reduction='none')
 
-        # 5. calculate generate loss
+        # 7. calculate generate loss
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
                                 reduction='none')
-        loss_g_key = self.criterion(sampled_xs_pad_out_hat.view(-1, self.idim),
-                                    sampled_xs_pad.contiguous().view(-1, self.idim),
-                                    [seq_mask.view(-1, 1)],
-                                    reduction='none')
+        loss_g_sampled = self.criterion(sampled_xs_pad_out_hat.view(-1, self.idim),
+                                        sampled_xs_pad.contiguous().view(-1, self.idim),
+                                        [seq_mask.view(-1, 1)],
+                                        reduction='none')
         # summary all task
-        loss = loss_g.sum() + loss_g_key.sum() + loss_k.sum()
+        loss = loss_g.sum() + loss_g_sampled.sum() + loss_k.sum()
         if not torch.isnan(loss):
-            self.reporter.report({'loss_1': float(loss),
+            self.reporter.report({'loss': float(loss),
                                   'loss_2': float(loss_g.sum()),
-                                  'loss_3': float(loss_g_key.sum()),
+                                  'loss_3': float(loss_g_sampled.sum()),
                                   'loss_4': float(loss_k.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
