@@ -154,7 +154,7 @@ class NetTransform(nn.Module):
         return xs
 
     @staticmethod
-    def attn(q, k, mask, min_value, mask_diag=False):
+    def attn(q, k, mask, min_value, mask_diag=False, add_noise=False):
         """
         q : B, 1, T, C
         K : B, 1, T, C
@@ -178,6 +178,12 @@ class NetTransform(nn.Module):
         h = torch.softmax(score, dim=-1).masked_fill(mask, 0.0) * q
         return h
 
+    @staticmethod
+    def inverse_perm(p):
+        s = torch.zeros_like(p)
+        s[p] = torch.arange(p.size(-1))
+        return s
+
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
         xs_pad_in = xs_pad_in[:, :max(ilens), :-self.trunk].unsqueeze(1)  # for data parallel
@@ -189,94 +195,62 @@ class NetTransform(nn.Module):
         seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
                                             (~seq_mask).unsqueeze(1).float())).bool()
 
-        # sample target
-        sampled_xs_pad = []
-        sampled_xs_pad_ind = []
+        # permutation input space
+        xs_pad_in_sam = []
+        ind_sam = []
         for i, ilen in enumerate(ilens):
-            sampled_ind = torch.randint(size=[ilen], low=0, high=ilen, requires_grad=False).to(seq_mask.device)
-            sampled_xs_pad.append(xs_pad_out[i, 0, sampled_ind])
-            sampled_xs_pad_ind.append(sampled_ind)
-        sampled_xs_pad = pad_list(sampled_xs_pad, pad_value=0.0).unsqueeze(1)
+            ind = torch.randperm(ilen)
+            ind_sam.append(ind)
+            xs_pad_in_sam.append(xs_pad_in[i, 0, ind])
+        xs_pad_in_sam = pad_list(xs_pad_in_sam, pad_value=0.0).unsqueeze(1)  # B, 1, Tmax, idim
+        ind_sam = pad_list(ind_sam, pad_value=-1).unsqueeze(1)  # B, 1, Tmax
 
         # initialization buffer
         self.reporter_buffs = {}
 
-        # 1. causal transform
-        k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)
+        # 1. preparation of key dictionary : must key is aligned respect to target seq.
+        k, _ = self.engine(xs_pad_in, self.engine.encoder_k)
         kernel_explict = torch.matmul(k, k.transpose(-2, -1))
 
-        q, ratio_e_q = self.engine(xs_pad_in, self.engine.encoder_q)
-        p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
-                                  ratio=ratio_e_q,
-                                  split_dim=None)
+        # 2. query for causal case
+        q, ratio_q = self.engine(xs_pad_in_sam, self.engine.encoder_q)
+
+        # 3. transform
         agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
-                                  mask_diag=True,
                                   min_value=self.min_value)
-
         h = self.ch_attn(q, agg_q,
                          seq_mask.unsqueeze(1).unsqueeze(-1),
                          min_value=self.min_value)
-
-        # fix the parameter for attention amp
-        ratio_k = self.engine.calculate_ratio(h, q)
-        p_hat_cau = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
-
         xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
-        p_hat_cau = self.engine.brew_(module_lists=[self.engine.decoder],
-                                      ratio=ratio_d,
-                                      split_dim=None,
-                                      w_hat=p_hat_cau[0],
-                                      bias_hat=p_hat_cau[1])
 
-        # 2. calculate energy for causal transform
-        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
-                                      end_state=xs_pad_out_hat.contiguous(),
-                                      p_hat=p_hat_cau,
-                                      flows={'e': None})
-        energy_t = flows['e'].detach()
-
-        # 3. random transform
-        k, _ = self.engine(sampled_xs_pad, self.engine.encoder_k)
-
-        agg_q, _ = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
-                             min_value=self.min_value)
-
-        h = self.ch_attn(q, agg_q,
-                         seq_mask.unsqueeze(1).unsqueeze(-1),
-                         min_value=self.min_value)
-
-        # fix the parameter for attention amp
+        # 4, brewing with attention
+        p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
+                                  ratio=ratio_q,
+                                  split_dim=None)
         ratio_k = self.engine.calculate_ratio(h, q)
-        p_hat_ran = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+        p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+        p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
+                                  ratio=ratio_d,
+                                  split_dim=None,
+                                  w_hat=p_hat[0],
+                                  bias_hat=p_hat[1])
 
-        sampled_xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
-        p_hat_cau = self.engine.brew_(module_lists=[self.engine.decoder],
-                                      ratio=ratio_d,
-                                      split_dim=None,
-                                      w_hat=p_hat_ran[0],
-                                      bias_hat=p_hat_ran[1])
-
-        # 4. calculate energy for random transform
-        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
-                                      end_state=sampled_xs_pad_out_hat.contiguous(),
-                                      p_hat=p_hat_cau,
+        # 4. calculate energy
+        flows = self.calculate_energy(start_state=xs_pad_in_sam.contiguous(),
+                                      end_state=xs_pad_out_hat.contiguous(),
+                                      p_hat=p_hat,
                                       flows={'e': None})
         energy_t = flows['e'].detach()
 
-        # 5. make target for causal transform
+        # 5. make target with energy
         with torch.no_grad():
-            # # task 0
-            # energy_t_inv = (1.0 - self.energy_quantization(energy_t))
-            # kernel_target = self.fb(energy_t_inv)
-
-            # task 1
-            kernel_target = torch.zeros_like(seq_mask_kernel)
-            kernel_target[:, :, range(tsz), range(tsz)] = 1.0
+            kernel_target = torch.zeros_like(kernel_explict).float()
+            kernel_target[:, :, range(tsz), ind_sam] = energy_t
 
         # 6. calculate similarity loss
         loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
                                        kernel_target.view(-1, tsz, tsz),
-                                       [seq_mask_kernel, kernel_target.view(-1, tsz, tsz) < 0.1],
+                                       [seq_mask_kernel],
                                        reduction='none')
 
         # 7. calculate generate loss
@@ -284,16 +258,12 @@ class NetTransform(nn.Module):
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
                                 reduction='none')
-        loss_g_sampled = self.criterion(sampled_xs_pad_out_hat.view(-1, self.idim),
-                                        sampled_xs_pad.contiguous().view(-1, self.idim),
-                                        [seq_mask.view(-1, 1)],
-                                        reduction='none')
+
         # summary all task
-        loss = loss_g.sum() + loss_g_sampled.sum() + loss_k.sum()
+        loss = loss_g.sum() + loss_k.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'loss_2': float(loss_g.sum()),
-                                  'loss_3': float(loss_g_sampled.sum()),
                                   'loss_4': float(loss_k.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
@@ -301,6 +271,8 @@ class NetTransform(nn.Module):
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat
 
+            for i, ind in enumerate(ind_sam):
+                energy_t[i] = energy_t[i, :, self.inverse_perm(ind[0])]
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 
             self.reporter_buffs['kernel'] = torch.cat([kernel, torch.sigmoid(kernel_explict)], dim=1)
