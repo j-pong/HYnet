@@ -587,14 +587,14 @@ def train(args):
     report_keys = [
         "epoch",
         "iteration",
-        "main/loss",
-        "validation/main/loss",
-        "main/loss_g",
-        "validation/main/loss_g",
-        "main/loss_e",
-        "validation/main/loss_e",
-        "main/loss_kernel",
-        "validation/main/loss_kernel",
+        "main/loss_1",
+        "validation/main/loss_1",
+        "main/loss_2",
+        "validation/main/loss_2",
+        "main/loss_3",
+        "validation/main/loss_3",
+        "main/loss_4",
+        "validation/main/loss_4",
         "elapsed_time",
     ]
     if args.opt == "adadelta":

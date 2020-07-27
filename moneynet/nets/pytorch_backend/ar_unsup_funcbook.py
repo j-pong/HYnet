@@ -189,29 +189,28 @@ class NetTransform(nn.Module):
             sampled_ind = torch.randint(size=[ilen], low=0, high=ilen, requires_grad=False).to(seq_mask.device)
             sampled_xs_pad.append(xs_pad_out[i, 0, sampled_ind])
         sampled_xs_pad = pad_list(sampled_xs_pad, pad_value=0.0).unsqueeze(1)
-        xs_pad_in = torch.cat([xs_pad_in, sampled_xs_pad], dim=1)
 
         # initialization buffer
         self.reporter_buffs = {}
 
         # 1. transform
         ## causal transform
-        k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)  # avoid duplicated key
+        k, ratio_e_k = self.engine(xs_pad_in, self.engine.encoder_k)
         kernel_explict = torch.matmul(k, k.transpose(-2, -1))
 
         q, ratio_e_q = self.engine(xs_pad_in, self.engine.encoder_q)
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_e_q,
                                   split_dim=None)
+        agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
+                                  mask_diag=True,
+                                  min_value=self.min_value)
+        score = (q * agg_q).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), self.min_value)
+        h = torch.softmax(score, dim=-1).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), 0.0) * q
 
-        h, kernel = self.attn(q, k,
-                              seq_mask_kernel.unsqueeze(1),
-                              mask_diag=True,
-                              min_value=self.min_value)
-
-        # Todo(j-pong): nan error occur. Fix me!
-        # ratio_k = self.engine.calculate_ratio(h, q)
-        # p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+        # fix the parameter for attention amp
+        ratio_k = self.engine.calculate_ratio(h, q)
+        p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
 
         xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
@@ -219,15 +218,6 @@ class NetTransform(nn.Module):
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
-
-        # ## random transform
-        # k, _ = self.engine(sampled_xs_pad_in, self.engine.encoder_k)
-        # agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
-        #                           min_value=self.min_value)
-        # score = (h * agg_q).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), self.min_value)
-        # h = torch.softmax(score, dim=-1).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), 0.0) * h
-        #
-        # sampled_xs_pad_out_hat, _ = self.engine(h, self.engine.decoder)
 
         # 2. calculate energy for causal transform
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
@@ -241,6 +231,23 @@ class NetTransform(nn.Module):
             energy_t_inv = (1.0 - self.energy_quantization(energy_t))
             kernel_target = self.fb(energy_t_inv)
 
+        """
+        aux start
+        """
+        ## random transform
+        k, _ = self.engine(sampled_xs_pad, self.engine.encoder_k)
+
+        agg_q, _ = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
+                             min_value=self.min_value)
+
+        score = (q * agg_q).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), self.min_value)
+        h = torch.softmax(score, dim=-1).masked_fill(seq_mask.unsqueeze(1).unsqueeze(-1), 0.0) * q
+
+        sampled_xs_pad_out_hat, _ = self.engine(h, self.engine.decoder)
+        """
+        aux stop
+        """
+
         # 4. calculate similarity loss
         loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
                                        kernel_target.view(-1, tsz, tsz),
@@ -252,12 +259,17 @@ class NetTransform(nn.Module):
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
                                 reduction='none')
-
+        loss_g_key = self.criterion(sampled_xs_pad_out_hat.view(-1, self.idim),
+                                    sampled_xs_pad.contiguous().view(-1, self.idim),
+                                    [seq_mask.view(-1, 1)],
+                                    reduction='none')
         # summary all task
-        loss = loss_g.sum() + loss_k.sum()
+        loss = loss_g.sum() + loss_g_key.sum() + loss_k.sum()
         if not torch.isnan(loss):
-            self.reporter.report({'loss': float(loss),
-                                  'loss_g': float(loss_g.sum())})
+            self.reporter.report({'loss_1': float(loss),
+                                  'loss_2': float(loss_g.sum()),
+                                  'loss_3': float(loss_g_key.sum()),
+                                  'loss_4': float(loss_k.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
