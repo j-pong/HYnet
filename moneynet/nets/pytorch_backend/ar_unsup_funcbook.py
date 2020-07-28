@@ -245,12 +245,13 @@ class NetTransform(nn.Module):
         # 5. make target with energy
         with torch.no_grad():
             kernel_target = torch.zeros_like(kernel_explict).float()
-            kernel_target[:, :, range(tsz), ind_sam] = energy_t
+            for i, ind in enumerate(ind_sam):
+                kernel_target[i, :, range(tsz), ind[0]] = energy_t[i, :]
 
         # 6. calculate similarity loss
         loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
                                        kernel_target.view(-1, tsz, tsz),
-                                       [seq_mask_kernel],
+                                       [seq_mask_kernel, kernel_target.view(-1, tsz, tsz) < 0.01],
                                        reduction='none')
 
         # 7. calculate generate loss
@@ -273,9 +274,10 @@ class NetTransform(nn.Module):
 
             for i, ind in enumerate(ind_sam):
                 energy_t[i] = energy_t[i, :, self.inverse_perm(ind[0])]
+                kernel[i] = kernel[i, :, :, self.inverse_perm(ind[0])]
+                kernel_target[i] = kernel_target[i, :, :, self.inverse_perm(ind[0])]
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
-
-            self.reporter_buffs['kernel'] = torch.cat([kernel, torch.sigmoid(kernel_explict)], dim=1)
+            self.reporter_buffs['kernel'] = torch.cat([kernel, torch.sigmoid(kernel_explict), kernel_target], dim=1)
 
         return loss
 
