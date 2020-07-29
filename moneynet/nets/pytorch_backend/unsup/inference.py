@@ -3,6 +3,8 @@ from torch import nn
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
+from fairseq.models.wav2vec import Wav2VecModel, Wav2VecPredictionsModel
+
 
 class Inference(nn.Module):
     def __init__(self, idim, odim, args):
@@ -89,7 +91,8 @@ class Inference(nn.Module):
                                 raise AttributeError
 
                             if bias_hat is None:
-                                bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
+                                bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(
+                                    0)  # (B_new, C1) * (1, C1)
                             else:
                                 bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
                                 bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (
@@ -149,6 +152,49 @@ class HirInference(Inference):
             nn.ReLU(),
             nn.Linear(self.hdim, odim, bias=self.bias)
         ])
+
+
+class FairInference(Inference):
+    def __init__(self, idim, odim, args):
+        super(Inference, self).__init__()
+        # configuration
+        self.idim = idim
+        self.odim = odim
+        self.hdim = args.hdim
+        self.tnum = args.tnum
+
+        self.bias = args.bias
+
+        self.wav2vec_predictions = Wav2VecPredictionsModel(
+            in_dim=idim,
+            out_dim=odim,
+            prediction_steps=args.prediction_steps,
+            n_negatives=args.num_negatives,
+            cross_sample_negatives=args.cross_sample_negatives,
+            sample_distance=args.sample_distance,
+            dropout=args.dropout,
+            offset=0,
+            balanced_classes=args.balanced_classes,
+            infonce=args.infonce,
+        )
+
+    def forward(self, x, x_agg):
+        """
+        Input
+        x : B C T
+        x_agg : B C T
+
+        Output
+        result : python.dictionary with key [cpc_logits, cpc_targets]
+        """
+        result = {}
+
+        x, targets = self.wav2vec_predictions(x_agg, x)
+
+        result["cpc_logits"] = x
+        result["cpc_targets"] = targets
+
+        return result
 
 
 class ExcInference(Inference):
