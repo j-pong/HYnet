@@ -49,6 +49,14 @@ class NetTransform(nn.Module):
         # task related
         group.add_argument("--field-var", default=13.0, type=float)
         group.add_argument("--target-type", default='residual', type=str)
+        ## Fair task
+        group.add_argument("--prediction-steps", default=1, type=int)
+        group.add_argument("--num-negatives", default=1, type=int)
+        group.add_argument("--cross-sample-negatives", default=0, type=int)
+        group.add_argument("--sample-distance", default=10, type=int)
+        group.add_argument("--dropout", default=0.2, type=float)
+        group.add_argument("--balanced-classes", default=0, type=int)
+        group.add_argument("--infonce", default=0, type=int)
 
         return parser
 
@@ -75,7 +83,7 @@ class NetTransform(nn.Module):
             np.stack([self.gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
         self.field = torch.from_numpy(self.field)
         ## energy post processing task
-        self.energy_level = np.array([13, 8, 5, 3, 2, 1]) / 32
+        self.energy_level = np.array([144, 89, 55, 34, 21, 13, 8, 5, 3, 2, 1]) / 32
 
         # inference part with action and selection
         self.engine = HirInference(idim=self.idim, odim=self.idim, args=args)
@@ -96,13 +104,6 @@ class NetTransform(nn.Module):
         norm = np.sqrt(2 * np.pi * sigma ** 2)
         dist = (x - m) ** 2 / (2 * sigma ** 2)
         return 1 / norm * np.exp(-dist)
-
-    @staticmethod
-    def mvn(x):
-        m = torch.mean(x, dim=-1, keepdim=True)
-        v = torch.mean(torch.pow(x - m, 2), dim=-1, keepdim=True)
-        x = (x - m) / v
-        return x
 
     @staticmethod
     def minimaxn(x):
@@ -154,7 +155,7 @@ class NetTransform(nn.Module):
         return xs
 
     @staticmethod
-    def attn(q, k, mask, min_value, mask_diag=False, add_noise=False):
+    def attn(q, k, mask, min_value, mask_diag=False, T=None):
         """
         q : B, 1, T, C
         K : B, 1, T, C
@@ -165,24 +166,31 @@ class NetTransform(nn.Module):
         if mask_diag:
             kernel[:, :, range(tsz), range(tsz)] = min_value
         kernel = kernel.masked_fill(mask, min_value)
+        if T is not None:
+            kernel = kernel / T.unsqueeze(-1)  # B, 1, T, T / B, 1, T, 1
         kernel = torch.softmax(kernel, dim=-1). \
             masked_fill(mask, 0.0)
         if mask_diag:
             kernel[:, :, range(tsz), range(tsz)] = 0.0
         c = torch.matmul(kernel, q)
+
+        # check worst case of the kernel
+        if mask_diag:
+            assert torch.sum((kernel.diagonal(dim1=-2, dim2=-1) != 0.0).float()) == 0.0
+
         return c, kernel
 
     @staticmethod
-    def ch_attn(q, agg_q, mask, min_value):
-        score = (q * agg_q).masked_fill(mask, min_value)
-        h = torch.softmax(score, dim=-1).masked_fill(mask, 0.0) * q
-        return h
-
-    @staticmethod
-    def inverse_perm(p):
-        s = torch.zeros_like(p)
-        s[p] = torch.arange(p.size(-1))
-        return s
+    def energy_quantization(x, energy_level):
+        x_past = None
+        for el in energy_level:
+            if x_past is None:
+                x[x > el] = el
+            else:
+                x[(x_past > x) & (x > el)] = el
+            x_past = el
+        x[x_past > x] = x_past
+        return x
 
     def forward(self, xs_pad_in, xs_pad_out, ilens, ys_pad, buffering=False):
         # 0. prepare data
@@ -195,16 +203,6 @@ class NetTransform(nn.Module):
         seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
                                             (~seq_mask).unsqueeze(1).float())).bool()
 
-        # permutation input space
-        xs_pad_in_sam = []
-        ind_sam = []
-        for i, ilen in enumerate(ilens):
-            ind = torch.randperm(ilen)
-            ind_sam.append(ind)
-            xs_pad_in_sam.append(xs_pad_in[i, 0, ind])
-        xs_pad_in_sam = pad_list(xs_pad_in_sam, pad_value=0.0).unsqueeze(1)  # B, 1, Tmax, idim
-        ind_sam = pad_list(ind_sam, pad_value=-1).unsqueeze(1)  # B, 1, Tmax
-
         # initialization buffer
         self.reporter_buffs = {}
 
@@ -213,51 +211,45 @@ class NetTransform(nn.Module):
         kernel_explict = torch.matmul(k, k.transpose(-2, -1))
 
         # 2. query for causal case
-        q, ratio_q = self.engine(xs_pad_in_sam, self.engine.encoder_q)
+        q, ratio_q = self.engine(xs_pad_in, self.engine.encoder_q)
 
         # 3. transform
-        # Despite the model use context from target related feature, can't modeling long distance feature.
-        # The evidence of conclusion can we see on energy_t result of evaluation set.
         agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
-                                  min_value=self.min_value)
-        h = self.ch_attn(q, agg_q,
-                         seq_mask.unsqueeze(1).unsqueeze(-1),
-                         min_value=self.min_value)
-        xs_pad_out_hat, ratio_d = self.engine(h, self.engine.decoder)
+                                  min_value=self.min_value,
+                                  mask_diag=True)
+        xs_pad_out_hat, ratio_d = self.engine(agg_q, self.engine.decoder)
 
         # 4, brewing with attention
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_q,
                                   split_dim=None)
-        ratio_k = self.engine.calculate_ratio(h, q)
-        p_hat = self.engine.amp(ratio_k, p_hat[0], p_hat[1])
+        ratio_att = self.engine.calculate_ratio(agg_q, q)
+        p_hat = self.engine.amp(ratio_att, p_hat[0], p_hat[1])
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
                                   ratio=ratio_d,
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
 
-        # 4. calculate energy
-        flows = self.calculate_energy(start_state=xs_pad_in_sam.contiguous(),
-                                      end_state=xs_pad_out_hat.contiguous(),
+        # 5. calculate energy
+        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
+                                      end_state=xs_pad_out.contiguous(),
                                       p_hat=p_hat,
                                       flows={'e': None})
         energy_t = flows['e'].detach()
+        energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
 
-        # 5. make target with energy
-        with torch.no_grad():
-            kernel_target = torch.zeros_like(kernel_explict).float()
-            for i, ind in enumerate(ind_sam):
-                kernel_target[i, :, range(tsz), ind[0]] = energy_t[i, :]
-            kernel_target = kernel_target.detach()
+        # 6. make target with energy
+        kernel_target = self.fb(1 / (energy_t + 1))
+        # kernel_test = self.minimaxn(torch.softmax(kernel_explict.view(-1)/0.6, dim=-1)).view(kernel.size())
 
-        # 6. calculate similarity loss
-        loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
-                                       kernel_target.view(-1, tsz, tsz),
-                                       [seq_mask_kernel, kernel_target.view(-1, tsz, tsz) < 0.01],
+        # 7. calculate similarity loss
+        loss_k = self.criterion_kernel(torch.tril(kernel_explict.view(-1, tsz, tsz)),
+                                       torch.tril(kernel_target.view(-1, tsz, tsz)),
+                                       [seq_mask_kernel],
                                        reduction='none')
 
-        # 7. calculate generate loss
+        # 8. calculate generative loss
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
@@ -275,12 +267,12 @@ class NetTransform(nn.Module):
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat
 
-            for i, ind in enumerate(ind_sam):
-                energy_t[i] = energy_t[i, :, self.inverse_perm(ind[0])]
-                kernel[i] = kernel[i, :, :, self.inverse_perm(ind[0])]
-                kernel_target[i] = kernel_target[i, :, :, self.inverse_perm(ind[0])]
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
-            self.reporter_buffs['kernel'] = torch.cat([kernel, torch.sigmoid(kernel_explict), kernel_target], dim=1)
+            self.reporter_buffs['kernel_kq'] = kernel
+            self.reporter_buffs['kernel_kk'] = torch.cat([torch.sigmoid(kernel_explict),
+                                                          kernel_target],
+                                                         dim=1)
+            # self.reporter_buffs['kernel_test'] = kernel_test
 
         return loss
 
@@ -349,23 +341,15 @@ class NetTransform(nn.Module):
 
     def recognize(self, x):
         self.eval()
-        x = torch.as_tensor(x).unsqueeze(0)
+        x = torch.as_tensor(x).unsqueeze(0)[:, :, :-self.trunk]
+
+        x, _ = self.engine(x, self.engine.encoder_k)
 
         return x
 
     """
     Improvement
     """
-
-    def energy_quantization(self, x):
-        x_past = None
-        for el in self.energy_level:
-            if x_past is None:
-                x[x > el] = el
-            else:
-                x[(x_past > x) & (x > el)] = el
-            x_past = el
-        return x
 
     def clustering(self, xs, golden_ratio=3.14):
         """

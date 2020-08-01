@@ -72,7 +72,7 @@ class PlotImageReport(extension.Extension):
         if len(img.shape) == 3:
             for h, im in enumerate(img, 1):
                 plt.subplot(len(img), 1, h)
-                plt.imshow(im.T, aspect="auto")
+                plt.imshow(im, aspect="auto")
                 plt.ylabel("dim")
                 plt.xlabel("time")
                 plt.colorbar()
@@ -82,7 +82,7 @@ class PlotImageReport(extension.Extension):
             plt.grid()
             plt.autoscale(enable=True, axis='x', tight=True)
         else:
-            plt.imshow(img.T, aspect="auto")
+            plt.imshow(img, aspect="auto")
             plt.xlabel("index")
             plt.ylabel("time")
             plt.colorbar()

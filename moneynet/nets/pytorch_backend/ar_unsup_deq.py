@@ -236,19 +236,18 @@ class NetTransform(nn.Module):
                                           end_state=xs_pad_out.contiguous(),
                                           p_hat=p_hat,
                                           flows={'e': None})
-            energy_t = torch.log(flows['e'].detach())
+            energy_t = flows['e'].detach()
+            temper = energy_t * 10 + 1.0
             ## How to use the energy for clustering?
             ## 1. causal data can clustering with spike of the energy.
-            energy_t = self.energy_quantization(energy_t, self.energy_level)
-
-            temper = energy_t * 10 + 1.0
+            energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
 
         # 6. make target with energy
         # kernel_target = self.minimaxn(kernel).detach()
-        kernel_target = torch.log_softmax(kernel, dim=-1).detach()
+        kernel_target = kernel.detach()
 
         # 7. calculate similarity loss
-        loss_k = self.criterion_kernel(kernel_explict.view(-1, tsz, tsz),
+        loss_k = self.criterion_kernel(torch.log_softmax(kernel_explict, dim=-1).view(-1, tsz, tsz),
                                        kernel_target.view(-1, tsz, tsz),
                                        [seq_mask_kernel],
                                        reduction='none')

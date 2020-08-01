@@ -5,6 +5,8 @@ import torch
 from tqdm import tqdm
 import numpy as np
 
+from skimage import io, transform
+
 from moneynet.utils.pytorch_pipe.io import load_file_list
 
 
@@ -46,7 +48,7 @@ class SineDataset(torch.utils.data.Dataset):
             print("Start buffering for ram_memory mode")
             self.buffer = {}
             for idx in tqdm(range(0, self.num_samples)):
-                feat = np.load(self.filelist[idx], allow_pickle=True)
+                feat = torch.from_numpy(io.imread(self.filelist[idx]).T)
                 self.buffer[idx] = feat  # numpy array attach to key that sample number
 
     def __len__(self):
@@ -63,7 +65,7 @@ class SineDataset(torch.utils.data.Dataset):
         if self.ram_memory:
             feat = torch.from_numpy(self.buffer[idx].T)
         else:
-            feat = torch.from_numpy(np.load(self.filelist[idx], allow_pickle=True).T)
+            feat = torch.from_numpy(io.imread(self.filelist[idx]).T)
 
         sample = {'input': feat, 'target': feat, 'fname': self.filelist[idx]}
         return sample
