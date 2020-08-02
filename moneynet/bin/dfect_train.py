@@ -403,7 +403,7 @@ def main(cmd_args):
     # train
     logging.info("backend = " + args.backend)
 
-    from moneynet.defect.pytorch_pipe.defect import train
+    from moneynet.defect.pytorch_backend.defect import train
     train(args)
 
 

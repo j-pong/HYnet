@@ -3,7 +3,7 @@ model-module: "moneynet.nets.pytorch_backend.ar_unsup_funcbook:NetTransform"
 
 # minibatch related
 accum-grad: 4
-batch-bins: 8000000
+batch-bins: 10000000
 
 # optimization related
 # opt: adadelta

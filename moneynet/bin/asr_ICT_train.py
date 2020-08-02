@@ -639,7 +639,7 @@ def main(cmd_args):
         args.char_list = None
 
     # train
-    from moneynet.semi.ICT.pytorch_backend.asr import train
+    from moneynet.semi.pytorch_backend import train
 
     train(args)
 
