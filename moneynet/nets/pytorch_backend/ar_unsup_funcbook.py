@@ -268,10 +268,10 @@ class NetTransform(nn.Module):
             self.reporter_buffs['out'] = xs_pad_out_hat
 
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
+
             self.reporter_buffs['kernel_kq'] = kernel
-            self.reporter_buffs['kernel_kk'] = torch.cat([torch.sigmoid(kernel_explict),
-                                                          kernel_target],
-                                                         dim=1)
+            self.reporter_buffs['kernel_kk'] = torch.sigmoid(kernel_explict)
+            self.reporter_buffs['kernel_kk_target'] = kernel_target
             # self.reporter_buffs['kernel_test'] = kernel_test
 
         return loss

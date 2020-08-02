@@ -72,7 +72,11 @@ class PlotImageReport(extension.Extension):
         if len(img.shape) == 3:
             for h, im in enumerate(img, 1):
                 plt.subplot(len(img), 1, h)
-                plt.imshow(im, aspect="auto")
+                sz1, sz2 = np.shape(im)
+                if sz1 > sz2:
+                    plt.imshow(im.T, aspect="auto")
+                else:
+                    plt.imshow(im, aspect="auto")
                 plt.ylabel("dim")
                 plt.xlabel("time")
                 plt.colorbar()
@@ -82,7 +86,11 @@ class PlotImageReport(extension.Extension):
             plt.grid()
             plt.autoscale(enable=True, axis='x', tight=True)
         else:
-            plt.imshow(img, aspect="auto")
+            sz1, sz2 = np.shape(img)
+            if sz1 > sz2:
+                plt.imshow(img.T, aspect="auto")
+            else:
+                plt.imshow(img, aspect="auto")
             plt.xlabel("index")
             plt.ylabel("time")
             plt.colorbar()
