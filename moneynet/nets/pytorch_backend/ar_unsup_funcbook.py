@@ -208,18 +208,28 @@ class NetTransform(nn.Module):
 
         # 1. preparation of key dictionary : must key is aligned respect to target seq.
         k, _ = self.engine(xs_pad_in, self.engine.encoder_k)
-        kernel_explict = torch.matmul(k, k.transpose(-2, -1))
+        k_1, k_2 = torch.split(k, int(k.size(-1) / 2), dim=-1)
+        kernel_explict = torch.matmul(k_1, k_1.transpose(-2, -1))
 
         # 2. query for causal case
         q, ratio_q = self.engine(xs_pad_in, self.engine.encoder_q)
 
         # 3. transform
-        agg_q, kernel = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
+        # iter 1
+        agg_q, kernel = self.attn(q, k_1, seq_mask_kernel.unsqueeze(1),
                                   min_value=self.min_value,
                                   mask_diag=True)
-        xs_pad_out_hat, ratio_d = self.engine(agg_q, self.engine.decoder)
+        xs_pad_out_hat_1, ratio_d = self.engine(agg_q, self.engine.decoder)
+        # iter 2
+        kernel_mask = torch.zeros_like(kernel)
+        indces = torch.topk(kernel, k=3, dim=-1)[1]  # B, 1, T, k
+        kernel_mask.scatter_(-1, indces, 1)
+        agg_q, kernel = self.attn(q, k_2, seq_mask_kernel.unsqueeze(1) | kernel_mask.bool(),
+                                  min_value=self.min_value,
+                                  mask_diag=True)
+        xs_pad_out_hat_2, ratio_d = self.engine(agg_q, self.engine.decoder)
 
-        # 4, brewing with attention
+        # 4. brewing with attention respect to second attention
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_q,
                                   split_dim=None)
@@ -229,7 +239,7 @@ class NetTransform(nn.Module):
                                   ratio=ratio_d,
                                   split_dim=None,
                                   w_hat=p_hat[0],
-                                  bias_hat=p_hat[1])
+                                  bias_hat=p_hat[1])  # B, T, C
 
         # 5. calculate energy
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
@@ -250,29 +260,35 @@ class NetTransform(nn.Module):
                                        reduction='none')
 
         # 8. calculate generative loss
-        loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
-                                xs_pad_out.contiguous().view(-1, self.idim),
-                                [seq_mask.view(-1, 1)],
-                                reduction='none')
+        loss_g_1 = self.criterion(xs_pad_out_hat_1.view(-1, self.idim),
+                                  xs_pad_out.contiguous().view(-1, self.idim),
+                                  [seq_mask.view(-1, 1)],
+                                  reduction='none')
+        loss_g_2 = self.criterion(xs_pad_out_hat_2.view(-1, self.idim),
+                                  xs_pad_out.contiguous().view(-1, self.idim),
+                                  [seq_mask.view(-1, 1)],
+                                  reduction='none')
 
         # summary all task
-        loss = loss_g.sum() + loss_k.sum()
+        loss = loss_g_1.sum() + loss_g_2.sum() + loss_k.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
-                                  'loss_2': float(loss_g.sum()),
+                                  'loss_2': float(loss_g_1.sum()),
+                                  'loss_3': float(loss_g_2.sum()),
                                   'loss_4': float(loss_k.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
-            self.reporter_buffs['out'] = xs_pad_out_hat
+            self.reporter_buffs['out'] = xs_pad_out_hat_1
+            self.reporter_buffs['out2'] = xs_pad_out_hat_2
 
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 
             self.reporter_buffs['kernel_kq'] = kernel
             self.reporter_buffs['kernel_kk'] = torch.sigmoid(kernel_explict)
             self.reporter_buffs['kernel_kk_target'] = kernel_target
-            # self.reporter_buffs['kernel_test'] = kernel_test
+            # self.reporter_buffs['kernel_mask'] = kernel_mask
 
         return loss
 
