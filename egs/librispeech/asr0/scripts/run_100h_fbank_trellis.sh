@@ -10,7 +10,6 @@
 stage=-1       # start from -1 if you need to start from data download
 stop_stage=100
 ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
-ncore=8        # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=8
 dumpdir=dump
 resume=
@@ -19,7 +18,7 @@ unsup_resume=
 # feature configuration
 do_delta=false
 preprocess_config=
-train_config=conf/train_deq_transformer.yaml
+train_config=conf/train_trellis.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
 
@@ -46,7 +45,7 @@ tag="" # tag for managing experiments.
 
 # feature directory
 mfccdir=mfcc
-fmllrdir=fmllr
+fbankdir=fbank
 
 # gmm alignment directory
 gmmdir=exp/tri4b
@@ -63,7 +62,7 @@ recog_set="test_clean test_other dev_clean dev_other"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
-    for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
+    for part in dev-clean test-clean dev-other test-other train-clean-100; do
         local/download_and_untar.sh ${datadir} ${data_url} ${part}
     done
 
@@ -75,7 +74,7 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     ### Task dependent. You have to make data the following preparation part by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 0: Data preparation"
-    for part in dev-clean test-clean dev-other test-other train-clean-100 train-clean-360 train-other-500; do
+    for part in dev-clean test-clean dev-other test-other train-clean-100; do
         # use underscore-separated names in data directories.
         local/data_prep.sh ${datadir}/LibriSpeech/${part} data/${part//-/_}
     done
@@ -101,7 +100,7 @@ fi
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "stage 2: MFCC Feature Generation"
     # MFCC feature extraction
-    for part in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+    for part in dev_clean test_clean dev_other test_other train_clean_100; do
         steps/make_mfcc.sh --cmd "$train_cmd" --nj ${nj} data/$part exp/make_mfcc/$part $mfccdir
         steps/compute_cmvn_stats.sh data/$part exp/make_mfcc/$part $mfccdir
     done
@@ -215,7 +214,7 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     echo "stage 9: Get Alignment"
 
     # align the train, test, dev set using the tri4b model
-    for part in dev_clean test_clean dev_other test_other train_clean_100 train_clean_360 train_other_500; do
+    for part in dev_clean test_clean dev_other test_other train_clean_100; do
         steps/align_fmllr.sh --nj ${nj} data/${part} data/lang exp/tri4b exp/tri4b_ali_${part}
 
         KALDI_ROOT=${KALDI_ROOT} python local/utt2tokenid.py \
@@ -230,19 +229,19 @@ feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
 if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
-    echo "stage 10: Fmllr Feature Generation For Network Training"
-    # Generate the fmllr features; by default 40-dimensional fmllr
+    echo "stage 10: Fbank Feature Generation For Network Training"
+    # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
     for x in train_clean_100 dev_clean dev_other test_clean test_other; do
-        mkdir -p data/${x}_fmllr
-        steps/nnet/make_fmllr_feats.sh --nj $nj --cmd "$train_cmd" \
-        --transform-dir exp/tri4b/decode_tgsmall_$x \
-            data/${x}_fmllr data/${x} exp/tri4b exp/make_fmllr/${x} ${fmllrdir} || exit 1
-        utils/fix_data_dir.sh data/${x}_fmllr
+        mkdir -p data/${x}_fbank
+        cp -r data/${x}/* data/${x}_fbank
+        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj ${nj} --write_utt2num_frames true \
+            data/${x}_fbank exp/make_fbank/${x} ${fbankdir}
+        utils/fix_data_dir.sh data/${x}_fbank
     done
 
-    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fmllr
-    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fmllr \
-        data/dev_other_fmllr
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_fbank
+    utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_dev}_org data/dev_clean_fbank \
+        data/dev_other_fbank
     mkdir -p data/${train_set}
     mkdir -p data/${train_dev}
     cp -r data/${train_set}_org/* data/${train_set}
@@ -259,7 +258,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
         dump.sh --cmd "$train_cmd" --nj ${nj} --do_delta ${do_delta} \
-            data/${rtask}_fmllr/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
+            data/${rtask}_fbank/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
 fi
@@ -293,11 +292,10 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
-rm -rf train_step.txt
 if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     echo "stage 12: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_deq_train.py \
+        asr_hyb_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
@@ -328,36 +326,47 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         --backend pytorch \
         --snapshots ${expdir}/results/snapshot.ep.* \
         --out ${expdir}/results/${recog_model} \
-        --num ${n_average
+        --num ${n_average}
 
-    nthreads=$[ncore*2]
+    nj=7
+
+    pids=() # initialize pids
     for rtask in ${recog_set}; do
     (
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
-        ngpu=1
+        # split data
+        splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+
+        #### use CPU for decoding
+        ngpu=0
 
         # set batchsize 0 to disable batch decoding
-        ${cuda_cmd} --gpu ${ngpu} ${expdir}/${decode_dir}/log/decode.log \
+        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             KALDI_ROOT=${KALDI_ROOT} asr_hyb_recog.py \
             --config ${decode_config} \
             --ngpu ${ngpu} \
             --backend pytorch \
-            --batchsize 30 \
-            --recog-json ${feat_recog_dir}/data_${bpemode}${nbpe}.json \
-            --result-ark ${expdir}/${decode_dir}/data.ark \
+            --batchsize 0 \
+            --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+            --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
             --model ${expdir}/results/${recog_model}  \
             --api v1
 
         # get decoded results
-        local/decode_dnn.sh --num-threads $nthreads exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1;
-        local/score.sh --min-lmwt 4 --max-lmwt 23 data/${rtask} exp/tri4b/graph_tgsmall ${expdir}/${decode_dir} || exit 1;
-        for x in ${expdir}/${decode_dir}; do
+        local/decode_dnn.sh exp/tri4b/graph_tgsmall exp/tri4b_ali_${rtask} ${feat_recog_dir} ${expdir}/${decode_dir} || exit 1
+        steps/lmrescore_const_arpa.sh \
+            --cmd "$decode_cmd"  data/lang_test_{tgsmall,fglarge} \
+            data/${rtask} ${expdir}/${decode_dir} ${expdir}/${decode_dir}_fglarge || exit 1
+        for x in ${expdir}/${decode_dir}_fglarge; do
             [ -d $x ] && echo $x | grep "${1:-.*}" >/dev/null && grep WER $x/wer_* 2>/dev/null | utils/best_wer.sh;
         done
-
-    )
+#        rm -rf ${expdir}/${decode_dir}/data.*.ark
+    ) &
+    pids+=($!) # store background pids
     done
+    i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
+    [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished"
 fi

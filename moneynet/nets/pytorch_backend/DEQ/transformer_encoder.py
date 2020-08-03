@@ -96,6 +96,8 @@ class EncoderLayer(nn.Module):
         self.concat_after = concat_after
         if self.concat_after:
             self.concat_linear = nn.Linear(size + size, size)
+        if self.normalize_before:
+            self.after_norm = LayerNorm(size)
 
     def forward(self, x, mask, cache=None):
         """Compute encoded features.
@@ -134,6 +136,9 @@ class EncoderLayer(nn.Module):
 
         if cache is not None:
             x = torch.cat([cache, x], dim=1)
+
+        if self.normalize_before:
+            x = self.after_norm(x)
 
         return x
 
@@ -249,8 +254,6 @@ class Encoder(torch.nn.Module):
             params.requires_grad_(False)
 
         self.amolang = Amolang(self.enc, self.enc_copy)
-        if self.normalize_before:
-            self.after_norm = LayerNorm(attention_dim)
 
     def forward(self, xs, masks):
         """Encode input sequence.
@@ -265,7 +268,7 @@ class Encoder(torch.nn.Module):
         else:
             xs = self.embed(xs)
 
-        self.pretrain_steps = 50000
+        self.pretrain_steps = 0
         if os.path.isfile('./train_step.txt'):
             with open('./train_step.txt', 'r') as f:
                 train_step = int(f.readlines()[0])
@@ -276,8 +279,6 @@ class Encoder(torch.nn.Module):
         if 0 <= train_step < self.pretrain_steps:
             for i in range(24):
                 xs = self.enc(xs, masks)
-                if self.normalize_before:
-                    xs = self.after_norm(xs)
         else:
             # for i in range(self.num_blocks):
             #     xs = self.enc(xs, masks)
