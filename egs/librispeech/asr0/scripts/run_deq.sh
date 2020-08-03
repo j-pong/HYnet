@@ -293,6 +293,7 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
+rm -rf train_step.txt
 if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     echo "stage 12: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \

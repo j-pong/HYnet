@@ -9,9 +9,9 @@ export PATH=$PWD/utils/:$KALDI_ROOT/tools/openfst/bin:$KALDI_ROOT/tools/sctk/bin
 export LC_ALL=C
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:$ESPNET_ROOT/tools/chainer_ctc/ext/warp-ctc/build
 if [ -e $ESPNET_ROOT/tools/venv/etc/profile.d/conda.sh ]; then
-    source $ESPNET_ROOT/tools/venv/etc/profile.d/conda.sh && conda deactivate && conda activate
+    source $MAIN_ROOT/tools/venv/etc/profile.d/conda.sh && conda deactivate && conda activate
 else
-    source $ESPNET_ROOT/tools/venv/bin/activate
+    source $MAIN_ROOT/tools/venv/bin/activate
 fi
 export PATH=$ESPNET_ROOT/utils:$ESPNET_ROOT/espnet/bin:$MAIN_ROOT/moneynet/bin:$PATH
 
