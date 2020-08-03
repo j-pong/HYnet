@@ -96,6 +96,8 @@ class EncoderLayer(nn.Module):
         self.concat_after = concat_after
         if self.concat_after:
             self.concat_linear = nn.Linear(size + size, size)
+        if self.normalize_before:
+            self.after_norm = LayerNorm(size)
 
     def forward(self, x, mask, cache=None):
         """Compute encoded features.
@@ -134,6 +136,9 @@ class EncoderLayer(nn.Module):
 
         if cache is not None:
             x = torch.cat([cache, x], dim=1)
+
+        if self.normalize_before:
+            x = self.after_norm(x)
 
         return x
 
@@ -249,8 +254,13 @@ class Encoder(torch.nn.Module):
             params.requires_grad_(False)
 
         self.amolang = Amolang(self.enc, self.enc_copy)
-        if self.normalize_before:
-            self.after_norm = LayerNorm(attention_dim)
+
+    @staticmethod
+    def mvn(x):
+        m = torch.mean(x, dim=-1, keepdim=True)
+        v = torch.mean(torch.pow(x - m, 2), dim=-1, keepdim=True)
+        x = (x - m) / v
+        return x
 
     def forward(self, xs, masks):
         """Encode input sequence.
@@ -272,12 +282,13 @@ class Encoder(torch.nn.Module):
         else:
             train_step = 0
 
+        xs_m = torch.mean(xs, dim=-1, keepdim=True)
+        xs_v = torch.mean(torch.pow(xs - xs_m, 2), dim=-1, keepdim=True)
+
         # DEQ calculation
         if 0 <= train_step < self.pretrain_steps:
             for i in range(24):
                 xs = self.enc(xs, masks)
-                if self.normalize_before:
-                    xs = self.after_norm(xs)
         else:
             # for i in range(self.num_blocks):
             #     xs = self.enc(xs, masks)
@@ -285,6 +296,8 @@ class Encoder(torch.nn.Module):
             #         xs = self.after_norm(xs)
             xs = self.amolang(xs, masks, train_step)
 
+        xs = self.mvn(xs)
+        xs = xs * xs_v + xs_m
 
         train_step += 1
         with open('./train_step.txt', 'w') as f:
