@@ -255,6 +255,13 @@ class Encoder(torch.nn.Module):
 
         self.amolang = Amolang(self.enc, self.enc_copy)
 
+    @staticmethod
+    def mvn(x):
+        m = torch.mean(x, dim=-1, keepdim=True)
+        v = torch.mean(torch.pow(x - m, 2), dim=-1, keepdim=True)
+        x = (x - m) / v
+        return x
+
     def forward(self, xs, masks):
         """Encode input sequence.
 
@@ -268,12 +275,15 @@ class Encoder(torch.nn.Module):
         else:
             xs = self.embed(xs)
 
-        self.pretrain_steps = 0
+        self.pretrain_steps = 50000
         if os.path.isfile('./train_step.txt'):
             with open('./train_step.txt', 'r') as f:
                 train_step = int(f.readlines()[0])
         else:
             train_step = 0
+
+        xs_m = torch.mean(xs, dim=-1, keepdim=True)
+        xs_v = torch.mean(torch.pow(xs - xs_m, 2), dim=-1, keepdim=True)
 
         # DEQ calculation
         if 0 <= train_step < self.pretrain_steps:
@@ -286,6 +296,8 @@ class Encoder(torch.nn.Module):
             #         xs = self.after_norm(xs)
             xs = self.amolang(xs, masks, train_step)
 
+        xs = self.mvn(xs)
+        xs = xs * xs_v + xs_m
 
         train_step += 1
         with open('./train_step.txt', 'w') as f:
