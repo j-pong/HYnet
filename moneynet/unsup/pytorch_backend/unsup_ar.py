@@ -38,7 +38,7 @@ from espnet.asr.asr_utils import snapshot_object
 from espnet.asr.asr_utils import torch_load
 from espnet.asr.asr_utils import torch_resume
 from espnet.asr.asr_utils import torch_snapshot
-from espnet.asr.pytorch_backend.asr_init import load_trained_model
+# from espnet.asr.pytorch_backend.asr_init import load_trained_model
 # from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 # import espnet.lm.pytorch_backend.extlm as extlm_pytorch
 # from espnet.nets.asr_interface import ASRInterface
@@ -286,23 +286,44 @@ class CustomConverter(object):
         if self.subsampling_factor > 1:
             xs = [x[:: self.subsampling_factor, :] for x in xs]
 
-        # get batch of lengths of input sequences
-        ilens = np.array([x.shape[0] for x in xs[0]])
-        xs_pad_in = pad_list(
-            [torch.from_numpy(x[:-self.tnum]).float()
-             for x in xs[0]],
-            0
-        ).to(device, dtype=self.dtype)
-        xs_pad_out = pad_list(
-            [
-                torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
-                             if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
-                             for i in range(self.tnum)], dim=1)
-                for x in xs[1]],
-            0
-        ).to(device, dtype=self.dtype)
+        if len(xs) == 2:
+            logging.info("input and target are different form by transform")
+            xs_in = xs[0]
+            xs_out = xs[1]
+        else:
+            xs_in = xs
+            xs_out = xs
 
-        ilens = torch.from_numpy(ilens - self.tnum).to(device)
+        # get batch of lengths of input sequences
+        ilens = np.array([x.shape[0] for x in xs_in])
+        if self.tnum > 0:
+            xs_pad_in = pad_list(
+                [torch.from_numpy(x[:-self.tnum]).float()
+                 for x in xs_in],
+                0
+            ).to(device, dtype=self.dtype)
+
+            xs_pad_out = pad_list(
+                [
+                    torch.stack([torch.from_numpy(x[i + 1:-self.tnum + i + 1]).float()
+                                 if (-self.tnum + i + 1) != 0 else torch.from_numpy(x[i + 1:]).float()
+                                 for i in range(self.tnum)], dim=1)
+                    for x in xs_out],
+                0
+            ).to(device, dtype=self.dtype)
+        else:
+            xs_pad_in = pad_list(
+                [torch.from_numpy(x).float()
+                 for x in xs_in],
+                0
+            ).to(device, dtype=self.dtype)
+            xs_pad_out = pad_list(
+                [torch.from_numpy(x).float().unsqueeze(1)
+                 for x in xs_out],
+                0
+            ).to(device, dtype=self.dtype)
+
+        ilens = torch.from_numpy(ilens).to(device) - self.tnum
         # NOTE: this is for multi-output (e.g., speech translation)
         ys_pad = pad_list(
             [
@@ -314,7 +335,7 @@ class CustomConverter(object):
             self.ignore_id,
         ).to(device)
 
-        return xs_pad_in[:, :, :-3], xs_pad_out[:, :, :, :-3], ilens, ys_pad
+        return xs_pad_in, xs_pad_out, ilens, ys_pad
 
 
 def train(args):
@@ -389,7 +410,7 @@ def train(args):
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
         optimizer = get_std_opt(
-            model, args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model, args.hdim, args.warmup_steps, args.lr
         )
     elif args.opt == 'sgd':
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
@@ -543,6 +564,7 @@ def train(args):
         device=device,
     )
     trainer.extend(img_reporter, trigger=(args.report_interval_iters, "iteration"))
+    # trainer.extend(img_reporter, trigger=(1, "epoch"))
 
     trainer.extend(extensions.PlotReport(["main/loss",
                                           "validation/main/loss"], "epoch", file_name="loss.png", ))
@@ -567,10 +589,12 @@ def train(args):
         "iteration",
         "main/loss",
         "validation/main/loss",
-        "main/loss_g",
-        "validation/main/loss_g"
-        "main/loss_e",
-        "validation/main/loss_e"
+        "main/loss_2",
+        "validation/main/loss_2",
+        "main/loss_3",
+        "validation/main/loss_3",
+        "main/loss_4",
+        "validation/main/loss_4",
         "elapsed_time",
     ]
     if args.opt == "adadelta":

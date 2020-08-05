@@ -271,7 +271,7 @@ def main(args):
 
                     recog_v2(args)
                 else:
-                    from moneynet.semi.ICT.pytorch_backend.asr import recog
+                    from moneynet.semi.pytorch_backend import recog
 
                     if args.dtype != "float32":
                         raise NotImplementedError(
@@ -284,14 +284,14 @@ def main(args):
                         f"--num-encs {args.num_encs} > 1 is not supported in --api v2"
                     )
                 else:
-                    from moneynet.semi.ICT.pytorch_backend.asr import recog
+                    from moneynet.semi.pytorch_backend import recog
 
                     recog(args)
         else:
             raise ValueError("Only chainer and pytorch are supported.")
     elif args.num_spkrs == 2:
         if args.backend == "pytorch":
-            from moneynet.semi.ICT.pytorch_backend.asr_mix import recog
+            from moneynet.semi.pytorch_backend import recog
 
             recog(args)
         else:

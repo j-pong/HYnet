@@ -3,6 +3,8 @@ from torch import nn
 
 from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
 
+from fairseq.models.wav2vec import Wav2VecModel, Wav2VecPredictionsModel
+
 
 class Inference(nn.Module):
     def __init__(self, idim, odim, args):
@@ -39,56 +41,71 @@ class Inference(nn.Module):
     @staticmethod
     def calculate_ratio(x, x_base):
         rat = x / x_base
-        rat[torch.isnan(rat)] = 0.0
+        rat[torch.isnan(rat) | torch.isinf(rat)] = 0.0
 
         return rat
 
     @staticmethod
-    def brew_(module_list, ratio, split_dim=None, w_hat=None, bias_hat=None):
-        i = 0
-        for module in module_list:
-            if isinstance(module, nn.Linear):
-                if split_dim is None:
-                    w = module.weight
-                elif split_dim > 0:
-                    w = module.weight[:split_dim * ratio[i].size(-1)]
-                elif split_dim < 0:
-                    w = module.weight[-split_dim * ratio[i].size(-1):]
-                else:
-                    raise AttributeError
+    def amp(ratio, w=None, bias=None):
+        if w is None and bias is None:
+            raise AttributeError("Both of parameter is None")
+        if w is not None:
+            w = ratio.view(-1, ratio.size(-1)).unsqueeze(1) * w  # (B_new, 1, C*) * (B_new, d, C*)
+        if bias is not None:
+            bias = ratio.view(-1, ratio.size(-1)) * bias  # (B_new, C*) * (B_new, C*)
+        return w, bias
 
-                if w_hat is None:
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
-                            w.transpose(-2, -1).unsqueeze(0)
-                    # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
-                else:
-                    w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
+    @staticmethod
+    def brew_(module_lists, ratio, split_dim=None, w_hat=None, bias_hat=None):
+        with torch.no_grad():
+            i = 0
+            for module_list in module_lists:
+                for module in module_list:
+                    if isinstance(module, nn.Linear):
+                        if split_dim is None:
+                            w = module.weight
+                        elif split_dim > 0:
+                            w = module.weight[:split_dim * ratio[i].size(-1)]
+                        elif split_dim < 0:
+                            w = module.weight[-split_dim * ratio[i].size(-1):]
+                        else:
+                            raise AttributeError
 
-                if module.bias is not None:
-                    if split_dim is None:
-                        b = module.bias
-                    elif split_dim > 0:
-                        b = module.bias[:split_dim * ratio[i].size(-1)]
-                    elif split_dim < 0:
-                        b = module.bias[-split_dim * ratio[i].size(-1):]
+                        if w_hat is None:
+                            w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
+                                    w.transpose(-2, -1).unsqueeze(0)
+                            # (B * iter * tnum * Tmax, 1, C1) * (1, d, C1)  -> (B_new, d, C1)
+                        else:
+                            w_hat = torch.matmul(w_hat, w.transpose(-2, -1))  # (B_new, d, C) x (C, C*)  -> (B, d, C*)
+                            w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(
+                                1) * w_hat  # (B_new, 1, C*) * (B_new, d, C*)
+
+                        if module.bias is not None:
+                            if split_dim is None:
+                                b = module.bias
+                            elif split_dim > 0:
+                                b = module.bias[:split_dim * ratio[i].size(-1)]
+                            elif split_dim < 0:
+                                b = module.bias[-split_dim * ratio[i].size(-1):]
+                            else:
+                                raise AttributeError
+
+                            if bias_hat is None:
+                                bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(
+                                    0)  # (B_new, C1) * (1, C1)
+                            else:
+                                bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
+                                bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (
+                                        bias_hat + b)  # (B_new, C*) * (B_new, C*)
+                        else:
+                            bias_hat = None
+                        i += 1
+                    elif isinstance(module, nn.ReLU):
+                        pass
                     else:
-                        raise AttributeError
+                        raise AttributeError("Current network architecture, {}, is not supported!".format(module))
 
-                    if bias_hat is None:
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(0)  # (B_new, C1) * (1, C1)
-                    else:
-                        bias_hat = torch.matmul(bias_hat, w.transpose(-2, -1))
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (bias_hat + b)  # (B_new, C*) * (B_new, C*)
-                else:
-                    bias_hat = None
-                i += 1
-            elif isinstance(module, nn.ReLU):
-                pass
-            else:
-                raise AttributeError("Current network architecture, {}, is not supported!".format(module))
-
-        return w_hat, bias_hat
+            return w_hat, bias_hat
 
     def forward(self, x, module_list):
         ratio = []
@@ -109,9 +126,80 @@ class Inference(nn.Module):
         return x, ratio
 
 
+class HirInference(Inference):
+    def __init__(self, idim, odim, args):
+        super(Inference, self).__init__()
+        # configuration
+        self.idim = idim
+        self.odim = odim
+        self.hdim = args.hdim
+        self.tnum = args.tnum
+
+        self.bias = args.bias
+
+        self.encoder_q = nn.ModuleList([
+            nn.Linear(idim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+        ])
+        self.encoder_k = nn.ModuleList([
+            nn.Linear(idim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+        ])
+        self.decoder = nn.ModuleList([
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, odim, bias=self.bias)
+        ])
+
+
+class FairInference(Inference):
+    def __init__(self, idim, odim, args):
+        super(Inference, self).__init__()
+        # configuration
+        self.idim = idim
+        self.odim = odim
+        self.hdim = args.hdim
+        self.tnum = args.tnum
+
+        self.bias = args.bias
+
+        self.wav2vec_predictions = Wav2VecPredictionsModel(
+            in_dim=idim,
+            out_dim=odim,
+            prediction_steps=args.prediction_steps,
+            n_negatives=args.num_negatives,
+            cross_sample_negatives=args.cross_sample_negatives,
+            sample_distance=args.sample_distance,
+            dropout=args.dropout,
+            offset=0,
+            balanced_classes=args.balanced_classes,
+            infonce=args.infonce,
+        )
+
+    def forward(self, x, x_agg):
+        """
+        Input
+        x : B C T
+        x_agg : B C T
+
+        Output
+        result : python.dictionary with key [cpc_logits, cpc_targets]
+        """
+        result = {}
+
+        x, targets = self.wav2vec_predictions(x_agg, x)
+
+        result["cpc_logits"] = x
+        result["cpc_targets"] = targets
+
+        return result
+
+
 class ExcInference(Inference):
     def __init__(self, idim, odim, args):
-        super().__init__()
+        super(Inference, self).__init__()
         assert idim == odim
         # configuration
         self.idim = idim

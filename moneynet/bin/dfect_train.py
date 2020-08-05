@@ -403,7 +403,7 @@ def main(cmd_args):
     # train
     logging.info("backend = " + args.backend)
 
-    from moneynet.unsup.pytorch_backend.unsup_ar import train
+    from moneynet.defect.pytorch_backend.defect import train
     train(args)
 
 
