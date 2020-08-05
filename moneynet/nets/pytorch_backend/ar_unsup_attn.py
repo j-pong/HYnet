@@ -208,41 +208,28 @@ class NetTransform(nn.Module):
 
         # 1. preparation of key dictionary : must key is aligned respect to target seq.
         # first key almost goes to one-hot but second is aux-info.
-        k, _ = self.engine(xs_pad_in, self.engine.encoder_k)
-        k_1, k_2 = torch.split(k, int(k.size(-1) / 2), dim=-1)
-        kernel_explict = torch.matmul(k_1, k_1.transpose(-2, -1))
-
-        # 2. query for causal case
-        q, ratio_q = self.engine(xs_pad_in, self.engine.encoder_q)
+        k, ratio_1 = self.engine(xs_pad_in, self.engine.encoder_k)
+        q, _ = self.engine(xs_pad_in, self.engine.encoder_q)
+        kernel_mi = torch.matmul(k, q.transpose(-2, -1))
 
         # 3. transform
         # iter 1
-        agg_q, kernel = self.attn(q, k_1, seq_mask_kernel.unsqueeze(1),
-                                  min_value=self.min_value,
-                                  mask_diag=True)
-        xs_pad_out_hat_1, _ = self.engine(agg_q, self.engine.decoder)
-        # iter 2
-        kernel_mask = torch.zeros_like(kernel)
-        indces = torch.topk(kernel, k=3, dim=-1)[1]  # B, 1, T, k
-        kernel_mask.scatter_(-1, indces, 1)
-        agg_q, kernel = self.attn(q, k_2, seq_mask_kernel.unsqueeze(1) | kernel_mask.bool(),
-                                  min_value=self.min_value,
-                                  mask_diag=True)
-        xs_pad_out_hat_2, ratio_d = self.engine(agg_q, self.engine.decoder)
-
-        # 4. brewing with attention respect to second attention
-        p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
-                                  ratio=ratio_q,
+        k_agg, kernel_k = self.attn(k, k, seq_mask_kernel.unsqueeze(1),
+                                    min_value=self.min_value,
+                                    mask_diag=True)
+        xs_pad_out_hat_1, ratio_d_1 = self.engine(k_agg, self.engine.decoder)
+        # iter 1 brew
+        p_hat = self.engine.brew_(module_lists=[self.engine.encoder_k],
+                                  ratio=ratio_1,
                                   split_dim=None)
-        ratio_att = self.engine.calculate_ratio(agg_q, q)
+        ratio_att = self.engine.calculate_ratio(k_agg, k)
         p_hat = self.engine.amp(ratio_att, p_hat[0], p_hat[1])
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
-                                  ratio=ratio_d,
+                                  ratio=ratio_d_1,
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])  # B, T, C
-
-        # 5. calculate energy
+        # calculate energy
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
                                       end_state=xs_pad_out.contiguous(),
                                       p_hat=p_hat,
@@ -250,15 +237,29 @@ class NetTransform(nn.Module):
         energy_t = flows['e'].detach()
         energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
 
+        # iter 2
+        # kernel_mask = torch.zeros_like(kernel_explict)
+        # indces = torch.topk(kernel_explict, k=3, dim=-1)[1]  # B, 1, T, k
+        # kernel_mask.scatter_(-1, indces, 1)
+        agg_q, kernel_q = self.attn(q, q, seq_mask_kernel.unsqueeze(1),
+                                    min_value=self.min_value,
+                                    mask_diag=True)
+        xs_pad_out_hat_2, ratio_d_2 = self.engine(agg_q, self.engine.decoder)
+
         # 6. make target with energy
         kernel_target = self.fb(1 / (energy_t + 1))
         # kernel_test = self.minimaxn(torch.softmax(kernel_explict.view(-1)/0.6, dim=-1)).view(kernel.size())
 
         # 7. calculate similarity loss
-        loss_k = self.criterion_kernel(torch.tril(kernel_explict.view(-1, tsz, tsz)),
+        loss_k = self.criterion_kernel(torch.tril(kernel_k.view(-1, tsz, tsz)),
                                        torch.tril(kernel_target.view(-1, tsz, tsz)),
                                        [seq_mask_kernel],
                                        reduction='none')
+
+        denom = (~seq_mask_kernel).float().sum()
+        loss_mi = torch.sigmoid(kernel_mi) * torch.log(torch.sigmoid(kernel_mi) /
+                                                       (torch.sigmoid(kernel_q) * torch.sigmoid(kernel_k)) + 1e-7)
+        loss_mi = loss_mi.masked_fill(seq_mask_kernel, 0) / denom
 
         # 8. calculate generative loss
         loss_g_1 = self.criterion(xs_pad_out_hat_1.view(-1, self.idim),
@@ -271,12 +272,13 @@ class NetTransform(nn.Module):
                                   reduction='none')
 
         # summary all task
-        loss = loss_g_1.sum() + loss_g_2.sum() + loss_k.sum()
+        loss = loss_g_1.sum() + loss_g_2.sum() + loss_k.sum() + loss_mi.sum()
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'loss_2': float(loss_g_1.sum()),
                                   'loss_3': float(loss_g_2.sum()),
-                                  'loss_4': float(loss_k.sum())})
+                                  'loss_4': float(loss_k.sum()),
+                                  'loss_1': float(loss_mi.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
@@ -286,8 +288,8 @@ class NetTransform(nn.Module):
 
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 
-            self.reporter_buffs['kernel_kq'] = kernel
-            self.reporter_buffs['kernel_kk'] = torch.sigmoid(kernel_explict)
+            self.reporter_buffs['kernel_kq'] = kernel_mi
+            self.reporter_buffs['kernel_kk'] = torch.sigmoid(kernel_k)
             self.reporter_buffs['kernel_kk_target'] = kernel_target
             # self.reporter_buffs['kernel_mask'] = kernel_mask
 

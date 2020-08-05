@@ -589,6 +589,8 @@ def train(args):
         "iteration",
         "main/loss",
         "validation/main/loss",
+        "main/loss_1",
+        "validation/main/loss_1"
         "main/loss_2",
         "validation/main/loss_2",
         "main/loss_3",
