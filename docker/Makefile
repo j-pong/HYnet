@@ -43,6 +43,7 @@ run: ## 도커 컨테이너를 실행합니다. (고정 포트 연결)
 		-p $(ARG_PORT_SSH):22 \
 		-p $(ARG_PORT_TENSORBOARD):6006 \
 		-v $(ARG_WORKSPACE_HOST):$(ARG_WORKSPACE_CONTAINER) \
+		-v /DB:/DB \
 		-v /etc/timezone:/etc/timezone \
 		-v /etc/localtime:/etc/localtime \
 		--runtime=nvidia \
