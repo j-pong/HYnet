@@ -102,6 +102,8 @@ class Inference(nn.Module):
                         i += 1
                     elif isinstance(module, nn.ReLU):
                         pass
+                    elif isinstance(module, nn.PReLU):
+                        pass
                     else:
                         raise AttributeError("Current network architecture, {}, is not supported!".format(module))
 
@@ -116,6 +118,8 @@ class Inference(nn.Module):
                 x_base = module(x)
                 x = x_base
             elif isinstance(module, nn.ReLU):
+                x = module(x)
+            elif isinstance(module, nn.PReLU):
                 x = module(x)
             else:
                 raise AttributeError("Current network architecture is not supported!")
@@ -139,17 +143,17 @@ class HirInference(Inference):
 
         self.encoder_q = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU(),
+            nn.PReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
         ])
         self.encoder_k = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.ReLU(),
+            nn.PReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
         ])
         self.decoder = nn.ModuleList([
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
-            nn.ReLU(),
+            nn.PReLU(),
             nn.Linear(self.hdim, odim, bias=self.bias)
         ])
 
