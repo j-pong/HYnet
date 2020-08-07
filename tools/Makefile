@@ -54,10 +54,7 @@ venv: miniconda.sh
 
 espnet.done: venv
 	git clone https://github.com/espnet/espnet
-	cd espnet/tools && make KALDI=../../${KALDI} kaldi.done && \
-	make venv && \
-	make espnet.done && \
-	make warp-ctc.done
+	cd espnet/tools && ./setup_anaconda.sh venv && make
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
 	# import moneynet to espnet venv
