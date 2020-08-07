@@ -197,9 +197,10 @@ class NetTransform(nn.Module):
         xs_pad_in = xs_pad_in[:, :max(ilens), :-self.trunk].unsqueeze(1)  # for data parallel
         xs_pad_out = xs_pad_out[:, :max(ilens), :, :-self.trunk].transpose(1, 2)
 
+        bsz, tnum, tsz, fdim = xs_pad_in.size()
+
         # seq_mask related
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
-        tsz = seq_mask.size(-1)
         seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
                                             (~seq_mask).unsqueeze(1).float())).bool()
 
@@ -208,13 +209,13 @@ class NetTransform(nn.Module):
 
         # 1. preparation of key dictionary : must key is aligned respect to target seq.
         # first key almost goes to one-hot but second is aux-info.
-        k, _ = self.engine(xs_pad_in, self.engine.encoder_k)
+        k, _ = self.engine(xs_pad_out, self.engine.encoder_k)
         kernel_kk = torch.matmul(k, k.transpose(-2, -1))
 
         # 2. query for causal case
         q, ratio_e_q = self.engine(xs_pad_in, self.engine.encoder_q)
 
-        # 3. transform
+        # 3. transformer
         agg_q, kernel_kq = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
                                      min_value=self.min_value,
                                      mask_diag=True)
@@ -224,15 +225,28 @@ class NetTransform(nn.Module):
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_e_q,
                                   split_dim=None)
-        ratio_att = self.engine.calculate_ratio(agg_q, q)
-        p_hat = self.engine.amp(ratio_att, p_hat[0], p_hat[1])
+
+        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)).view(-1, fdim, self.hdim)
+        b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)).view(-1, self.hdim)
+        p_hat = (w, b)
+
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
                                   ratio=ratio_d,
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
-        # print(p_hat[0].size(), p_hat[1].size())
-        # exit()
+
+        # channel selection
+        w, b = p_hat
+        w = w.view(bsz, tnum, tsz, fdim, fdim)
+        # b = b.view(bsz, tnum, tsz, fdim)
+
+        kernel_w = torch.matmul(w, w.transpose(-2, -1)).view(bsz, tnum, tsz, -1)
+        kernel_w = torch.softmax(kernel_w, dim=-1).view(bsz, tnum, tsz, fdim, fdim)
+
+        # score = torch.softmax(torch.abs(w).mean(-1), -1)
+        # mask = score > 0.5
+        # xs_pad_in_hat = score.masked_fill(mask, 0.0)
 
         # 5. calculate energy
         flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
@@ -240,11 +254,10 @@ class NetTransform(nn.Module):
                                       p_hat=p_hat,
                                       flows={'e': None})
         energy_t = flows['e'].detach()
-        energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
+        # energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
 
         # 6. make target with energy
         kernel_target = self.fb(1 / (energy_t + 1))
-        # kernel_test = self.minimaxn(torch.softmax(kernel_explict.view(-1)/0.6, dim=-1)).view(kernel.size())
 
         # 7. calculate similarity loss
         loss_k = self.criterion_kernel(torch.tril(kernel_kk.view(-1, tsz, tsz)),
@@ -269,6 +282,8 @@ class NetTransform(nn.Module):
 
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat
+
+            self.reporter_buffs['p_hat'] = kernel_w.mean(-3)
 
             self.reporter_buffs['energy_t'] = energy_t[:, 0]
 

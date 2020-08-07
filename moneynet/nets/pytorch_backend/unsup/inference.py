@@ -143,15 +143,20 @@ class HirInference(Inference):
 
         self.encoder_q = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.PReLU(),
+            nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
         ])
         self.encoder_k = nn.ModuleList([
             nn.Linear(idim, self.hdim, bias=self.bias),
-            nn.PReLU(),
+            nn.ReLU(),
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
         ])
         self.decoder = nn.ModuleList([
+            nn.Linear(self.hdim, self.hdim, bias=self.bias),
+            nn.ReLU(),
+            nn.Linear(self.hdim, odim, bias=self.bias)
+        ])
+        self.decoder_cnn = nn.ModuleList([
             nn.Linear(self.hdim, self.hdim, bias=self.bias),
             nn.PReLU(),
             nn.Linear(self.hdim, odim, bias=self.bias)

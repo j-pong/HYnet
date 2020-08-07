@@ -964,7 +964,6 @@ def recog(args):
                 )
 
     else:
-
         def grouper(n, iterable, fillvalue=None):
             kargs = [iter(iterable)] * n
             return zip_longest(*kargs, fillvalue=fillvalue)
