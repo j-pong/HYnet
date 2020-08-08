@@ -226,7 +226,8 @@ class NetTransform(nn.Module):
                                   ratio=ratio_e_q,
                                   split_dim=None)
 
-        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)).view(-1, fdim, self.hdim)
+        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)).view(-1, fdim,
+                                                                                                      self.hdim)
         b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)).view(-1, self.hdim)
         p_hat = (w, b)
 
@@ -243,6 +244,7 @@ class NetTransform(nn.Module):
 
         kernel_w = torch.matmul(w, w.transpose(-2, -1)).view(bsz, tnum, tsz, -1)
         kernel_w = torch.softmax(kernel_w, dim=-1).view(bsz, tnum, tsz, fdim, fdim)
+        kernel_w[..., range(fdim), range(fdim)] = 0.0
 
         # score = torch.softmax(torch.abs(w).mean(-1), -1)
         # mask = score > 0.5
@@ -324,7 +326,7 @@ class NetTransform(nn.Module):
             if self.target_type == 'mvn':
                 energy = torch.pow(time * torch.abs(start_state), 2)
             elif self.target_type == 'residual':
-                energy = distance * torch.abs(start_state) * freq
+                energy = distance  # * torch.abs(start_state)  # * freq
                 energy = energy.mean(-1)
                 energy = energy.view(bsz, tnsz, tsz)
 
