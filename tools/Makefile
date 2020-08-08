@@ -53,8 +53,10 @@ venv: miniconda.sh
 	. venv/bin/activate && conda info -a
 
 espnet.done: venv
+	rm -rf espnet
 	git clone https://github.com/espnet/espnet
-	cd espnet/tools && ./setup_anaconda.sh venv && make
+	cd espnet/tools && ln -s ../../${KALDI} . && chmod +x setup_cuda_env.sh && ./setup_cuda_env.sh /usr/local/cuda && ./setup_anaconda.sh venv
+	cd espnet/tools && make TH_VERSION=1.6.0 warp-ctc.done espnet.done pytorch.done chainer.done
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
 	# import moneynet to espnet venv
