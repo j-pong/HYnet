@@ -19,6 +19,8 @@ from moneynet.nets.pytorch_backend.unsup.inference import HirInference
 
 from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 
+# from sklearn.cluster import KMeans
+
 
 class Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
@@ -225,41 +227,55 @@ class NetTransform(nn.Module):
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_e_q,
                                   split_dim=None)
-
-        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)).view(-1, fdim,
-                                                                                                      self.hdim)
-        b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)).view(-1, self.hdim)
+        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)).\
+            view(-1, fdim, self.hdim)
+        b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)).\
+            view(-1, self.hdim)
         p_hat = (w, b)
-
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
                                   ratio=ratio_d,
                                   split_dim=None,
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
 
-        # channel selection
-        w, b = p_hat
-        w = w.view(bsz, tnum, tsz, fdim, fdim)
-        # b = b.view(bsz, tnum, tsz, fdim)
-
-        kernel_w = torch.matmul(w, w.transpose(-2, -1)).view(bsz, tnum, tsz, -1)
-        kernel_w = torch.softmax(kernel_w, dim=-1).view(bsz, tnum, tsz, fdim, fdim)
-        kernel_w[..., range(fdim), range(fdim)] = 0.0
-
-        # score = torch.softmax(torch.abs(w).mean(-1), -1)
-        # mask = score > 0.5
-        # xs_pad_in_hat = score.masked_fill(mask, 0.0)
-
         # 5. calculate energy
-        flows = self.calculate_energy(start_state=xs_pad_in.contiguous(),
-                                      end_state=xs_pad_out_hat.contiguous(),
-                                      p_hat=p_hat,
-                                      flows={'e': None})
-        energy_t = flows['e'].detach()
-        # energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
+        w, b = p_hat
+
+        # distance = F.kl_div(input=torch.log_softmax(torch.abs(w), dim=-1),
+        #                     target=self.field.to(w.device),
+        #                     reduction='none').float()
+        # distance = distance.sum(-1)
+        # freq = (torch.relu(w).sum(-1) / torch.abs(w).sum(-1))
+        # num_nan = torch.isnan(freq).float().mean()
+        # if num_nan > 0.1:
+        #     logging.warning("Energy sequence impose the nan {}".format(num_nan))
+        # freq[torch.isnan(freq)] = 0.5
+        # time = torch.abs(freq - 0.5) + 1
+
+        w = w.view(bsz, tnum, tsz, fdim, fdim)
+        b = b.view(bsz, tnum, tsz, fdim)
+
+        # kernel_w = torch.matmul(w, w.transpose(-2, -1))
+        # sim_type = 'cos'
+        # if sim_type == 'cos':
+        #     norm_w = w.pow(2).sum(-1, keepdim=True).sqrt()
+        #     norm_w = torch.matmul(norm_w, norm_w.transpose(-2, -1))
+        #     kernel_w = (kernel_w / norm_w).view(bsz, tnum, tsz, fdim, fdim)
+        # else:
+        #     kernel_w[..., range(fdim), range(fdim)] = self.min_value
+        #     kernel_w = torch.softmax(kernel_w, dim=-1)
+
+        # energy_t = (time * distance).view(bsz, tnum, tsz, fdim, 1)
+        # kernel_w[..., range(fdim), range(fdim)] = 0.0
+        # energy_t = torch.matmul(kernel_w, energy_t) + energy_t
+        # energy_t = energy_t.view(bsz, tnum, tsz, fdim)
+        # # energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
 
         # 6. make target with energy
-        kernel_target = self.fb(1 / (energy_t + 1))
+        # energy_t = energy_t.mean(-1).view(bsz, tnum, tsz).detach()
+        # kernel_target = self.fb(1 / (energy_t + 1))
+        kernel_target = torch.zeros_like(seq_mask_kernel).to(seq_mask_kernel.device).float()
+        kernel_target[..., range(tsz), range(tsz)] = 1.0
 
         # 7. calculate similarity loss
         loss_k = self.criterion_kernel(torch.tril(kernel_kk.view(-1, tsz, tsz)),
@@ -268,6 +284,17 @@ class NetTransform(nn.Module):
                                        reduction='none')
 
         # 8. calculate generative loss
+        with torch.no_grad():
+            xs_pad_out_hat_hat = torch.matmul(xs_pad_in.unsqueeze(-2), w).squeeze(-2) + b
+            w[..., range(fdim), range(fdim)] = 0.0
+            xs_pad_out_hat_rdiag = torch.matmul(xs_pad_in.unsqueeze(-2), w).squeeze(-2) + b
+            xs_pad_out_hat_diag = xs_pad_out_hat_hat - xs_pad_out_hat_rdiag
+            xs_pad_out_hat_hat -= xs_pad_out_hat_diag
+            loss_test = self.criterion(xs_pad_out_hat_hat.view(-1, self.idim),
+                                       xs_pad_out.contiguous().view(-1, self.idim),
+                                       [seq_mask.view(-1, 1)],
+                                       reduction='none')
+        xs_pad_out_hat = (xs_pad_out_hat - xs_pad_out_hat_diag.detach())
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
@@ -278,18 +305,19 @@ class NetTransform(nn.Module):
         if not torch.isnan(loss):
             self.reporter.report({'loss': float(loss),
                                   'loss_1': float(loss_g.sum()),
-                                  'loss_2': float(loss_k.sum())})
+                                  'loss_2': float(loss_k.sum()),
+                                  'loss_3': float(loss_test.sum())})
         else:
             logging.warning("loss (=%f) is not correct", float(loss))
 
         if buffering:
             self.reporter_buffs['out'] = xs_pad_out_hat
 
-            self.reporter_buffs['p_hat'] = kernel_w.mean(-3)
+            self.reporter_buffs['p_hat'] = w[:, 0, 100:101, :, :]
 
-            self.reporter_buffs['energy_t'] = energy_t[:, 0]
+            # self.reporter_buffs['energy_t'] = energy_t
 
-            self.reporter_buffs['kernel_kq'] = kernel_kq
+            self.reporter_buffs['kernel_kq'] = kernel_kq[:, :, :200, :200]
             self.reporter_buffs['kernel_kk'] = torch.sigmoid(kernel_kk)
             self.reporter_buffs['kernel_kk_target'] = kernel_target
 
