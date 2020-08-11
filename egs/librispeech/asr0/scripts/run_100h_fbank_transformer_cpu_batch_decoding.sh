@@ -320,12 +320,12 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         recog_model=model.last${n_average}.avg.best
         opt="--log"
     fi
-#    average_checkpoints.py \
-#        ${opt} \
-#        --backend pytorch \
-#        --snapshots ${expdir}/results/snapshot.ep.* \
-#        --out ${expdir}/results/${recog_model} \
-#        --num ${n_average}
+    average_checkpoints.py \
+        ${opt} \
+        --backend pytorch \
+        --snapshots ${expdir}/results/snapshot.ep.* \
+        --out ${expdir}/results/${recog_model} \
+        --num ${n_average}
 
     nj=7
 
@@ -347,7 +347,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --config ${decode_config} \
             --ngpu ${ngpu} \
             --backend pytorch \
-            --batchsize 13 \
+            --batchsize 10 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
             --result-ark ${expdir}/${decode_dir}/data.JOB.ark \
             --model ${expdir}/results/${recog_model}  \
