@@ -491,7 +491,7 @@ def train(args):
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
         optimizer = get_std_opt(
-            model, args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model.parameters(), args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
     elif args.opt == "rmsprop":
         optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
