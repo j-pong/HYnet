@@ -34,6 +34,8 @@ from moneynet.asr.asr_utils import snapshot_object
 from moneynet.asr.asr_utils import torch_load
 from moneynet.asr.asr_utils import torch_resume
 from moneynet.asr.asr_utils import torch_snapshot
+from moneynet.utils.io_utils import LoadInputsAndTargets
+
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 import espnet.lm.pytorch_backend.extlm as extlm_pytorch
@@ -49,7 +51,6 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
-from espnet.utils.io_utils import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler
