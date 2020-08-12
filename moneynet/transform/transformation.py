@@ -145,6 +145,8 @@ class Transformation(object):
                         if rep_opt == "mix" or rep_opt == "insertion":
                             import numpy
                             for i, x in enumerate(xs):
+                                if not _kwargs['train']:
+                                    break
                                 x_mix = xs[numpy.random.randint(len(xs))].copy()
                                 if len(x_mix) > len(x):
                                     x_mix = x_mix[:len(x)]
