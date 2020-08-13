@@ -328,7 +328,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         --backend pytorch \
         --snapshots ${expdir}/results/snapshot.ep.* \
         --out ${expdir}/results/${recog_model} \
-        --num ${n_average
+        --num ${n_average}
 
     nthreads=$[ncore*2]
     for rtask in ${recog_set}; do

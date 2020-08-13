@@ -279,13 +279,6 @@ class E2E(ASRInterface, torch.nn.Module):
         cer_ctc = None
         if self.mtlalpha == 0.0:
             loss_ctc = None
-        # else:
-        #     batch_size = xs_pad.size(0)
-        #     hs_len = hs_mask.view(batch_size, -1).sum(1)
-        #     loss_ctc = self.ctc(pred_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
-        #     if self.error_calculator is not None:
-        #         ys_hat = self.ctc.argmax(pred_pad.view(batch_size, -1, self.adim)).data
-        #         cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
         # 3. compute cer/wer
         if self.training or self.error_calculator is None:
@@ -315,8 +308,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data
             )
         else:
-            pass
-            # logging.warning("loss (=%f) is not correct", loss_data)
+            logging.warning("loss (=%f) is not correct", loss_data)
         return self.loss
 
     def scorers(self):

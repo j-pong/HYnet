@@ -253,6 +253,7 @@ class Encoder(torch.nn.Module):
         for params in self.enc_copy.parameters():
             params.requires_grad_(False)
 
+        self.lnf = torch.nn.Linear(attention_dim * 2, attention_dim)
         self.amolang = Amolang(self.enc, self.enc_copy)
 
     @staticmethod
@@ -282,28 +283,20 @@ class Encoder(torch.nn.Module):
         else:
             train_step = 0
 
-        xs_m = torch.mean(xs, dim=-1, keepdim=True)
-        xs_v = torch.mean(torch.pow(xs - xs_m, 2), dim=-1, keepdim=True)
-
         # DEQ calculation
         if 0 <= train_step < self.pretrain_steps:
-            for i in range(24):
-                xs = self.enc(xs, masks)
+            for i in range(64):
+                z = self.lnf(torch.cat((xs, z), dim=2))
+                z = self.enc(z, masks)
         else:
-            # for i in range(self.num_blocks):
-            #     xs = self.enc(xs, masks)
-            #     if self.normalize_before:
-            #         xs = self.after_norm(xs)
-            xs = self.amolang(xs, masks, train_step)
-
-        xs = self.mvn(xs)
-        xs = xs * xs_v + xs_m
+            z = self.lnf(torch.cat((xs, z), dim=2))
+            z = self.amolang(z, masks, train_step)
 
         train_step += 1
         with open('./train_step.txt', 'w') as f:
             f.write(str(train_step))
 
-        return xs
+        return z
 
     def forward_one_step(self, xs, masks, cache=None):
         """Encode input frame.
