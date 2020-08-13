@@ -11,7 +11,7 @@ from moneynet.transform.functional import FuncTrans
 
 def check_mix(x, replace_with):
     assert isinstance(x, numpy.ndarray)
-    if replace_with == "mix" or replace_with == "insertion":
+    if replace_with in ["mix", "insertion", "random"]:
         assert x.ndim == 3
         x_mix = x[1]
         x = x[0]
@@ -101,8 +101,12 @@ def freq_mask(x, F=30, n_mask=2, replace_with="mean", inplace=False):
         if f_zero == f_zero + f:
             continue
 
+        if replace_with == "random":
+            replace_with_choices = [0,"mean","mix","insertion"]
+            replace_with = replace_with_choices[random.randint(0,3)]
+
         if isinstance(replace_with, int) or isinstance(replace_with, float):
-            cloned[:, f_zero:mask_end] = 0
+            cloned[:, f_zero:mask_end] = replace_with
         elif replace_with == "mean":
             cloned[:, f_zero:mask_end] = cloned.mean()
         elif x_mix is not None:
@@ -151,8 +155,12 @@ def time_mask(spec, T=40, n_mask=2, replace_with="mean", inplace=False):
             continue
 
         mask_end += t_zero
+        if replace_with == "random":
+            replace_with_choices = [0,"mean","mix","insertion"]
+            replace_with = replace_with_choices[random.randint(0,3)]
+
         if isinstance(replace_with, int) or isinstance(replace_with, float):
-            cloned[t_zero:mask_end] = 0
+            cloned[t_zero:mask_end] = replace_with
         elif replace_with == "mean":
             cloned[t_zero:mask_end] = cloned.mean()
         elif x_mix is not None:

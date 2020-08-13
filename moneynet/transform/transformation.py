@@ -142,7 +142,7 @@ class Transformation(object):
                 try:
                     if "replace_with" in self.opts[idx]:
                         rep_opt = self.opts[idx]["replace_with"]
-                        if rep_opt == "mix" or rep_opt == "insertion":
+                        if rep_opt in ["mix", "insertion", "random"]:
                             import numpy
                             for i, x in enumerate(xs):
                                 if not _kwargs['train']:
