@@ -45,7 +45,7 @@ miniconda.sh:
 	test -f miniconda.sh || $(WGET) $(CONDA_URL) -O miniconda.sh
 
 venv: miniconda.sh
-	test -d $(PWD)/venv || bash miniconda.sh -b -p $(PWD)/venv
+	test -d ./venv || bash miniconda.sh -b -p ./venv
 	. venv/bin/activate && conda install -y setuptools -c anaconda
 	. venv/bin/activate && conda install -y pip -c anaconda
 	. venv/bin/activate && conda update -y conda
@@ -53,11 +53,10 @@ venv: miniconda.sh
 	. venv/bin/activate && conda info -a
 
 espnet.done: venv
+	rm -rf espnet
 	git clone https://github.com/espnet/espnet
-	cd espnet/tools && make KALDI=../../${KALDI} kaldi.done && \
-	make venv && \
-	make espnet.done && \
-	make warp-ctc.done
+	cd espnet/tools && ln -s ../../${KALDI} . && chmod +x setup_cuda_env.sh && ./setup_cuda_env.sh /usr/local/cuda && ./setup_anaconda.sh venv
+	cd espnet/tools && make TH_VERSION=1.6.0 warp-ctc.done espnet.done pytorch.done chainer.done
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
 	# import moneynet to espnet venv

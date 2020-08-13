@@ -55,7 +55,6 @@ class NetTransform(nn.Module):
         # task related
         group.add_argument("--field-var", default=13.0, type=float)
         group.add_argument("--target-type", default='residual', type=str)
-        group.add_argument("--cutting_gauge", default=1, type=int)
 
         return parser
 
@@ -71,18 +70,12 @@ class NetTransform(nn.Module):
 
         # related task
         self.target_type = args.target_type
-        self.cutting_gauge = args.cutting_gauge
-        ## instance task
-        self.task1 = False
-        self.task2 = False
-        self.task3 = True
-        self.task4 = False
 
-        # self.field_var = args.field_var
-        # space = np.linspace(0, self.odim - 1, self.odim)
-        # self.field = np.expand_dims(
-        #     np.stack([gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
-        # self.field = torch.from_numpy(2.0 - self.field / np.amax(self.field))
+        self.field_var = args.field_var
+        space = np.linspace(0, self.odim - 1, self.odim)
+        self.field = np.expand_dims(
+            np.stack([gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
+        self.field = torch.from_numpy(self.field)
 
         # inference part with action and selection
         self.engine = Inference(idim=self.idim, odim=self.idim, args=args)
@@ -107,13 +100,13 @@ class NetTransform(nn.Module):
 
     @staticmethod
     def minimaxn(x):
-        max_x = torch.max(x)
-        min_x = torch.min(x)
-        if (max_x - min_x) == 0.0:
-            logging.warning('Divided by the zero with max-min value : {}, Thus return None'.format((max_x - min_x)))
-            x = None
-        else:
-            x = (x - min_x) / (max_x - min_x)
+        max_x = torch.max(x, dim=-1, keepdim=True)[0]
+        min_x = torch.min(x, dim=-1, keepdim=True)[0]
+        # if (max_x - min_x) == 0.0:
+        #     logging.warning('Divided by the zero with max-min value : {}, Thus return None'.format((max_x - min_x)))
+        #     x = None
+        # else:
+        x = (x - min_x) / (max_x - min_x)
 
         return x
 
@@ -151,18 +144,23 @@ class NetTransform(nn.Module):
 
         return xs
 
-    def clustering(self, xs):
+    def clustering(self, xs, golden_ratio=3.14):
         """
         xs: (B, tnum, Tmax)
 
         return: (B, 1, Tmax)
         """
-        xs = 1.0 - xs
         with torch.no_grad():
             ms = []
             for x in xs:
                 if self.tnum == 1:
-                    num_neg = int(x[0].sum(-1))
+                    num_neg = int(x[0].sum(-1) * golden_ratio)
+                    if num_neg < 1:
+                        num_neg = 1
+                        logging.warning("num_neg has wrong value < 1")
+                    elif num_neg > x.size(-1):
+                        num_neg = x.size(-1)
+                        logging.warning("num_neg has wrong value > {}".format(num_neg))
                     indices = torch.topk(x, k=num_neg, dim=-1)[-1]
                 else:
                     raise AttributeError('Number of the target > 1 is not support yet!')
@@ -180,10 +178,6 @@ class NetTransform(nn.Module):
         seq_mask = make_pad_mask((ilens).tolist()).to(xs_pad_in.device)
         seq_mask_kernel = (1 - torch.matmul((~seq_mask).unsqueeze(-1).float(),
                                             (~seq_mask).unsqueeze(1).float())).bool()
-        tsz = seq_mask_kernel.size(1)
-
-        xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
-        xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
 
         # initialization buffer
         self.reporter_buffs = {}
@@ -191,6 +185,8 @@ class NetTransform(nn.Module):
         # 1. transform for checking similarity
         xs_pad_out_hat, ratio_t = self.engine(xs_pad_in, self.engine.transform)
         if self.target_type == 'mvn':
+            xs_pad_in_m = torch.mean(xs_pad_in, dim=-1, keepdim=True)
+            xs_pad_in_v = torch.mean(torch.pow(xs_pad_in - xs_pad_in_m, 2), dim=-1, keepdim=True)
             xs_pad_out_hat_ = self.mvn(xs_pad_out_hat)
             xs_pad_out_hat_ = xs_pad_out_hat_ * xs_pad_in_v + xs_pad_in_m
         elif self.target_type == 'residual':
@@ -211,78 +207,23 @@ class NetTransform(nn.Module):
 
         # 3. embedding task
         h, ratio_e = self.engine(xs_pad_in, self.engine.embed)  # B, 1, Tmax, idim
-        # if self.brewing:
-        #     flows = self.calculate_energy(start_state=xs_pad_in.contiguous(), end_state=h.contiguous(),
-        #                                   func=self.engine.embed,
-        #                                   ratio=ratio_e,
-        #                                   flows={'e': None})
-        #     energy_e = flows['e']
-
-        # get energy group mask
-
-        # clustering with energy
-        energy_t_high_mask = self.clustering(energy_t)
         # causal assumption
-        if self.cutting_gauge:
-            energy_t[energy_t_high_mask] = 0.0
-        energy_t_cumprod = self.fb(energy_t)
+        energy_t_cumprod = self.fb(1.0 - energy_t)
 
         # calculate similarity matrix
-        if self.task2 or self.task3:
-            h_agg = torch.matmul(energy_t_cumprod, h) / \
-                    energy_t_cumprod.sum(-1, keepdim=True)  # [B, 1, T', T] x [B, 1, T, hdim] -> B, 1, T', hdim
-            h_agg = h_agg.transpose(-2, -1)
-        else:
-            h_agg = h.transpose(-2, -1)
-        kernel = torch.matmul(h, h_agg)  # [B, 1, T, hdim] x [B, 1, hdim, T'] -> B, 1, T, T'
-        kernel = kernel / 2.0 / np.sqrt(h.size(-1))
+        h_agg = torch.matmul(energy_t_cumprod, h) / \
+                energy_t_cumprod.sum(-1, keepdim=True)  # [B, 1, T', T] x [B, 1, T, hdim] -> B, 1, T', hdim
+        h_agg = h_agg.transpose(-2, -1)
+
+        kernel = torch.matmul(h, h.transpose(-2, -1))  # [B, 1, T, hdim] x [B, 1, hdim, T'] -> B, 1, T, T'
         if torch.isnan(kernel.sum()):
             raise ValueError("kernel value has nan")
 
-        if self.task1:
-            # large segmentation
-            loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
-                                           energy_t_cumprod.view(-1, tsz, tsz),
-                                           [seq_mask_kernel, ~(energy_t_cumprod.view(-1, tsz, tsz) > 0.0)],
-                                           reduction='none')
-        elif self.task2:
-            # wav2vec
-            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=1, dim1=-2, dim2=-1)  # B * tnum, (Tmax - offset)
-            if prediction.size(-1) != tsz:
-                seq_mask = seq_mask[:, :prediction.size(-1)].contiguous()
-                energy_t_high_mask = energy_t_high_mask[:, :, :prediction.size(-1)].contiguous()
-            neg_target = energy_t_high_mask.float().view(-1, 1)
-
-            lam = neg_target.sum() / (1 - neg_target).sum()
-            loss_e = lam * self.criterion_kernel(prediction.reshape(-1, 1),
-                                                 (1 - neg_target).view(-1, 1),
-                                                 [seq_mask.view(-1, 1), energy_t_high_mask.view(-1, 1)],
-                                                 reduction='none') + \
-                     self.criterion_kernel(-prediction.reshape(-1, 1),
-                                           neg_target.view(-1, 1),
-                                           [seq_mask.view(-1, 1), ~energy_t_high_mask.view(-1, 1)],
-                                           reduction='none')
-        elif self.task3:
-            # wav2vec no negative
-            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=1, dim1=-2, dim2=-1)  # B * tnum, (Tmax - offset)
-            if prediction.size(-1) != tsz:
-                seq_mask = seq_mask[:, :prediction.size(-1)].contiguous()
-                energy_t_high_mask = energy_t_high_mask[:, :, :prediction.size(-1)].contiguous()
-            neg_target = energy_t_high_mask.float().view(-1, 1)
-            loss_e = self.criterion_kernel(prediction.reshape(-1, 1),
-                                           (1 - neg_target).view(-1, 1),
-                                           [seq_mask.view(-1, 1)],
-                                           reduction='none')
-        elif self.task4:
-            # small segmentation
-            prediction = kernel.view(-1, tsz, tsz).diagonal(offset=1, dim1=-2, dim2=-1)  # B * tnum, (Tmax - offset)
-            if prediction.size(-1) != tsz:
-                seq_mask = seq_mask[:, :prediction.size(-1)].contiguous()
-                energy_t = energy_t[:, :, :prediction.size(-1)].contiguous()
-            loss_e = self.criterion_kernel(prediction.reshape(-1, 1),
-                                           energy_t.view(-1, 1),
-                                           [seq_mask.view(-1, 1)],
-                                           reduction='none')
+        tsz = seq_mask_kernel.size(1)
+        loss_e = self.criterion_kernel(kernel.view(-1, tsz, tsz),
+                                       energy_t_cumprod.view(-1, tsz, tsz),
+                                       [seq_mask_kernel, energy_t_cumprod.view(-1, tsz, tsz) < 0.1],
+                                       reduction='none')
 
         # summary all task
         loss = loss_g.sum() + loss_e.sum()
@@ -315,30 +256,54 @@ class NetTransform(nn.Module):
             start_state = start_state.view(-1, start_dim)
             end_state = end_state.view(-1, end_dim) - b_hat
 
-            # make data-pair field for tracing positive-negative
+            # distance
+            distance = F.kl_div(input=torch.log_softmax(torch.abs(w_hat), dim=-1),
+                                target=self.field.to(w_hat.device),
+                                reduction='none').float()
+            distance = distance.sum(-1)
+
+            # time
             sign_pair = torch.matmul(torch.sign(start_state.unsqueeze(-1)),
                                      torch.sign(end_state.unsqueeze(-2)))
             w_hat_x = w_hat * sign_pair
-            w_hat_x_p = torch.relu(w_hat_x)
-            w_hat_x_n = torch.relu(-w_hat_x)
-
-            # relation with sign : how much state change in amplitude space
-            energy = (torch.abs(start_state) * w_hat_x_n.sum(-1)).mean(-1, keepdim=True) / \
-                     (torch.abs(start_state) * w_hat_x_p.sum(-1)).mean(-1, keepdim=True)
-            num_nan = torch.isnan(energy).float().mean()
+            freq = (torch.relu(w_hat_x).sum(-1) / torch.abs(w_hat_x).sum(-1))
+            num_nan = torch.isnan(freq).float().mean()
             if num_nan > 0.1:
                 logging.warning("Energy sequence impose the nan {}".format(num_nan))
-            energy[torch.isnan(energy)] = 1.0
+            freq[torch.isnan(freq)] = 0.5
+            time = torch.abs(freq - 0.5) + 1
 
             if self.target_type == 'mvn':
-                energy = torch.pow(energy, 2)
+                energy = torch.pow(time * torch.abs(start_state), 2)
             elif self.target_type == 'residual':
-                energy = 1.0 - torch.pow(1.0 - energy, 2)
+                energy = distance * torch.abs(start_state) * freq
+                energy = energy.mean(-1)
+                energy = energy.view(bsz, tnsz, tsz)
+
+                # make gaussian filter
+                variance = 3
+                space = np.linspace(0, tsz - 1, tsz)
+                lpass_filter = np.expand_dims(
+                    np.stack([gaussian_func(space, i, variance) for i in range(tsz)], axis=0), 0)
+                lpass_filter = torch.from_numpy(lpass_filter / np.amax(lpass_filter)).to(energy.device)
+                lpass_filter = torch.triu(lpass_filter).float()
+                # filtering with gaussain filter
+                energy = torch.matmul(energy.view(bsz, tnsz, tsz), lpass_filter)
+                # calculate energy difference
+                energy = torch.cat([energy[:, :, 1:] - energy[:, :, :-1],
+                                    torch.zeros_like(energy[:, :, 0:1]).to(energy.device)], dim=-1)
+                energy = torch.abs(energy)
+                # time step
+                freq = freq.mean(-1).view(bsz, tnsz, tsz)
+                freq = torch.cat([freq[:, :, 1:],
+                                  torch.ones_like(freq[:, :, 0:1]).to(energy.device)], dim=-1)
+                energy = energy / freq
 
             # calculate energy
             for key in flows.keys():
                 if key == 'e':
-                    flows[key] = energy.view(bsz, tnsz, tsz)
+                    # dump
+                    flows[key] = energy
                 else:
                     raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
 

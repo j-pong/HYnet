@@ -52,7 +52,8 @@ class PlotImageReport(extension.Extension):
                     key
                 )
                 if key == 'out':
-                    img = np.concatenate([batch[1][idx].transpose(0, 1).cpu().numpy()[0:1], img[0:1]],
+                    img_org = batch[1][idx].transpose(0, 1).cpu().numpy()[0:1, :, :np.shape(img)[-1]]
+                    img = np.concatenate([img_org, img[0:1]],
                                          axis=0)
                 self._plot_and_save_image(img, filename.format(trainer))
 
@@ -71,7 +72,11 @@ class PlotImageReport(extension.Extension):
         if len(img.shape) == 3:
             for h, im in enumerate(img, 1):
                 plt.subplot(len(img), 1, h)
-                plt.imshow(im.T, aspect="auto")
+                sz1, sz2 = np.shape(im)
+                if sz1 > sz2:
+                    plt.imshow(im.T, aspect="auto")
+                else:
+                    plt.imshow(im, aspect="auto")
                 plt.ylabel("dim")
                 plt.xlabel("time")
                 plt.colorbar()
@@ -81,7 +86,11 @@ class PlotImageReport(extension.Extension):
             plt.grid()
             plt.autoscale(enable=True, axis='x', tight=True)
         else:
-            plt.imshow(img.T, aspect="auto")
+            sz1, sz2 = np.shape(img)
+            if sz1 > sz2:
+                plt.imshow(img.T, aspect="auto")
+            else:
+                plt.imshow(img, aspect="auto")
             plt.xlabel("index")
             plt.ylabel("time")
             plt.colorbar()

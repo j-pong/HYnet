@@ -156,9 +156,10 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
+. ./path_fair.sh || exit 1;
+
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Unsupervised Training"
-    . ./path_fair.sh || exit 1;
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         KALDI_ROOT=${KALDI_ROOT} CUDA_VISIBLE_DEVICES=${ngpu_id} unsup_train.py \
         --config ${train_unsup_config} \
@@ -211,7 +212,6 @@ fi
 
 nj=32
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
-    . ./path.sh || exit 1;
     echo "stage 5: Unsupervised Representation Json Data Preparation"
     # make json labels
     for rtask in ${train_small_set} ${train_dev} dev_clean test_clean dev_other test_other; do
@@ -234,6 +234,8 @@ else
 fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
+
+. ./path.sh || exit 1;
 
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     echo "stage 6: E2E ASR training"

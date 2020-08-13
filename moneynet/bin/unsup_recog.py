@@ -14,7 +14,6 @@ import sys
 
 import numpy as np
 
-from espnet.utils.cli_utils import strtobool
 
 # NOTE: you need this func to generate our sphinx doc
 
@@ -141,7 +140,7 @@ def main(args):
 
     logging.info("backend = " + args.backend)
     if args.backend == "pytorch":
-        from moneynet.unsup.chainer_pipe.unsup_ar import recog
+        from moneynet.unsup.pytorch_backend.unsup_ar import recog
 
         if args.dtype != "float32":
             raise NotImplementedError(

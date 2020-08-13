@@ -3,7 +3,7 @@ accum-grad: 4
 adim: 512
 aheads: 8
 backend: pytorch
-batch-bins: 15000000
+batch-bins: 98000000
 dropout-rate: 0.1
 elayers: 12
 epochs: 120
@@ -21,3 +21,6 @@ transformer-input-layer: conv2d
 transformer-length-normalized-loss: false
 transformer-lr: 10.0
 transformer-warmup-steps: 25000
+oversampling: 4
+outer : 1
+residual: 0

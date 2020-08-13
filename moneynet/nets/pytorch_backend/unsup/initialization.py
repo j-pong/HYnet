@@ -3,7 +3,10 @@
 from torch import nn
 
 
-def initialize(model, init_type="xavier_normal"):
+def initialize(model, init_type="pytorch"):
+    if init_type == "pytorch":
+        return
+
     # weight init
     for p in model.parameters():
         if p.dim() > 1:

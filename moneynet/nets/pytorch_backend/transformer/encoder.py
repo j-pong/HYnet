@@ -135,7 +135,7 @@ class Encoder(torch.nn.Module):
             raise NotImplementedError("Support only linear or conv1d.")
         self.encoders = repeat(
             num_blocks,
-            lambda: EncoderLayer(
+            lambda lnum: EncoderLayer(
                 attention_dim,
                 MultiHeadedAttention(
                     attention_heads, attention_dim, attention_dropout_rate

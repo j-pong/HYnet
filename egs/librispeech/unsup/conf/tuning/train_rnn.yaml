@@ -1,7 +1,7 @@
 # network architecture
 # encoder related
 etype: vggblstm     # encoder architecture type
-elayers: 5
+elayers: 2
 eunits: 1024
 eprojs: 1024
 subsample: "1_2_2_1_1" # skip every n frame from input to nth layers
