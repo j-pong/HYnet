@@ -19,6 +19,7 @@ from moneynet.nets.pytorch_backend.unsup.inference import HirInference
 
 from moneynet.nets.pytorch_backend.unsup.plot import PlotImageReport
 
+
 # from sklearn.cluster import KMeans
 
 
@@ -227,9 +228,9 @@ class NetTransform(nn.Module):
         p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
                                   ratio=ratio_e_q,
                                   split_dim=None)
-        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)).\
+        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)). \
             view(-1, fdim, self.hdim)
-        b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)).\
+        b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)). \
             view(-1, self.hdim)
         p_hat = (w, b)
         p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
@@ -238,9 +239,9 @@ class NetTransform(nn.Module):
                                   w_hat=p_hat[0],
                                   bias_hat=p_hat[1])
 
-        # 5. calculate energy
+        # 5. post processing
         w, b = p_hat
-
+        ## calculate energy
         # distance = F.kl_div(input=torch.log_softmax(torch.abs(w), dim=-1),
         #                     target=self.field.to(w.device),
         #                     reduction='none').float()
@@ -272,8 +273,6 @@ class NetTransform(nn.Module):
         # # energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
 
         # 6. make target with energy
-        # energy_t = energy_t.mean(-1).view(bsz, tnum, tsz).detach()
-        # kernel_target = self.fb(1 / (energy_t + 1))
         kernel_target = torch.zeros_like(seq_mask_kernel).to(seq_mask_kernel.device).float()
         kernel_target[..., range(tsz), range(tsz)] = 1.0
 
@@ -285,16 +284,21 @@ class NetTransform(nn.Module):
 
         # 8. calculate generative loss
         with torch.no_grad():
-            xs_pad_out_hat_hat = torch.matmul(xs_pad_in.unsqueeze(-2), w).squeeze(-2) + b
-            w[..., range(fdim), range(fdim)] = 0.0
-            xs_pad_out_hat_rdiag = torch.matmul(xs_pad_in.unsqueeze(-2), w).squeeze(-2) + b
-            xs_pad_out_hat_diag = xs_pad_out_hat_hat - xs_pad_out_hat_rdiag
+            xs_pad_out_hat_hat = torch.matmul(xs_pad_in.unsqueeze(-2), w).squeeze(-2)
+
+            w_diag = w.clone()
+            w_diag[:, :, :, range(fdim), range(fdim)] = 0.0
+            w_diag = w - w_diag
+
+            xs_pad_out_hat_diag = torch.matmul(xs_pad_in.unsqueeze(-2), w_diag).squeeze(-2)
             xs_pad_out_hat_hat -= xs_pad_out_hat_diag
+            xs_pad_out_hat_hat += b
             loss_test = self.criterion(xs_pad_out_hat_hat.view(-1, self.idim),
                                        xs_pad_out.contiguous().view(-1, self.idim),
                                        [seq_mask.view(-1, 1)],
                                        reduction='none')
-        xs_pad_out_hat = (xs_pad_out_hat - xs_pad_out_hat_diag.detach())
+
+        xs_pad_out_hat -= xs_pad_out_hat_diag.detach()
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
@@ -322,51 +326,6 @@ class NetTransform(nn.Module):
             self.reporter_buffs['kernel_kk_target'] = kernel_target
 
         return loss
-
-    def calculate_energy(self, start_state, end_state, p_hat, flows={'e': None}):
-        with torch.no_grad():
-            # prepare data
-            w_hat = p_hat[0]
-            b_hat = p_hat[1]
-
-            start_dim = start_state.size(-1)
-            bsz, tnsz, tsz, end_dim = end_state.size()
-            start_state = start_state.view(-1, start_dim)
-            end_state = end_state.view(-1, end_dim) - b_hat
-
-            # distance
-            distance = F.kl_div(input=torch.log_softmax(torch.abs(w_hat), dim=-1),
-                                target=self.field.to(w_hat.device),
-                                reduction='none').float()
-            distance = distance.sum(-1)
-
-            # time
-            sign_pair = torch.matmul(torch.sign(start_state.unsqueeze(-1)),
-                                     torch.sign(end_state.unsqueeze(-2)))
-            w_hat_x = w_hat * sign_pair
-            freq = (torch.relu(w_hat_x).sum(-1) / torch.abs(w_hat_x).sum(-1))
-            num_nan = torch.isnan(freq).float().mean()
-            if num_nan > 0.1:
-                logging.warning("Energy sequence impose the nan {}".format(num_nan))
-            freq[torch.isnan(freq)] = 0.5
-            time = torch.abs(freq - 0.5) + 1
-
-            if self.target_type == 'mvn':
-                energy = torch.pow(time * torch.abs(start_state), 2)
-            elif self.target_type == 'residual':
-                energy = distance  # * torch.abs(start_state)  # * freq
-                energy = energy.mean(-1)
-                energy = energy.view(bsz, tnsz, tsz)
-
-            # calculate energy
-            for key in flows.keys():
-                if key == 'e':
-                    # dump
-                    flows[key] = energy
-                else:
-                    raise AttributeError("'{}' type of augmentation factor is not defined!".format(key))
-
-        return flows
 
     """
     Evaluation related
