@@ -4,15 +4,15 @@ process:
   - type: "time_warp"
     max_time_warp: 5
     inplace: true
-    replace_with: "random"
+    replace_with: "rmix"
     mode: "PIL"
   - type: "freq_mask"
     F: 30
     n_mask: 2
     inplace: true
-    replace_with: "random"
+    replace_with: "rmix"
   - type: "time_mask"
     T: 40
     n_mask: 2
     inplace: true
-    replace_with: "random"
+    replace_with: "rmix"
