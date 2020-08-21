@@ -86,7 +86,7 @@ class NetTransform(nn.Module):
             np.stack([self.gaussian_func(space, i, self.field_var) for i in range(self.odim)], axis=0), 0)
         self.field = torch.from_numpy(self.field)
         ## energy post processing task
-        self.energy_level = np.array([144, 89, 55, 34, 21, 13, 8, 5, 3, 2, 1]) / 32
+        self.energy_level = np.array([13, 8, 5, 3, 2, 1]) / 32
 
         # inference part with action and selection
         self.engine = HirInference(idim=self.idim, odim=self.idim, args=args)
@@ -181,7 +181,7 @@ class NetTransform(nn.Module):
         if mask_diag:
             assert torch.sum((kernel.diagonal(dim1=-2, dim2=-1) != 0.0).float()) == 0.0
 
-        return c, kernel
+        return c, kernel, score
 
     @staticmethod
     def energy_quantization(x, energy_level):
@@ -219,62 +219,39 @@ class NetTransform(nn.Module):
         q, ratio_e_q = self.engine(xs_pad_in, self.engine.encoder_q)
 
         # 3. transformer
-        agg_q, kernel_kq = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
-                                     min_value=self.min_value,
-                                     mask_diag=True)
+        agg_q, kernel_kq, score = self.attn(q, k, seq_mask_kernel.unsqueeze(1),
+                                            min_value=self.min_value,
+                                            mask_diag=True)
         xs_pad_out_hat, ratio_d = self.engine(agg_q, self.engine.decoder)
 
         # 4. brewing with attention respect to second attention
-        p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
-                                  ratio=ratio_e_q,
-                                  split_dim=None)
-        w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)). \
-            view(-1, fdim, self.hdim)
-        b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)). \
-            view(-1, self.hdim)
-        p_hat = (w, b)
-        p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
-                                  ratio=ratio_d,
-                                  split_dim=None,
-                                  w_hat=p_hat[0],
-                                  bias_hat=p_hat[1])
+        with torch.no_grad():
+            p_hat = self.engine.brew_(module_lists=[self.engine.encoder_q],
+                                      ratio=ratio_e_q,
+                                      split_dim=None)
+            w = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[0].view(bsz, tnum, tsz, -1)). \
+                view(-1, fdim, self.hdim)
+            b = torch.matmul(kernel_kq.view(bsz, tnum, tsz, tsz), p_hat[1].view(bsz, tnum, tsz, -1)). \
+                view(-1, self.hdim)
+            p_hat = (w, b)
+            p_hat = self.engine.brew_(module_lists=[self.engine.decoder],
+                                      ratio=ratio_d,
+                                      split_dim=None,
+                                      w_hat=p_hat[0],
+                                      bias_hat=p_hat[1])
 
         # 5. post processing
         w, b = p_hat
-        ## calculate energy
-        # distance = F.kl_div(input=torch.log_softmax(torch.abs(w), dim=-1),
-        #                     target=self.field.to(w.device),
-        #                     reduction='none').float()
-        # distance = distance.sum(-1)
-        # freq = (torch.relu(w).sum(-1) / torch.abs(w).sum(-1))
-        # num_nan = torch.isnan(freq).float().mean()
-        # if num_nan > 0.1:
-        #     logging.warning("Energy sequence impose the nan {}".format(num_nan))
-        # freq[torch.isnan(freq)] = 0.5
-        # time = torch.abs(freq - 0.5) + 1
-
         w = w.view(bsz, tnum, tsz, fdim, fdim)
         b = b.view(bsz, tnum, tsz, fdim)
 
-        # kernel_w = torch.matmul(w, w.transpose(-2, -1))
-        # sim_type = 'cos'
-        # if sim_type == 'cos':
-        #     norm_w = w.pow(2).sum(-1, keepdim=True).sqrt()
-        #     norm_w = torch.matmul(norm_w, norm_w.transpose(-2, -1))
-        #     kernel_w = (kernel_w / norm_w).view(bsz, tnum, tsz, fdim, fdim)
-        # else:
-        #     kernel_w[..., range(fdim), range(fdim)] = self.min_value
-        #     kernel_w = torch.softmax(kernel_w, dim=-1)
-
-        # energy_t = (time * distance).view(bsz, tnum, tsz, fdim, 1)
-        # kernel_w[..., range(fdim), range(fdim)] = 0.0
-        # energy_t = torch.matmul(kernel_w, energy_t) + energy_t
-        # energy_t = energy_t.view(bsz, tnum, tsz, fdim)
-        # # energy_t = self.energy_quantization(torch.log(energy_t), self.energy_level)
-
         # 6. make target with energy
-        kernel_target = torch.zeros_like(seq_mask_kernel).to(seq_mask_kernel.device).float()
-        kernel_target[..., range(tsz), range(tsz)] = 1.0
+        # kernel_kq = torch.softmax(score / 0.01, dim=-1).masked_fill(seq_mask_kernel.unsqueeze(1), 0.0)
+        energy_t = kernel_kq.diagonal(dim1=-2, dim2=-1, offset=1)
+        energy_t = torch.cat([torch.ones_like(energy_t)[:, :, 0:1], 1 - energy_t], dim=-1)
+        kernel_target = self.fb(energy_t)
+        # energy_t = kernel_kq.diagonal(dim1=-2, dim2=-1, offset=-1)
+        # kernel_target += self.fb(torch.cat([torch.ones_like(energy_t)[:, :, 0:1], energy_t], dim=-1))
 
         # 7. calculate similarity loss
         loss_k = self.criterion_kernel(torch.tril(kernel_kk.view(-1, tsz, tsz)),
@@ -289,8 +266,8 @@ class NetTransform(nn.Module):
                                        xs_pad_out.contiguous().view(-1, self.idim),
                                        [seq_mask.view(-1, 1)],
                                        reduction='none')
-            xs_pad_out_hat_hat = torch.matmul(torch.abs(w), torch.abs(xs_pad_out - b).unsqueeze(-2).transpose(-2, -1)).squeeze(-1)
-            xs_pad_out_hat_hat = torch.softmax(xs_pad_out_hat_hat, dim=-1)
+            xs_pad_out_hat_hat = torch.matmul(torch.abs(w),
+                                              torch.abs(xs_pad_out - b).unsqueeze(-2).transpose(-2, -1)).squeeze(-1)
         loss_g = self.criterion(xs_pad_out_hat.view(-1, self.idim),
                                 xs_pad_out.contiguous().view(-1, self.idim),
                                 [seq_mask.view(-1, 1)],
@@ -311,11 +288,11 @@ class NetTransform(nn.Module):
 
             self.reporter_buffs['p_hat'] = w[:, 0, 100:101, :, :]
 
-            # self.reporter_buffs['energy_t'] = energy_t
+            self.reporter_buffs['energy_t'] = energy_t[:, 0, :200]
 
             self.reporter_buffs['kernel_kq'] = kernel_kq[:, :, :200, :200]
             self.reporter_buffs['kernel_kk'] = torch.sigmoid(kernel_kk)
-            self.reporter_buffs['kernel_kk_target'] = kernel_target
+            self.reporter_buffs['kernel_kk_target'] = kernel_target[:, :, :200, :200]
 
         return loss
 
@@ -344,34 +321,3 @@ class NetTransform(nn.Module):
         x, _ = self.engine(x, self.engine.encoder_k)
 
         return x
-
-    """
-    Improvement
-    """
-
-    def clustering(self, xs, golden_ratio=3.14):
-        """
-        xs: (B, tnum, Tmax)
-
-        return: (B, 1, Tmax)
-        """
-        with torch.no_grad():
-            ms = []
-            for x in xs:
-                if self.tnum == 1:
-                    num_neg = int(x[0].sum(-1) * golden_ratio)
-                    if num_neg < 1:
-                        num_neg = 1
-                        logging.warning("num_neg has wrong value < 1")
-                    elif num_neg > x.size(-1):
-                        num_neg = x.size(-1)
-                        logging.warning("num_neg has wrong value > {}".format(num_neg))
-                    indices = torch.topk(x, k=num_neg, dim=-1)[-1]
-                else:
-                    raise AttributeError('Number of the target > 1 is not support yet!')
-                m = torch.zeros_like(x[0])
-                m[indices] = 1.0
-                ms.append(m.unsqueeze(0).bool())
-            ms = torch.stack(ms, dim=0)
-
-        return ms
