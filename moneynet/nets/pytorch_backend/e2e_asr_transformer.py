@@ -21,6 +21,9 @@ from espnet.nets.pytorch_backend.e2e_asr import Reporter
 from espnet.nets.pytorch_backend.nets_utils import get_subsample
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 from espnet.nets.pytorch_backend.nets_utils import th_accuracy
+from espnet.nets.pytorch_backend.nets_utils import to_device
+from espnet.nets.pytorch_backend.nets_utils import to_torch_tensor
+from espnet.nets.pytorch_backend.nets_utils import pad_list
 from espnet.nets.pytorch_backend.rnn.decoders import CTC_SCORING_RATIO
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
@@ -367,6 +370,49 @@ class E2E(ASRInterface, torch.nn.Module):
         hyps = hyps.view(-1, self.odim)
 
         logging.info("input lengths: " + str(hyps.size(0)))
+
+        return hyps
+
+    def recognize_batch(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
+        """Recognize input speech.
+
+        :param ndnarray x: input acoustic feature (B, T, D) or (T, D)
+        :param Namespace recog_args: argment Namespace contraining options
+        :param list char_list: list of characters
+        :param torch.nn.Module rnnlm: language model module
+        :return: N-best decoding results
+        :rtype: list
+        """
+
+        self.eval()
+        ilens = numpy.fromiter((xx.shape[0] for xx in x), dtype=numpy.int64)
+
+        # subsample frame
+        x = [xx[:: self.subsample[0], :] for xx in x]
+        x = [to_device(self, to_torch_tensor(xx).float()) for xx in x]
+        x = pad_list(x, 0.0)
+
+        enc_output, _ = self.encoder(x, None)
+        batchsize = x.size(0)
+
+        if self.outer:
+            post_pad = self.poster(enc_output)
+            post_pad = post_pad.view(post_pad.size(0), -1, self.odim)
+            if post_pad.size(1) != x.size(1):
+                if post_pad.size(1) < x.size(1):
+                    x = x[:, :post_pad.size(1)]
+                else:
+                    raise ValueError(
+                        "target size {} and pred size {} is mismatch".format(x.size(1), post_pad.size(1)))
+            if self.residual:
+                post_pad = post_pad + self.matcher_res(x)
+            else:
+                post_pad = torch.cat([post_pad, x], dim=-1)
+            hyps = self.matcher(post_pad)
+        else:
+            pred_pad = self.poster(enc_output)
+            hyps = pred_pad.view(pred_pad.size(0), -1, self.odim)
+        hyps = hyps.view(batchsize, -1, self.odim)
 
         return hyps
 

@@ -34,6 +34,8 @@ from moneynet.asr.asr_utils import snapshot_object
 from moneynet.asr.asr_utils import torch_load
 from moneynet.asr.asr_utils import torch_resume
 from moneynet.asr.asr_utils import torch_snapshot
+from moneynet.utils.io_utils import LoadInputsAndTargets
+
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 import espnet.lm.pytorch_backend.extlm as extlm_pytorch
@@ -49,7 +51,6 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
-from espnet.utils.io_utils import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler
@@ -431,6 +432,11 @@ def train(args):
         )
     assert isinstance(model, ASRInterface)
 
+    logging.info(
+        " Total parameter of the model = "
+        + str(sum(p.numel() for p in model.parameters()))
+    )
+
     if args.rnnlm is not None:
         rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
         rnnlm = lm_pytorch.ClassifierWithState(
@@ -491,7 +497,7 @@ def train(args):
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
         optimizer = get_std_opt(
-            model, args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model.parameters(), args.adim, args.transformer_warmup_steps, args.transformer_lr
         )
     elif args.opt == "rmsprop":
         optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
@@ -878,6 +884,10 @@ def recog(args):
 
     if args.streaming_mode and "transformer" in train_args.model_module:
         raise NotImplementedError("streaming mode for transformer is not implemented")
+    logging.info(
+        " Total parameter of the model = "
+        + str(sum(p.numel() for p in model.parameters()))
+    )
 
     # read rnnlm
     rnnlm = None
