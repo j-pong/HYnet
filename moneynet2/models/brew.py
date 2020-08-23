@@ -1,11 +1,6 @@
 import torch
 from torch import nn
 
-from moneynet.nets.pytorch_backend.unsup.utils import pad_for_shift, select_with_ind, one_hot
-
-from fairseq.models.wav2vec import Wav2VecModel, Wav2VecPredictionsModel
-
-
 class AbcModel(nn.Module):
     def __init__(self, idim, odim, args):
         super().__init__()

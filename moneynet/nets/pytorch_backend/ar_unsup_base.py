@@ -248,9 +248,10 @@ class NetTransform(nn.Module):
         # 6. make target with energy
         # kernel_kq = torch.softmax(score / 0.01, dim=-1).masked_fill(seq_mask_kernel.unsqueeze(1), 0.0)
         energy_t = kernel_kq.diagonal(dim1=-2, dim2=-1, offset=1)
-        energy_t = torch.cat([torch.ones_like(energy_t)[:, :, 0:1], 1 - energy_t], dim=-1)
+        energy_t = torch.cat([torch.ones_like(energy_t)[:, :, 0:1], energy_t], dim=-1)
         kernel_target = self.fb(energy_t)
-        # energy_t = kernel_kq.diagonal(dim1=-2, dim2=-1, offset=-1)
+        energy_t = torch.topk(kernel_kq, dim=-1, k=1)[-1].squeeze(-1).float() - torch.arange(0, tsz).view(
+            [1, 1, tsz]).to(kernel_kq.device)
         # kernel_target += self.fb(torch.cat([torch.ones_like(energy_t)[:, :, 0:1], energy_t], dim=-1))
 
         # 7. calculate similarity loss
