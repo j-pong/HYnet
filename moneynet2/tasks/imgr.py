@@ -104,30 +104,12 @@ class ImgrTask(AbsTask):
         return CommonCollateFn(float_pad_value=0.0, int_pad_value=-1)
 
     @classmethod
-    def build_preprocess_fn(
-            cls, args: argparse.Namespace, train: bool
-    ) -> Optional[Callable[[str, Dict[str, np.array]], Dict[str, np.ndarray]]]:
-        assert check_argument_types()
-        if args.use_preprocessor:
-            retval = CommonPreprocessor(
-                train=train,
-                token_type=args.token_type,
-                token_list=args.token_list,
-                bpemodel=args.bpemodel,
-                non_linguistic_symbols=args.non_linguistic_symbols,
-            )
-        else:
-            retval = None
-        assert check_return_type(retval)
-        return retval
-
-    @classmethod
     def required_data_names(cls, inference: bool = False) -> Tuple[str, ...]:
         if not inference:
-            retval = ("speech", "text")
+            retval = ("img", "label")
         else:
             # Recognition mode
-            retval = ("speech",)
+            retval = ("img",)
         return retval
 
     @classmethod
