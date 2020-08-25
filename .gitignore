@@ -9,7 +9,7 @@ barofm.egg-info/
 doc/_build
 slurm-*.out
 tmp*
-.eggs/
+.eggs*/
 .hypothesis/
 .idea
 .pytest_cache/
