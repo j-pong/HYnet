@@ -35,7 +35,7 @@ endif
 
 .PHONY: all
 
-all: kaldi showenv python
+all: kaldi showenv sph2pipe.done python
 
 python: activate_python.sh pytorch.done fairseq.done espnet.done hynet.done
 
@@ -66,6 +66,10 @@ endif
 	@echo NO_CUPY=$(NO_CUPY)
 
 #########################################
+
+sph2pipe.done:
+	./installer_espnet/install_sph2pipe.sh
+	touch sph2pipe.done
 
 pytorch.done: activate_python.sh
 	# . ./activate_python.sh && conda install -y $(CONDA_PYTORCH) -c pytorch
