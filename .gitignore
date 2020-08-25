@@ -47,9 +47,9 @@ tools/miniconda.sh
 tools/venv/
 tools/swig/
 tools/*.done
-tools/cocoapi
-tools/vision
 
-# project related
-data/pikachuSFX/
-exp/
+tools/espnet/
+tools/fairseq/
+tools/kaldi/
+tools/installer_espnet/
+tools/activate_python.sh

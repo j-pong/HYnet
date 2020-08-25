@@ -1,75 +1,95 @@
-PYTHON_VERSION := 3.7.3
-CUDA_VERSION := 10.2
-
-# Pytorch version for fairseq
-TH_VERSION := 1.5.0
-
-# Use a prebuild Kaldi to omit the installation
-KALDI := kaldi
+# PyTorch version: 0.4.1, 1.0.0, 1.0.1, 1.1.0, 1.2.0, 1.3.0, 1.3.1, 1.4.0, 1.5.0, 1.5.1, 1.6.0
+TH_VERSION := 1.6.0
 WGET := wget --tries=3
 
-# Both Miniconda2/3 can install any Python versions
-CONDA_URL := https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
-# PyTorch>=1.0.0 requires gcc>=4.9 when buliding the extensions
-GCC_VERSION := $(shell gcc -dumpversion)
-
-CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cudatoolkit=$(CUDA_VERSION)
-
-.PHONY: all clean
-
-all: kaldi.done python
-
-python: venv espnet.done fairseq.done moneynet.done
-
-ifneq ($(strip $(KALDI)),)
-kaldi.done:
-	test -d $(KALDI)
-	ln -s $(abspath $(KALDI)) kaldi
-	touch kaldi.done
+# Use pip for pytorch installation even if you have anaconda
+ifneq ($(shell test -f ./activate_python.sh && grep 'conda activate' ./activate_python.sh),)
+IS_CONDA := 0
+USE_PIP :=
 else
-kaldi.done:
-	test -d kaldi || git clone https://github.com/kaldi-asr/kaldi kaldi && \
-    cd kaldi/tools && \
-    extras/install_mkl.sh -s && \
-    extras/check_dependencies.sh && \
-    make -j 4 && \
-    extras/install_irstlm.sh && \
-    cd ../src/ && \
-    ./configure && \
-    make depend -j 4 && \
-    make -j 4
-	touch kaldi.done
+IS_CONDA :=
+USE_PIP := 0
 endif
 
-miniconda.sh:
-	test -f miniconda.sh || $(WGET) $(CONDA_URL) -O miniconda.sh
 
-venv: miniconda.sh
-	test -d ./venv || bash miniconda.sh -b -p ./venv
-	. venv/bin/activate && conda install -y setuptools -c anaconda
-	. venv/bin/activate && conda install -y pip -c anaconda
-	. venv/bin/activate && conda update -y conda
-	. venv/bin/activate && conda install -y python=$(PYTHON_VERSION)
-	. venv/bin/activate && conda info -a
+# Set if install binaries on CPU mode e.g. make CPU_ONLY=1
+# If you don't have any GPUs, this value will be set automatically
+ifeq ($(shell which nvcc),) # 'nvcc' not found
+CPU_ONLY := 0
+else
+CPU_ONLY :=
+endif
 
-espnet.done: venv
-	rm -rf espnet
-	git clone https://github.com/espnet/espnet
-	cd espnet/tools && ln -s ../../${KALDI} . && chmod +x setup_cuda_env.sh && ./setup_cuda_env.sh /usr/local/cuda && ./setup_anaconda.sh venv
-	cd espnet/tools && make TH_VERSION=1.6.0 warp-ctc.done espnet.done pytorch.done chainer.done
-	# import the python package to current venv
-	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
-	# import moneynet to espnet venv
-	cd espnet/tools && . venv/bin/activate && pip install -e ../../..
-	touch espnet.done
+ifeq ($(strip $(CPU_ONLY)),)
+# Derive CUDA version from nvcc
+CUDA_VERSION = $(shell nvcc --version | grep "Cuda compilation tools" | cut -d" " -f5 | sed s/,//)
+CUDA_VERSION_WITHOUT_DOT = $(strip $(subst .,,$(CUDA_VERSION)))
+CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cudatoolkit=$(CUDA_VERSION)
+PIP_PYTORCH := torch==$(TH_VERSION) -f https://download.pytorch.org/whl/cu$(CUDA_VERSION_WITHOUT_DOT)/torch_stable.html
 
-fairseq.done: espnet.done
+else
+CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cpuonly
+PIP_PYTORCH := torch==$(TH_VERSION) -f https://download.pytorch.org/whl/cpu/torch_stable.html
+NO_CUPY := 0
+endif
+
+.PHONY: all
+
+all: kaldi showenv python
+
+python: activate_python.sh pytorch.done fairseq.done espnet.done hynet.done
+
+kaldi:
+	test -f kaldi/egs/wsj/s5/utils/parse_options.sh || { echo -e "Error: Put Kaldi here!\n    $$ ln -s <kaldi-root> kaldi"; exit 1; }
+
+activate_python.sh:
+	test -f activate_python.sh || { echo "Error: Run ./setup_python.sh or ./setup_anaconda.sh"; exit 1; }
+
+################ Logging ################
+showenv: activate_python.sh
+ifeq ($(strip $(CPU_ONLY)),)
+	[ -n "${CUDA_HOME}" ] || { echo -e "Error: CUDA_HOME is not set.\n    $$ . ./setup_cuda_env.sh <cuda-root>"; exit 1; }
+	@echo CUDA_VERSION=$(CUDA_VERSION)
+	. ./activate_python.sh && python3 check_pytorch_cuda_compatibility.py $(TH_VERSION) ${CUDA_VERSION} || { echo "Change TH_VERSION or CUDA_VERSION"; exit 1; }
+else
+	@echo Perform on CPU mode: CPU_ONLY=$(CPU_ONLY)
+endif
+	@echo PYTHON=$(shell . ./activate_python.sh && command -v python3)
+	@echo PYTHON_VERSION=$(shell . ./activate_python.sh && python3 --version)
+	@echo IS_CONDA=$(IS_CONDA)
+	@echo USE_PIP=$(USE_PIP)
+	@echo TH_VERSION=$(TH_VERSION)
+	@echo CONDA_PYTORCH=$(CONDA_PYTORCH)
+	@echo PIP_PYTORCH=$(PIP_PYTORCH)
+	@echo CHAINER_VERSION=$(CHAINER_VERSION)
+	@echo PIP_CHAINER=$(PIP_CHAINER)
+	@echo NO_CUPY=$(NO_CUPY)
+
+#########################################
+
+pytorch.done: activate_python.sh
+	# . ./activate_python.sh && conda install -y $(CONDA_PYTORCH) -c pytorch
+	. ./activate_python.sh && pip install torch torchvision
+	touch pytorch.done
+
+fairseq.done: activate_python.sh
 	rm -rf fairseq
 	git clone https://github.com/pytorch/fairseq
-	cd fairseq && . ../venv/bin/activate && pip uninstall -y typing && pip install -e .
+	. ./activate_python.sh && cd fairseq && pip install -e .
 	touch fairseq.done
 
-moneynet.done: espnet.done
-	. venv/bin/activate && pip install -e ..
-	. espnet/tools/venv/bin/activate && pip install -e ..
-	touch moneynet.done
+espnet.done: pytorch.done
+	rm -rf espnet
+	git clone https://github.com/espnet/espnet
+
+	rm -rf installer_espnet
+	mkdir installer_espnet
+	cp espnet/tools/installers/* installer_espnet
+
+	. ./activate_python.sh && ./installer_espnet/install_warp-ctc.sh
+	. ./activate_python.sh && cd espnet && python3 -m pip install -e .
+	touch espnet.done
+
+hynet.done: espnet.done
+	. ./activate_python.sh && python3 -m pip install -e .. 
+	touch hynet.done

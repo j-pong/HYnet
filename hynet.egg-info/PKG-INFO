@@ -1,0 +1,18 @@
+Metadata-Version: 1.1
+Name: hynet
+Version: 0.1.0
+Summary: hynet
+Home-page: UNKNOWN
+Author: jpong
+Author-email: ljh93ljh@gmail.com
+License: Apache Software License
+Description: UNKNOWN
+Platform: UNKNOWN
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Topic :: Software Development :: Libraries :: Python Modules

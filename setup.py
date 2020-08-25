@@ -5,19 +5,18 @@ from setuptools import setup
 
 requirements = {
     "install": [
-        "kaldi_io",
-        "soundfile"
+        "kaldi_io"
     ],
 }
 install_requires = requirements["install"]
 dirname = os.path.dirname(__file__)
-setup(name='moneynet',
-      version='0.0.3',
+setup(name='hynet',
+      version='0.1.0',
       author='jpong',
       author_email='ljh93ljh@gmail.com',
-      description='moneynet',
+      description='hynet',
       license='Apache Software License',
-      packages=find_packages(include=['moneynet*']),
+      packages=find_packages(include=['hynet*']),
       install_requires=install_requires,
       classifiers=[
           'Programming Language :: Python',
