@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from moneynet2.tasks.imgr import ImgrTask
+from hynet.tasks.imgr import ImgrTask
 
 
 def get_parser():

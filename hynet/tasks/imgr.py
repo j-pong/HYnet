@@ -26,7 +26,7 @@ from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str_or_none
 
-from moneynet2.imgr.imgr_model import HynetImgrModel
+from hynet.imgr.imgr_model import HynetImgrModel
 
 normalize_choices = ClassChoices(
     "normalize",
