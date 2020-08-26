@@ -1,1 +1,1 @@
-../../../../../utils/get_yaml.py
+../../../../../tools/espnet/utils/get_yaml.py
