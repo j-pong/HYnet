@@ -15,12 +15,13 @@ from typeguard import check_return_type
 from espnet2.layers.abs_normalize import AbsNormalize
 from espnet2.layers.global_mvn import GlobalMVN
 from espnet2.layers.utterance_mvn import UtteranceMVN
-from espnet2.tasks.abs_task import AbsTask
+from espnet2.tasks.abs_task import AbsTask, IteratorOptions
 from espnet2.torch_utils.initialize import initialize
 from espnet2.train.class_choices import ClassChoices
 from espnet2.train.collate_fn import CommonCollateFn
 from espnet2.train.preprocessor import CommonPreprocessor
 from espnet2.train.trainer import Trainer
+from espnet2.train.distributed_utils import DistributedOption
 from espnet2.utils.get_default_kwargs import get_default_kwargs
 from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import int_or_none
@@ -52,6 +53,8 @@ class ImgrTask(AbsTask):
 
     @classmethod
     def add_task_arguments(cls, parser: argparse.ArgumentParser):
+        parser.set_defaults(iterator_type="task")
+
         group = parser.add_argument_group(description="Task related")
 
         # NOTE(kamo): add_arguments(..., required=True) can't be used
@@ -119,35 +122,88 @@ class ImgrTask(AbsTask):
         return retval
 
     @classmethod
+    def build_task_iter_factory(
+        cls,
+        args: argparse.Namespace,
+        iter_options: IteratorOptions,
+        mode: str,
+    ):
+        pass
+
+    @classmethod
+    def build_iter_options(
+        cls,
+        args: argparse.Namespace,
+        distributed_option: DistributedOption,
+        mode: str
+    ):
+        if mode == "train":
+            preprocess_fn = cls.build_preprocess_fn(args, train=True)
+            collate_fn = cls.build_collate_fn(args, train=True)
+            data_path_and_name_and_type = args.train_data_path_and_name_and_type
+            shape_files = args.train_shape_file
+            batch_size = args.batch_size
+            batch_bins = args.batch_bins
+            batch_type = args.batch_type
+            max_cache_size = args.max_cache_size
+            distributed = distributed_option.distributed
+            num_batches = None
+            num_iters_per_epoch = args.num_iters_per_epoch
+            train = True
+
+        elif mode == "valid":
+            preprocess_fn = cls.build_preprocess_fn(args, train=False)
+            collate_fn = cls.build_collate_fn(args, train=False)
+            data_path_and_name_and_type = args.valid_data_path_and_name_and_type
+            shape_files = args.valid_shape_file
+
+            if args.valid_batch_type is None:
+                batch_type = args.batch_type
+            else:
+                batch_type = args.valid_batch_type
+            if args.valid_batch_size is None:
+                batch_size = args.batch_size
+            else:
+                batch_size = args.valid_batch_size
+            if args.valid_batch_bins is None:
+                batch_bins = args.batch_bins
+            else:
+                batch_bins = args.valid_batch_bins
+            if args.valid_max_cache_size is None:
+                # Cache 5% of maximum size for validation loader
+                max_cache_size = 0.05 * args.max_cache_size
+            else:
+                max_cache_size = args.valid_max_cache_size
+            distributed = distributed_option.distributed
+            num_batches = None
+            num_iters_per_epoch = None
+            train = False
+
+        return IteratorOptions(
+            preprocess_fn=preprocess_fn,
+            collate_fn=collate_fn,
+            data_path_and_name_and_type=data_path_and_name_and_type,
+            shape_files=shape_files,
+            batch_type=batch_type,
+            batch_size=batch_size,
+            batch_bins=batch_bins,
+            num_batches=num_batches,
+            max_cache_size=max_cache_size,
+            distributed=distributed,
+            num_iters_per_epoch=num_iters_per_epoch,
+            train=train,
+        )
+
+    @classmethod
     def build_model(cls, args: argparse.Namespace) -> HynetImgrModel:
         assert check_argument_types()
-        if isinstance(args.token_list, str):
-            with open(args.token_list, encoding="utf-8") as f:
-                token_list = [line.rstrip() for line in f]
 
-            # Overwriting token_list to keep it as "portable".
-            args.token_list = list(token_list)
-        elif isinstance(args.token_list, (tuple, list)):
-            token_list = list(args.token_list)
-        else:
-            raise RuntimeError("token_list must be str or list")
-        vocab_size = len(token_list)
-        logging.info(f"Vocabulary size: {vocab_size}")
-
-        # 1. Normalization layer
-        if args.normalize is not None:
-            normalize_class = normalize_choices.get_class(args.normalize)
-            normalize = normalize_class(**args.normalize_conf)
-        else:
-            normalize = None
-
-        # 2. Build model
+        # 1. Build model
         model = HynetImgrModel(
-            normalize=normalize,
             **args.model_conf,
         )
 
-        # 3. Initialize
+        # 2. Initialize
         if args.init is not None:
             initialize(model, args.init)
 

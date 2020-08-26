@@ -35,6 +35,12 @@ python=python3       # Specify python to execute espnet commands
 # Data preparation related
 local_data_opts= # The options given to local/data.sh.
 
+# Ingr model related
+imgr_tag=
+imgr_exp=
+imgr_config=
+imgr_args= 
+
 # Feature extraction related
 feats_type=img         # Feature type (raw or fbank_pitch).
 
@@ -48,41 +54,37 @@ log "$0 $*"
 run_args=$(pyscripts/utils/print_args.py $0 "$@")
 . utils/parse_options.sh
 
-if [ $# -ne 0 ]; then
-    log "${help_message}"
-    log "Error: No positional arguments are required."
-    exit 2
-fi
+# if [ $# -ne 0 ]; then
+#     log "Error: No positional arguments are required."
+#     exit 2
+# fi
 
 . ./path.sh
 . ./cmd.sh
 
-# Check required arguments
-[ -z "${train_set}" ] && { log "${help_message}"; log "Error: --train_set is required"; exit 2; };
-[ -z "${valid_set}" ] && { log "${help_message}"; log "Error: --valid_set is required"; exit 2; };
-[ -z "${test_sets}" ] && { log "${help_message}"; log "Error: --test_sets is required"; exit 2; };
+# # Check required arguments
+# [ -z "${train_set}" ]; log "Error: --train_set is required"; exit 2;
+# [ -z "${valid_set}" ]; log "Error: --valid_set is required"; exit 2;
+# [ -z "${test_sets}" ]; log "Error: --test_sets is required"; exit 2;
 
 # Set tag for naming of model directory
 if [ -z "${imgr_tag}" ]; then
-    if [ -n "${asr_config}" ]; then
-        imgr_tag="$(basename "${asr_config}" .yaml)_${feats_type}_${token_type}"
+    if [ -n "${imgr_config}" ]; then
+        imgr_tag="$(basename "${imgr_config}" .yaml)_${feats_type}"
     else
-        imgr_tag="train_${feats_type}_${token_type}"
+        imgr_tag="train_${feats_type}"
     fi
     # Add overwritten arg's info
-    if [ -n "${asr_args}" ]; then
-        imgr_tag+="$(echo "${asr_args}" | sed -e "s/--/\_/g" -e "s/[ |=]//g")"
+    if [ -n "${imgr_args}" ]; then
+        imgr_tag+="$(echo "${imgr_args}" | sed -e "s/--/\_/g" -e "s/[ |=]//g")"
     fi
 fi
 
 # The directory used for collect-stats mode
 imgr_stats_dir="${expdir}/asr_stats_${feats_type}"
-if [ -n "${speed_perturb_factors}" ]; then
-    imgr_stats_dir="${asr_stats_dir}_sp"
-fi
 # The directory used for training commands
-if [ -z "${asr_exp}" ]; then
-    imgr_exp="${expdir}/asr_${asr_tag}"
+if [ -z "${imgr_exp}" ]; then
+    imgr_exp="${expdir}/imgr_${imgr_tag}"
 fi
 
 
@@ -90,72 +92,40 @@ if ! "${skip_train}"; then
     if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         log "Stage 1: IMGR collect stats"
 
-        # shellcheck disable=SC2086
-        ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
-            ${python} -m espnet2.bin.asr_train \
-                --collect_stats true \
-                --use_preprocessor true \
-                --bpemodel "${bpemodel}" \
-                --token_type "${token_type}" \
-                --token_list "${token_list}" \
-                --non_linguistic_symbols "${nlsyms_txt}" \
-                --cleaner "${cleaner}" \
-                --g2p "${g2p}" \
-                --train_data_path_and_name_and_type "${_asr_train_dir}/${_scp},speech,${_type}" \
-                --train_data_path_and_name_and_type "${_asr_train_dir}/text,text,text" \
-                --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
-                --valid_data_path_and_name_and_type "${_asr_valid_dir}/text,text,text" \
-                --train_shape_file "${_logdir}/train.JOB.scp" \
-                --valid_shape_file "${_logdir}/valid.JOB.scp" \
-                --output_dir "${_logdir}/stats.JOB" \
-                ${_opts} ${asr_args}
-
-        # 4. Aggregate shape files
         _opts=
-        for i in $(seq "${_nj}"); do
+        if [ -n "${imgr_config}" ]; then
+            # To generate the config file: e.g.
+            #   % python3 -m espnet2.bin.asr_train --print_config --optim adam
+            _opts+="--config ${imgr_config} "
+        fi
+
+        _logdir="${imgr_stats_dir}/logdir"
+        mkdir -p "${_logdir}"
+
+        ${train_cmd} JOB=1:"${nj}" "${_logdir}"/stats.JOB.log \
+            ${python} -m hynet.bin.imgr_train \
+                --collect_stats true \
+                --output_dir "${_logdir}/stats.JOB" \
+                ${_opts} ${imgr_args}
+
+        _opts=
+        for i in $(seq "${nj}"); do
             _opts+="--input_dir ${_logdir}/stats.${i} "
         done
-        # shellcheck disable=SC2086
-        ${python} -m espnet2.bin.aggregate_stats_dirs ${_opts} --output_dir "${asr_stats_dir}"
-
-        # Append the num-tokens at the last dimensions. This is used for batch-bins count
-        <"${asr_stats_dir}/train/text_shape" \
-            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
-            >"${asr_stats_dir}/train/text_shape.${token_type}"
-
-        <"${asr_stats_dir}/valid/text_shape" \
-            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
-            >"${asr_stats_dir}/valid/text_shape.${token_type}"
+        ${python} -m espnet2.bin.aggregate_stats_dirs ${_opts} --output_dir "${imgr_stats_dir}"
     fi
 
 
     if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
-        _asr_train_dir="${data_feats}/${train_set}"
-        _asr_valid_dir="${data_feats}/${valid_set}"
-        log "Stage 2: ASR Training: train_set=${_asr_train_dir}, valid_set=${_asr_valid_dir}"
+        log "Stage 2: IMGR Training"
 
         _opts=
-        if [ -n "${asr_config}" ]; then
+        if [ -n "${imgr_config}" ]; then
             # To generate the config file: e.g.
             #   % python3 -m espnet2.bin.asr_train --print_config --optim adam
-            _opts+="--config ${asr_config} "
+            _opts+="--config ${imgr_config} "
         fi
 
-        _feats_type="$(<${_asr_train_dir}/feats_type)"
-        if [ "${_feats_type}" = raw ]; then
-            _scp=wav.scp
-            # "sound" supports "wav", "flac", etc.
-            _type=sound
-            _fold_length="$((asr_speech_fold_length * 100))"
-            _opts+="--frontend_conf fs=${fs} "
-        else
-            _scp=feats.scp
-            _type=kaldi_ark
-            _fold_length="${asr_speech_fold_length}"
-            _input_size="$(<${_asr_train_dir}/feats_dim)"
-            _opts+="--input_size=${_input_size} "
-
-        fi
         if [ "${feats_normalize}" = global_mvn ]; then
             # Default normalization is utterance_mvn and changes to global_mvn
             _opts+="--normalize=global_mvn --normalize_conf stats_file=${asr_stats_dir}/train/feats_stats.npz "
@@ -231,7 +201,7 @@ if ! "${skip_train}"; then
                 --fold_length "${_fold_length}" \
                 --fold_length "${asr_text_fold_length}" \
                 --output_dir "${asr_exp}" \
-                ${_opts} ${asr_args}
+                ${_opts} ${imgr_args}
 
     fi
 else
