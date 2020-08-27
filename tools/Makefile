@@ -35,7 +35,7 @@ endif
 
 .PHONY: all
 
-all: kaldi showenv sph2pipe.done python
+all: kaldi showenv python sph2pipe.done
 
 python: activate_python.sh pytorch.done fairseq.done espnet.done hynet.done
 
@@ -67,10 +67,6 @@ endif
 
 #########################################
 
-sph2pipe.done:
-	./installer_espnet/install_sph2pipe.sh
-	touch sph2pipe.done
-
 pytorch.done: activate_python.sh
 	# . ./activate_python.sh && conda install -y $(CONDA_PYTORCH) -c pytorch
 	. ./activate_python.sh && pip install torch torchvision
@@ -93,6 +89,10 @@ espnet.done: pytorch.done
 	. ./activate_python.sh && ./installer_espnet/install_warp-ctc.sh
 	. ./activate_python.sh && cd espnet && python3 -m pip install -e .
 	touch espnet.done
+
+sph2pipe.done: pytorch.done
+	./installer_espnet/install_sph2pipe.sh
+	touch sph2pipe.done
 
 hynet.done: espnet.done
 	. ./activate_python.sh && python3 -m pip install -e .. 
