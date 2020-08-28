@@ -12,8 +12,7 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.imgr.brew_layer import BrewLayer
-from hynet.imgr.masked_loss import MultiMaskLoss
-
+# from hynet.imgr.masked_loss import MultiMaskLoss
 
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
@@ -27,22 +26,35 @@ class HynetImgrModel(AbsESPnetModel):
             hidden_size=512,
             target_size=10)
 
-        self.creiterion = MultiMaskLoss(
-            criterion=nn.CrossEntropyLoss(reduction='none'))
+        # self.criterion = MultiMaskLoss(
+        #     criterion=nn.CrossEntropyLoss(reduction='none'))
+        self.criterion = nn.CrossEntropyLoss()
+
+    @torch.no_grad()
+    def _calc_acc(self,
+        y_hat: torch.Tensor, 
+        y: torch.Tensor
+    ):
+        pred = y_hat.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+        correct = pred.eq(y.view_as(pred)).float().mean().item()
+        return correct
 
     def forward(
         self,
-        img: torch.Tensor,
+        image: torch.Tensor,
         label: torch.Tensor
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
-        batch_size = img.shape[0]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch_size = image.shape[0]
+        image = image.float().view(batch_size, -1)
 
-        label_hat = self.brew_layer(img)
+        label_hat = self.brew_layer(image)
 
-        loss = self.critertion(label, label_hat)
+        loss = self.criterion(label_hat, label)
+        acc = self._calc_acc(label_hat, label)
 
         stats = dict(
-            loss=loss.detach()
+            loss=loss.detach(),
+            acc=acc
         )
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device)
@@ -50,6 +62,6 @@ class HynetImgrModel(AbsESPnetModel):
 
     def collect_feats(
         self,
-        img: torch.Tensor
+        image: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
-        return {"feats": img}
+        return {"feats": image}
