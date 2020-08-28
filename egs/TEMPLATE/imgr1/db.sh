@@ -1,1 +1,1 @@
-MNIST=downloads
+MNIST=/DB/
