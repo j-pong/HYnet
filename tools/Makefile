@@ -35,7 +35,7 @@ endif
 
 .PHONY: all
 
-all: kaldi showenv python sph2pipe.done
+all: kaldi showenv python sph2pipe.done sctk.done
 
 python: activate_python.sh pytorch.done fairseq.done espnet.done hynet.done
 
