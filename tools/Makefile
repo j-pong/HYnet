@@ -94,6 +94,10 @@ sph2pipe.done: pytorch.done
 	./installer_espnet/install_sph2pipe.sh
 	touch sph2pipe.done
 
+sctk.done:
+	./installer_espnet/install_sctk.sh
+	touch sctk.done
+
 hynet.done: espnet.done
 	. ./activate_python.sh && python3 -m pip install -e .. 
 	touch hynet.done
