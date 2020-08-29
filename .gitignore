@@ -10,7 +10,7 @@ doc/_build
 slurm-*.out
 tmp*
 .eggs/
-*.eggs-info/
+*.egg-info/
 .hypothesis/
 .idea
 .pytest_cache/
@@ -55,3 +55,4 @@ tools/kaldi/
 tools/installer_espnet/
 tools/activate_python.sh
 tools/sph2pipe*
+tools/sctk*

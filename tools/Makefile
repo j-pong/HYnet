@@ -35,7 +35,9 @@ endif
 
 .PHONY: all
 
-all: kaldi showenv python sph2pipe.done sctk.done
+all: kaldi showenv python extra
+
+extra: extra.done sph2pipe.done sctk.done
 
 python: activate_python.sh pytorch.done fairseq.done espnet.done hynet.done
 
@@ -72,6 +74,18 @@ pytorch.done: activate_python.sh
 	. ./activate_python.sh && pip install torch torchvision
 	touch pytorch.done
 
+extra.done:
+	cp espnet/tools/extra_path.sh ./
+	touch extra.done
+
+sph2pipe.done: extra.done
+	./installer_espnet/install_sph2pipe.sh
+	touch sph2pipe.done
+
+sctk.done: extra.done
+	./installer_espnet/install_sctk.sh
+	touch sctk.done
+
 fairseq.done: activate_python.sh
 	rm -rf fairseq
 	git clone https://github.com/pytorch/fairseq
@@ -89,14 +103,6 @@ espnet.done: pytorch.done
 	. ./activate_python.sh && ./installer_espnet/install_warp-ctc.sh
 	. ./activate_python.sh && cd espnet && python3 -m pip install -e .
 	touch espnet.done
-
-sph2pipe.done: pytorch.done
-	./installer_espnet/install_sph2pipe.sh
-	touch sph2pipe.done
-
-sctk.done:
-	./installer_espnet/install_sctk.sh
-	touch sctk.done
 
 hynet.done: espnet.done
 	. ./activate_python.sh && python3 -m pip install -e .. 
