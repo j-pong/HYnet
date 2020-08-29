@@ -16,23 +16,17 @@ from torch.utils.data import DataLoader
 from typeguard import check_argument_types
 from typeguard import check_return_type
 
-from espnet2.layers.abs_normalize import AbsNormalize
-from espnet2.tasks.abs_task import AbsTask, IteratorOptions
+from espnet2.tasks.abs_task import AbsTask, IteratorOptions, AbsIterFactory
 from espnet2.torch_utils.initialize import initialize
-from espnet2.train.class_choices import ClassChoices
-from espnet2.train.collate_fn import CommonCollateFn
 from espnet2.train.trainer import Trainer
-from espnet2.train.distributed_utils import DistributedOption
 from espnet2.utils.get_default_kwargs import get_default_kwargs
 from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str_or_none
 
-from hynet.imgr.imgr_model import HynetImgrModel
-from hynet.iterators.img_iter_factory import ImgrIterFactory
 from hynet.train.dataset import MNISTDataset
-
-from espnet2.iterators.abs_iter_factory import AbsIterFactory
+from hynet.iterators.img_iter_factory import ImgrIterFactory
+from hynet.imgr.imgr_model import HynetImgrModel
 
 
 class ImgrTask(AbsTask):

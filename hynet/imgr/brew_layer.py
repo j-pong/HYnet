@@ -29,14 +29,9 @@ class BrewLayer(nn.Module):
         
         for module in self.fnn:
             if isinstance(module, nn.Linear):
-                if split_dim is None:
-                    w = module.weight
-                elif split_dim > 0:
-                    w = module.weight[:split_dim * ratio[i].size(-1)]
-                elif split_dim < 0:
-                    w = module.weight[-split_dim * ratio[i].size(-1):]
-                else:
-                    raise AttributeError
+                w = module.weight
+                b = module.bias
+                assert b is None
 
                 if w_hat is None:
                     w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
@@ -48,26 +43,6 @@ class BrewLayer(nn.Module):
                     w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(
                         1) * w_hat  # (?, 1, C*) * (?, d, C*)
 
-                if module.bias is not None:
-                    if split_dim is None:
-                        b = module.bias
-                    elif split_dim > 0:
-                        b = module.bias[:split_dim * ratio[i].size(-1)]
-                    elif split_dim < 0:
-                        b = module.bias[-split_dim * ratio[i].size(-1):]
-                    else:
-                        raise AttributeError
-
-                    if bias_hat is None:
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * b.unsqueeze(
-                            0)  # (?, C1) * (1, C1)
-                    else:
-                        bias_hat = torch.matmul(
-                            bias_hat, w.transpose(-2, -1))
-                        bias_hat = ratio[i].view(-1, ratio[i].size(-1)) * (
-                            bias_hat + b)  # (?, C*) * (?, C*)
-                else:
-                    bias_hat = None
                 i += 1
             elif isinstance(module, nn.ReLU):
                 pass
@@ -98,4 +73,4 @@ class BrewLayer(nn.Module):
             if len(self.fnn) - 1 == idx:
                 ratio.append(self.calculate_ratio(x, x_base))
 
-        return x
+        return x, ratio

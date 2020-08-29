@@ -1,6 +1,6 @@
 optim: sgd
 init: xavier_uniform
-max_epoch: 25
+max_epoch: 250
 batch_size: 300
 optim_conf:
     lr: 0.001
