@@ -10,7 +10,7 @@ doc/_build
 slurm-*.out
 tmp*
 .eggs/
-*.egg-info/
+hynet.egg-info/*
 .hypothesis/
 .idea
 .pytest_cache/

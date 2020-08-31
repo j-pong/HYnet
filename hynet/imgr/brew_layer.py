@@ -23,25 +23,33 @@ class BrewLayer(nn.Module):
 
         return rat
 
-    @torch.no_grad()
-    def brew(self, ratio, split_dim=None, w_hat=None, bias_hat=None):
+    def brew(self, ratio, split_dim=None, w_hat=None, b_hat=None):
         i = 0
         
         for module in self.fnn:
             if isinstance(module, nn.Linear):
-                w = module.weight
+                w = (module.weight).transpose(-2,- 1)
                 b = module.bias
-                assert b is None
+
+                rat = ratio[i].view(-1, ratio[i].size(-1))  # (?, C)
 
                 if w_hat is None:
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(1) * \
-                        w.transpose(-2, -1).unsqueeze(0)
+                    w_hat = rat.unsqueeze(1) * w.unsqueeze(0)
                     # (?, 1, C1) * (1, d, C1)  -> (?, d, C1)
                 else:
+                    w_hat = torch.matmul(w_hat, w)
                     # (?, d, C) x (C, C*)  -> (?, d, C*)
-                    w_hat = torch.matmul(w_hat, w.transpose(-2, -1))
-                    w_hat = ratio[i].view(-1, ratio[i].size(-1)).unsqueeze(
-                        1) * w_hat  # (?, 1, C*) * (?, d, C*)
+                    w_hat = rat.unsqueeze(1) * w_hat  # (?, 1, C*) * (?, d, C*)
+
+                if b is not None:
+                    if b_hat is None:
+                        b_hat = rat * b.unsqueeze(0)
+                        # (?, C1) * (1, C1) -> (?, C1)
+                    else:
+                        b_hat = torch.matmul(b_hat, w)
+                        # (?, C) x (C, C*) -> (?, C*)
+                        b_hat = rat * (b.unsqueeze(0) + b_hat)
+                        # (?, C) + (?, C) -> (?, C*)
 
                 i += 1
             elif isinstance(module, nn.ReLU):
@@ -52,7 +60,7 @@ class BrewLayer(nn.Module):
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))
 
-        return w_hat, bias_hat
+        return w_hat, b_hat
 
     def forward(self, x):
         ratio = []

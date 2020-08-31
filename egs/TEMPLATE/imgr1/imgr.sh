@@ -31,6 +31,7 @@ num_nodes=1          # The number of nodes
 nj=32                # The number of parallel jobs.
 expdir=exp           # Directory to save experiments.
 python=python3       # Specify python to execute espnet commands
+resume=false
 
 # Data preparation related
 local_data_opts= # The options given to local/data.sh.
@@ -111,7 +112,7 @@ if ! "${skip_train}"; then
             --init_file_prefix "${imgr_exp}"/.dist_init_ \
             --multiprocessing_distributed true -- \
             ${python} -m hynet.bin.imgr_train \
-                --resume false \
+                --resume ${resume} \
                 --output_dir "${imgr_exp}" \
                 ${_opts} ${imgr_args}
 

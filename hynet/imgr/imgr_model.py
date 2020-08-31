@@ -20,19 +20,24 @@ class HynetImgrModel(AbsESPnetModel):
         assert check_argument_types()
         super().__init__()
 
+        self.bias=True
         self.brew_layer = BrewLayer(
             sample_size=28*28,
             hidden_size=512,
             target_size=10,
-            bias=False)
-
-        self.brew_layer2 = BrewLayer(
-            sample_size=28*28,
-            hidden_size=512,
-            target_size=10,
-            bias=False)
-
+            bias=self.bias)
         self.criterion = nn.CrossEntropyLoss()
+        self.criterion_mse = nn.MSELoss()
+
+    def minimaxn(
+        self, 
+        x: torch.Tensor
+    ):
+        max_x = torch.max(x, dim=-1, keepdim=True)[0].detach()
+        min_x = torch.min(x, dim=-1, keepdim=True)[0].detach()
+        x = (x - min_x) / (max_x - min_x)
+
+        return x
 
     def forward(
         self,
@@ -41,64 +46,57 @@ class HynetImgrModel(AbsESPnetModel):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size = image.shape[0]
         image = image.view(batch_size, -1).float()
-        image = self.minimaxn(image).detach()
 
-        # 1. feedforward neural network 
-        label_hat, ratio = self.brew_layer(image)
+        imgs = []
+        attns = []
+        losses = []
+        accs = []
+        max_iter = 2
+        for i in range(max_iter):
+            image = self.minimaxn(image).detach()
 
-        # 2. brewing and check loss of p_hat results and normal result
-        p_hat = self.brew_layer.brew(ratio=ratio)
-        label_hat_hat = torch.matmul(image.unsqueeze(-2), p_hat[0])
-        label_hat_hat = label_hat_hat.squeeze(-2)
-        loss_brew = torch.pow(label_hat - label_hat_hat, 2).mean()  
+            # 1. feedforward neural network 
+            label_hat, ratio = self.brew_layer(image)
 
-        # 3. caculate measurment 
-        loss = self.criterion(label_hat, label)
-        acc = self._calc_acc(label_hat, label)
+            # 2. brewing and check loss of p_hat results and normal result
+            p_hat = self.brew_layer.brew(ratio=ratio)
+            if i == 0:
+                label_hat_hat = torch.matmul(image.unsqueeze(-2), p_hat[0])
+                label_hat_hat = label_hat_hat.squeeze(-2)
+                if self.bias:
+                    label_hat_hat += p_hat[1]
+                loss_brew = torch.pow(label_hat - label_hat_hat, 2).mean()  
 
-        # 4. inverse atte ntion with feature
-        attn = torch.matmul(torch.softmax(label_hat, dim=-1).unsqueeze(-2), p_hat[0].abs().transpose(-2, -1))
-        attn = attn.squeeze(-2)
-        context = attn * image
-        context = self.minimaxn(context).detach()
+            # 3. caculate measurment 
+            loss = self.criterion(label_hat, label)
+            acc = self._calc_acc(label_hat, label)
+            losses.append(loss)
+            accs.append(acc)
 
-        # 5. re-feedforward neural network 
-        label_hat, ratio = self.brew_layer2(context)
-        p_hat = self.brew_layer2.brew(ratio=ratio)
+            # 4. inverse atte ntion with feature
+            attn = torch.matmul(torch.softmax(label_hat, dim=-1).unsqueeze(-2), 
+                                p_hat[0].abs().transpose(-2, -1))
+            attn = attn.squeeze(-2)
+            image_ = attn * image
+            # loss_recon = self.criterion_mse(image_, image)
+            # losses.append(loss_recon)
+            image = image_
+            
+            imgs.append(image[0].view(28, 28))
+            attns.append(attn[0].view(28, 28))
 
-        # 6. caculate measurment 
-        loss2 = self.criterion(label_hat, label)
-        acc2 = self._calc_acc(label_hat, label)
+        self.matplotlib_imshow([imgs, attns], fname='imgs.png')
 
-        # 7. inverse atte ntion with feature
-        attn2 = torch.matmul(torch.softmax(label_hat, dim=-1).unsqueeze(-2), p_hat[0].abs().transpose(-2, -1))
-        attn2 = attn2.squeeze(-2)
-
-        import matplotlib.pyplot as plt
-        plt.clf()
-        plt.subplot(221)
-        plt.imshow(attn[0].view(28,28).detach().cpu().numpy(), aspect='auto')
-        plt.colorbar()
-        plt.subplot(222)
-        plt.imshow(image[0].view(28,28).detach().cpu().numpy(), aspect='auto')
-        plt.colorbar()
-        plt.subplot(223)
-        plt.imshow(context[0].view(28,28).detach().cpu().numpy(), aspect='auto')
-        plt.colorbar()
-        plt.subplot(224)
-        plt.imshow(attn2[0].view(28,28).detach().cpu().numpy(), aspect='auto')
-        plt.colorbar()
-        plt.savefig("test.png")
-
+        loss = 0.0
+        for los in losses:
+            loss += los
         stats = dict(
             loss=loss.detach(),
-            acc=acc,
-            loss2=loss2.detach(),
-            acc2=acc2,
-            loss_brew=loss_brew.detach(),
+            acc_start=accs[0],
+            acc_end=accs[1],
+            loss_brew=loss_brew.detach()
         )
 
-        loss += loss2
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device)
         return loss, stats, weight
@@ -118,13 +116,21 @@ class HynetImgrModel(AbsESPnetModel):
     ) -> Dict[str, torch.Tensor]:
         return {"feats": image}
     
-    def minimaxn(self, x):
-        max_x = torch.max(x, dim=-1, keepdim=True)[0].detach()
-        min_x = torch.min(x, dim=-1, keepdim=True)[0].detach()
-        # if (max_x - min_x) == 0.0:
-        #     logging.warning('Divided by the zero with max-min value : {}, Thus return None'.format((max_x - min_x)))
-        #     x = None
-        # else:
-        x = (x - min_x) / (max_x - min_x)
-
-        return x
+    def matplotlib_imshow(
+        self, 
+        img_list: list,
+        fname: str
+    ):
+        import matplotlib.pyplot as plt
+        plt.clf()
+        len_max = len(img_list[0])
+        for i, img in enumerate(img_list[0]):
+            plt.subplot(2, len_max, i+1)
+            plt.imshow(img.detach().cpu().numpy())
+            plt.colorbar()
+        len_max = len(img_list[1])
+        for j, img in enumerate(img_list[1]):
+            plt.subplot(2, len_max, i+j+2)
+            plt.imshow(img.detach().cpu().numpy())
+            plt.colorbar()
+        plt.savefig(fname)

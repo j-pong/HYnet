@@ -25,6 +25,7 @@ from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str_or_none
 
 from hynet.train.dataset import MNISTDataset
+from hynet.train.trainer import ImgrTrainer
 from hynet.iterators.img_iter_factory import ImgrIterFactory
 from hynet.imgr.imgr_model import HynetImgrModel
 
