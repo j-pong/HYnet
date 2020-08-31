@@ -35,7 +35,7 @@ class ImgrTask(AbsTask):
     num_optimizers: int = 1
 
     # If you need to modify train() or eval() procedures, change Trainer class here
-    trainer = Trainer
+    trainer = ImgrTrainer
 
     @classmethod
     def add_task_arguments(cls, parser: argparse.ArgumentParser):

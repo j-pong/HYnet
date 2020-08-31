@@ -20,7 +20,8 @@ class HynetImgrModel(AbsESPnetModel):
         assert check_argument_types()
         super().__init__()
 
-        self.bias=True
+        self.bias = True
+        self.max_iter = 2
         self.brew_layer = BrewLayer(
             sample_size=28*28,
             hidden_size=512,
@@ -49,10 +50,10 @@ class HynetImgrModel(AbsESPnetModel):
 
         imgs = []
         attns = []
-        losses = []
         accs = []
-        max_iter = 2
-        for i in range(max_iter):
+
+        losses = []
+        for i in range(self.max_iter):
             image = self.minimaxn(image).detach()
 
             # 1. feedforward neural network 
@@ -67,14 +68,14 @@ class HynetImgrModel(AbsESPnetModel):
                     label_hat_hat += p_hat[1]
                 loss_brew = torch.pow(label_hat - label_hat_hat, 2).mean()  
 
-            # 3. caculate measurment 
-            loss = self.criterion(label_hat, label)
-            acc = self._calc_acc(label_hat, label)
-            losses.append(loss)
+                # 3. caculate measurment 
+                loss = self.criterion(label_hat, label)
+                losses.append(loss)
+            acc = self._calc_acc(label_hat, label)        
             accs.append(acc)
 
             # 4. inverse atte ntion with feature
-            attn = torch.matmul(torch.softmax(label_hat, dim=-1).unsqueeze(-2), 
+            attn = torch.matmul(torch.softmax(label_hat - p_hat[1], dim=-1).unsqueeze(-2), 
                                 p_hat[0].abs().transpose(-2, -1))
             attn = attn.squeeze(-2)
             image_ = attn * image
@@ -85,17 +86,18 @@ class HynetImgrModel(AbsESPnetModel):
             imgs.append(image[0].view(28, 28))
             attns.append(attn[0].view(28, 28))
 
-        self.matplotlib_imshow([imgs, attns], fname='imgs.png')
-
         loss = 0.0
         for los in losses:
             loss += los
+
         stats = dict(
-            loss=loss.detach(),
-            acc_start=accs[0],
-            acc_end=accs[1],
-            loss_brew=loss_brew.detach()
-        )
+                loss=loss.detach(),
+                acc_start=accs[0],
+                acc_end=accs[1],
+                loss_brew=loss_brew.detach()
+            )
+        if not self.training:
+            stats['aux'] = [imgs, attns]
 
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device)
@@ -115,22 +117,3 @@ class HynetImgrModel(AbsESPnetModel):
         image: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         return {"feats": image}
-    
-    def matplotlib_imshow(
-        self, 
-        img_list: list,
-        fname: str
-    ):
-        import matplotlib.pyplot as plt
-        plt.clf()
-        len_max = len(img_list[0])
-        for i, img in enumerate(img_list[0]):
-            plt.subplot(2, len_max, i+1)
-            plt.imshow(img.detach().cpu().numpy())
-            plt.colorbar()
-        len_max = len(img_list[1])
-        for j, img in enumerate(img_list[1]):
-            plt.subplot(2, len_max, i+j+2)
-            plt.imshow(img.detach().cpu().numpy())
-            plt.colorbar()
-        plt.savefig(fname)
