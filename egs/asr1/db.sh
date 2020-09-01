@@ -61,8 +61,8 @@ if [[ "$(hostname -d)" == clsp.jhu.edu ]]; then
 else
     AISHELL=downloads
     AN4=downloads
-    WSJ0=/DB/csr_1
-    WSJ1=/DB/csr_2_comp
+    WSJ0=
+    WSJ1=
     WSJCAM0=
     REVERB=
     CHIME3=
@@ -80,7 +80,7 @@ else
     CSMSC=downloads
     HKUST1=
     HKUST2=
-    LIBRISPEECH=/DB/LibriSpeech
+    LIBRISPEECH=
     LJSPEECH=downloads
     JSUT=downloads
     TIMIT=

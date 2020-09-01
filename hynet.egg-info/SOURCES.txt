@@ -9,6 +9,6 @@ hynet.egg-info/top_level.txt
 hynet/bin/__init__.py
 hynet/bin/imgr_train.py
 hynet/imgr/__init__.py
+hynet/imgr/brew_layer.py
 hynet/imgr/imgr_model.py
-hynet/models/__init__.py
-hynet/models/brew.py
+hynet/imgr/masked_loss.py
