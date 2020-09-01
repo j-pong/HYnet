@@ -32,6 +32,13 @@ class ImgrIterFactory(AbsIterFactory):
         self.pin_memory = pin_memory
 
     def build_iter(self, epoch: int, shuffle: bool = None) -> DataLoader:
+        if shuffle is None:
+            shuffle = self.shuffle
+
+        if self.collate_fn is not None:
+            kwargs = dict(collate_fn=self.collate_fn)
+        else:
+            kwargs = {}
 
         return DataLoader(
             dataset=self.dataset,
