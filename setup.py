@@ -7,6 +7,8 @@ requirements = {
     "install": [
         "kaldi_io"
         "matplotlib"
+        "opencv-python==3.4.*"
+        "opencv-contrib-python==3.4.*"
     ],
 }
 install_requires = requirements["install"]

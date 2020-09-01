@@ -66,6 +66,7 @@ class ImgrTrainer(Trainer):
 
         import matplotlib.pyplot as plt
 
+        ind_plot = 0
         for ids, batch in iterator:
             _, stats, _ = model(**batch)
             img_list = stats['aux']
@@ -73,14 +74,19 @@ class ImgrTrainer(Trainer):
             plt.clf()
             len_max = len(img_list[0])
             for i, img in enumerate(img_list[0]):
-                plt.subplot(2, len_max, i+1)
+                plt.subplot(3, len_max, i+1)
                 plt.imshow(img.detach().cpu().numpy())
                 plt.colorbar()
-            len_max = len(img_list[1])
             for j, img in enumerate(img_list[1]):
-                plt.subplot(2, len_max, i+j+2)
+                plt.subplot(3, len_max, i+j+2)
                 plt.imshow(img.detach().cpu().numpy())
                 plt.colorbar()
-            plt.savefig('imgs.png')
+            for k, img in enumerate(img_list[2]):
+                plt.subplot(3, len_max, i+j+k+3)
+                plt.imshow(img.detach().cpu().numpy())
+                plt.colorbar()
+            ind_plot += 1
+            plt.savefig('imgs{}.png'.format(ind_plot))
 
-            break
+            if ind_plot == 3:
+                break

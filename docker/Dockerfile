@@ -48,7 +48,8 @@ RUN apt-get install -y --no-install-recommends \
         cmake \
         make \
         flac \
-        bc
+        bc \
+        libgl1-mesa-glx
 
 RUN apt-get upgrade -y
 

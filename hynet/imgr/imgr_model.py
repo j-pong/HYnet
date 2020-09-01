@@ -21,7 +21,7 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
 
         self.bias = True
-        self.max_iter = 2
+        self.max_iter = 5
         self.brew_layer = BrewLayer(
             sample_size=28*28,
             hidden_size=512,
@@ -49,7 +49,7 @@ class HynetImgrModel(AbsESPnetModel):
         image = image.view(batch_size, -1).float()
 
         imgs = []
-        attns = []
+        attns = [[],[]]
         accs = []
 
         losses = []
@@ -75,16 +75,19 @@ class HynetImgrModel(AbsESPnetModel):
             accs.append(acc)
 
             # 4. inverse atte ntion with feature
-            attn = torch.matmul(torch.softmax(label_hat - p_hat[1], dim=-1).unsqueeze(-2), 
-                                p_hat[0].abs().transpose(-2, -1))
-            attn = attn.squeeze(-2)
-            image_ = attn * image
-            # loss_recon = self.criterion_mse(image_, image)
-            # losses.append(loss_recon)
-            image = image_
-            
+            label_hat = label_hat - p_hat[1]
+            label_hat = torch.softmax(label_hat, dim=-1)
+            w_pos = torch.relu(p_hat[0])
+            attn_pos = torch.matmul(label_hat.unsqueeze(-2), w_pos.transpose(-2, -1))
+            attn_pos = attn_pos.squeeze(-2)
+            w_neg = torch.relu(-1.0 * p_hat[0])
+            attn_neg = torch.matmul(label_hat.unsqueeze(-2), w_neg.transpose(-2, -1))
+            attn_neg = attn_neg.squeeze(-2)
+            attns[0].append(attn_pos[0].view(28, 28))
+            attns[1].append(attn_neg[0].view(28, 28))
+
+            image = attn_pos * image
             imgs.append(image[0].view(28, 28))
-            attns.append(attn[0].view(28, 28))
 
         loss = 0.0
         for los in losses:
@@ -93,11 +96,11 @@ class HynetImgrModel(AbsESPnetModel):
         stats = dict(
                 loss=loss.detach(),
                 acc_start=accs[0],
-                acc_end=accs[1],
+                acc_end=accs[-1],
                 loss_brew=loss_brew.detach()
             )
         if not self.training:
-            stats['aux'] = [imgs, attns]
+            stats['aux'] = [imgs, attns[0], attns[1]]
 
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device)
