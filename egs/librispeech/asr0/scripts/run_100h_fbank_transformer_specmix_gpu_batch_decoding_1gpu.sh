@@ -18,7 +18,7 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-train_config=conf/tuning/train_pytorch_transformer_mixup.yaml
+train_config=conf/tuning/train_pytorch_transformer_specmix.yaml
 augment_config=conf/specmix.yaml
 decode_config=conf/decode.yaml
 
