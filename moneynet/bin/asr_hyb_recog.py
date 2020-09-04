@@ -95,6 +95,12 @@ def get_parser():
         required=True,
         help="Filename of result matrix (ark)",
     )
+    parser.add_argument(
+        "--multi-target",
+        type=strtobool,
+        default=False,
+        help="use multi target learning",
+    )
     # model (parameter) related
     parser.add_argument(
         "--model", type=str, required=True, help="Model file parameters to read"
@@ -271,7 +277,10 @@ def main(args):
 
                     recog_v2(args)
                 else:
-                    from moneynet.asr.pytorch_backend.asr import recog
+                    if args.multi_target:
+                        from moneynet.asr.pytorch_backend.asr_multi_target import recog
+                    else:
+                        from moneynet.asr.pytorch_backend.asr import recog
 
                     if args.dtype != "float32":
                         raise NotImplementedError(

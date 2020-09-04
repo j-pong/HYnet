@@ -118,6 +118,12 @@ def get_parser(parser=None, required=True):
         help="Filename of train label data (json)",
     )
     parser.add_argument(
+        "--train-mono-json",
+        type=str,
+        default=None,
+        help="Filename of train label data (json)",
+    )
+    parser.add_argument(
         "--valid-json",
         type=str,
         default=None,
@@ -604,7 +610,10 @@ def main(cmd_args):
         args.char_list = None
 
     # train
-    from moneynet.asr.pytorch_backend.asr import train
+    if args.train_mono_json is None:
+        from moneynet.asr.pytorch_backend.asr import train
+    else:
+        from moneynet.asr.pytorch_backend.asr_multi_target import train
 
     train(args)
 
