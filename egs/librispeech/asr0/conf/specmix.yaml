@@ -1,0 +1,13 @@
+# use data augmentation
+augment: true
+data-augmentation: specmix
+
+# mixup related
+mixup-alpha: 0.5
+mixup-scheme: global
+
+# specaugment related
+Fmask: 15
+F-n-mask: 2
+Tmask: 30
+T-n-mask: 2
