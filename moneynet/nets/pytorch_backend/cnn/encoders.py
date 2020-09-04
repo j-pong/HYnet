@@ -322,9 +322,6 @@ class Encoder(torch.nn.Module):
         self, etype, idim, elayers, eunits, eprojs, subsample, dropout, lnorm, bnorm, in_channel=1
     ):
         super(Encoder, self).__init__()
-        typ = etype.lstrip("vgg").rstrip("p")
-        if typ not in ["lstm", "gru", "blstm", "bgru"]:
-            logging.error("Error: need to specify an appropriate encoder architecture")
 
         self.enc = torch.nn.ModuleList(
             [CNN(idim, elayers, eunits, eprojs, dropout, lnorm, bnorm, typ=typ)]
