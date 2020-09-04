@@ -11,10 +11,16 @@ from moneynet.transform.functional import FuncTrans
 
 def check_mix(x, replace_with):
     assert isinstance(x, numpy.ndarray)
-    if replace_with in ["mix", "insertion", "random"]:
+    if replace_with in ["mix", "rmix", "insertion"]:
         assert x.ndim == 3
         x_mix = x[1]
         x = x[0]
+    elif replace_with == "random":
+        if x.ndim == 3:
+            x_mix = x[1]
+            x = x[0]
+        else:
+            x_mix = None
     else:
         assert x.ndim == 2
         x_mix = None
@@ -101,10 +107,6 @@ def freq_mask(x, F=30, n_mask=2, replace_with="mean", inplace=False):
         if f_zero == f_zero + f:
             continue
 
-        if replace_with == "random":
-            replace_with_choices = [0,"mean","mix","insertion"]
-            replace_with = replace_with_choices[random.randint(0,3)]
-
         if isinstance(replace_with, int) or isinstance(replace_with, float):
             cloned[:, f_zero:mask_end] = replace_with
         elif replace_with == "mean":
@@ -113,6 +115,8 @@ def freq_mask(x, F=30, n_mask=2, replace_with="mean", inplace=False):
             if replace_with == "mix":
                 lamb = numpy.random.uniform(0.5, 1)
                 cloned[:, f_zero:mask_end] = lamb * cloned[:, f_zero:mask_end] + (1 - lamb) * x_mix[:, f_zero:mask_end]
+            elif replace_with == "rmix":
+                cloned[:, f_zero:mask_end] = cloned[:, f_zero:mask_end] + 0.4 * numpy.flip(x_mix[:, f_zero:mask_end], 0)
             elif replace_with == "insertion":
                 cloned[:, f_zero:mask_end] = x_mix[:, f_zero:mask_end]
     return cloned
@@ -155,10 +159,6 @@ def time_mask(spec, T=40, n_mask=2, replace_with="mean", inplace=False):
             continue
 
         mask_end += t_zero
-        if replace_with == "random":
-            replace_with_choices = [0,"mean","mix","insertion"]
-            replace_with = replace_with_choices[random.randint(0,3)]
-
         if isinstance(replace_with, int) or isinstance(replace_with, float):
             cloned[t_zero:mask_end] = replace_with
         elif replace_with == "mean":
@@ -167,6 +167,8 @@ def time_mask(spec, T=40, n_mask=2, replace_with="mean", inplace=False):
             if replace_with == "mix":
                 lamb = numpy.random.uniform(0.5, 1)
                 cloned[t_zero:mask_end] = lamb * cloned[t_zero:mask_end] + (1 - lamb) * x_mix[t_zero:mask_end]
+            elif replace_with == "rmix":
+                cloned[t_zero:mask_end] = cloned[t_zero:mask_end] + 0.4 * numpy.flip(x_mix[t_zero:mask_end], 0)
             elif replace_with == "insertion":
                 cloned[t_zero:mask_end] = x_mix[t_zero:mask_end]
 

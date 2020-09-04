@@ -141,9 +141,17 @@ class Transformation(object):
                 _kwargs = {k: v for k, v in kwargs.items() if k in param}
                 try:
                     if "replace_with" in self.opts[idx]:
+                        import numpy
+                        # choose options if random
+                        if self.opts[idx]["replace_with"] == "random":
+                            rep_opt_choices = [0, "mean", "mix", "rmix", "insertion"]
+                            rep_opt = rep_opt_choices[numpy.random.randint(0, 3)]
+                            for ri in range(len(self.opts)):
+                                self.opts[ri]["replace_with"] = rep_opt
+
+                        # apply masking option
                         rep_opt = self.opts[idx]["replace_with"]
-                        if rep_opt in ["mix", "insertion", "random"]:
-                            import numpy
+                        if rep_opt in ["mix", "rmix", "insertion"]:
                             for i, x in enumerate(xs):
                                 if not _kwargs['train']:
                                     break
