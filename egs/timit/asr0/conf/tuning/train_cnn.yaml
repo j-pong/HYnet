@@ -2,26 +2,27 @@
 # encoder related
 etype: multistreamtdnn
 elayers: 5
-eunits: 1000
-eprojs: 1000
+eunits: 512
+eprojs: 512
 subsample: "1_2_2_1_1" # deprecated
 
 # hybrid CTC/attention
 mtlalpha: 0.0
 
 # minibatch related
-batch-size: 80
+batch-size: 120
 maxlen-in: 800 
 maxlen-out: 150 
 
 # other config
-dropout-rate: 0.3
+dropout-rate: 0.2
 lnorm: False
 bnorm: True
 
 # optimization related
-sortagrad: -1 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
-opt: rmsprop # adadelta # noam(not work AttributeError: 'Namespace' object has no attribute 'adim')
+sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
+opt: adadelta # noam(not work AttributeError: 'Namespace' object has no attribute 'adim')
+eps: 1e-8
 
 epochs: 30
 patience: 3
@@ -34,4 +35,4 @@ backend: pytorch
 model-module: "moneynet.nets.pytorch_backend.e2e_asr_cnn:E2E"
 
 # initialization method
-initializer: lecun 
+initializer: xavier
