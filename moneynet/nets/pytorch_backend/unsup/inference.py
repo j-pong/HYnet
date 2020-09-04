@@ -156,11 +156,6 @@ class HirInference(Inference):
             nn.ReLU(),
             nn.Linear(self.hdim, odim, bias=self.bias)
         ])
-        self.decoder_cnn = nn.ModuleList([
-            nn.Linear(self.hdim, self.hdim, bias=self.bias),
-            nn.PReLU(),
-            nn.Linear(self.hdim, odim, bias=self.bias)
-        ])
 
 
 class FairInference(Inference):
