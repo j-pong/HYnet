@@ -1,0 +1,13 @@
+process:
+  # these three processes are a.k.a. SpecAugument
+  # replace type should be equal for all types (0, mean, mix, insertion, ...)
+  - type: "freq_mask"
+    F: 15
+    n_mask: 2
+    inplace: true
+    replace_with: "mean"
+  - type: "time_mask"
+    T: 30
+    n_mask: 2
+    inplace: true
+    replace_with: "mean"
