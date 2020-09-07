@@ -124,8 +124,7 @@ class BrewCnnLayer(nn.Module):
                 # (out_ch, in_ch, *kernel_size)
                 # b = module.bias
 
-                rat = ratio[i]  # (B, 1, out_ch, w, h)
-                rat = rat.reshape(rat.size(0), 1, rat.size(1), rat.size(2), rat.size(3))  # (B, 1, out_ch, w, h)
+                rat = ratio[i].unsqueeze(1)  # (B, 1, out_ch, w, h)
                 if i == 0:
                     batch_size = rat.size(0)
 
@@ -134,7 +133,7 @@ class BrewCnnLayer(nn.Module):
                     w_hat = w * rat  # (B, in_ch * *kernel_size, out_ch, w, h)
                     w_hat = w_hat.reshape(w_hat.size(0) * w_hat.size(1), w_hat.size(2), w_hat.size(3), w_hat.size(4))
                 else:
-                    w_hat_unf = F.unfold(w_hat, kernel_size=module.kernel_size)  
+                    w_hat_unf = F.unfold(w_hat, kernel_size=module.kernel_size)
                     # (B * prev_in_ch * *prev_kernel_size, *kernel_size * in_ch, w_new * h_new)
                     w = w.reshape(w.size(0), -1)
                     w_hat = torch.matmul(w_hat_unf.transpose(-2, -1), w.t())  
