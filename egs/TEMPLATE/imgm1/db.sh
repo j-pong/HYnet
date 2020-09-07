@@ -1,0 +1,2 @@
+MNIST=/DB/
+BARO=/DB/

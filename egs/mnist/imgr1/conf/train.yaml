@@ -1,7 +1,7 @@
 optim: sgd
 init: xavier_uniform
 max_epoch: 2000
-batch_size: 300
+batch_size: 200
 optim_conf:
     lr: 0.001
     weight_decay: 0
@@ -14,8 +14,3 @@ best_model_criterion:
     - acc
     - max
 keep_nbest_models: 1
-scheduler: reducelronplateau
-scheduler_conf:
-    mode: min
-    factor: 0.5
-    patience: 1

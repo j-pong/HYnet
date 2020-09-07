@@ -6,12 +6,13 @@ from typing import Union
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 from typeguard import check_argument_types
 
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
-from hynet.imgr.brew_layer import BrewLayer
+from hynet.imgr.brew_layer import BrewLayer, BrewCnnLayer
 
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
@@ -22,11 +23,17 @@ class HynetImgrModel(AbsESPnetModel):
 
         self.bias = True
         self.max_iter = 5
-        self.brew_layer = BrewLayer(
+        self.brew_layer = BrewCnnLayer(
             sample_size=28*28,
             hidden_size=512,
             target_size=10,
             bias=self.bias)
+        # self.brew_recon_layer = BrewLayer(
+        #     sample_size=28*28*2,
+        #     hidden_size=512,
+        #     target_size=28*28,
+        #     bias=self.bias)    
+
         self.criterion = nn.CrossEntropyLoss()
         self.criterion_mse = nn.MSELoss()
 
@@ -48,7 +55,7 @@ class HynetImgrModel(AbsESPnetModel):
         batch_size = image.shape[0]
         image = image.view(batch_size, -1).float()
 
-        imgs = []
+        imgs = [[],[]]
         attns = [[],[]]
         accs = []
 
@@ -61,9 +68,14 @@ class HynetImgrModel(AbsESPnetModel):
 
             # 2. brewing and check loss of p_hat results and normal result
             p_hat = self.brew_layer.brew(ratio=ratio)
+            p_type = 'conv2d'
             if i == 0:
-                label_hat_hat = torch.matmul(image.unsqueeze(-2), p_hat[0])
-                label_hat_hat = label_hat_hat.squeeze(-2)
+                if p_type is 'conv2d':
+                    image_unf = F.unfold(image.view(-1,1,28,28), kernel_size=(7,7))
+                    label_hat_hat = torch.matmul(image_unf.transpose(1, 2), p_hat[0]).sum(1)
+                else:
+                    label_hat_hat = torch.matmul(image.unsqueeze(-2), p_hat[0])
+                    label_hat_hat = label_hat_hat.squeeze(-2)
                 if self.bias:
                     label_hat_hat += p_hat[1]
                 loss_brew = torch.pow(label_hat - label_hat_hat, 2).mean()  
@@ -74,20 +86,28 @@ class HynetImgrModel(AbsESPnetModel):
             acc = self._calc_acc(label_hat, label)        
             accs.append(acc)
 
-            # 4. inverse atte ntion with feature
-            label_hat = label_hat - p_hat[1]
-            label_hat = torch.softmax(label_hat, dim=-1)
-            w_pos = torch.relu(p_hat[0])
-            attn_pos = torch.matmul(label_hat.unsqueeze(-2), w_pos.transpose(-2, -1))
-            attn_pos = attn_pos.squeeze(-2)
-            w_neg = torch.relu(-1.0 * p_hat[0])
-            attn_neg = torch.matmul(label_hat.unsqueeze(-2), w_neg.transpose(-2, -1))
-            attn_neg = attn_neg.squeeze(-2)
-            attns[0].append(attn_pos[0].view(28, 28))
-            attns[1].append(attn_neg[0].view(28, 28))
+            # # 4. inverse atte ntion with feature
+            # label_hat = label_hat - p_hat[1]
+            # label_hat = torch.softmax(label_hat, dim=-1)
+            # w_pos = torch.relu(p_hat[0])
+            # attn_pos = torch.matmul(label_hat.unsqueeze(-2), w_pos.transpose(-2, -1))
+            # attn_pos = attn_pos.squeeze(-2)
+            # w_neg = torch.relu(-1.0 * p_hat[0])
+            # attn_neg = torch.matmul(label_hat.unsqueeze(-2), w_neg.transpose(-2, -1))
+            # attn_neg = attn_neg.squeeze(-2)
+            # attns[0].append(attn_pos[0].view(28, 28))
+            # attns[1].append(attn_neg[0].view(28, 28))
 
-            image = attn_pos * image
-            imgs.append(image[0].view(28, 28))
+            # if i == 0:
+            #     attn = [attn_pos, attn_neg]
+            #     image_recon, ratio = self.brew_recon_layer(torch.cat(attn, dim=-1).detach())
+            #     image_recon = image_recon + attn_pos.detach() - attn_neg.detach()
+            #     loss_recong = self.criterion_mse(image_recon, image)
+            #     losses.append(loss_recong)
+
+            # image = attn_pos * image
+            imgs[0].append(image[0].view(28, 28))
+            # imgs[1].append(image_recon[0].view(28, 28))
 
         loss = 0.0
         for los in losses:
@@ -95,12 +115,12 @@ class HynetImgrModel(AbsESPnetModel):
 
         stats = dict(
                 loss=loss.detach(),
+                loss_brew=loss_brew.detach(),
                 acc_start=accs[0],
-                acc_end=accs[-1],
-                loss_brew=loss_brew.detach()
+                acc_end=accs[-1]
             )
         if not self.training:
-            stats['aux'] = [imgs, attns[0], attns[1]]
+            stats['aux'] = [imgs[0]] #[imgs[1], attns[0], attns[1]]
 
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device)
