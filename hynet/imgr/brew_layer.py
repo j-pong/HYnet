@@ -30,19 +30,7 @@ class BrewLayer(nn.Module):
         i = 0
         
         for module in self.fnn:
-            if isinstance(module, nn.Linear):
-                w = (module.weight).transpose(-2,- 1)
-                b = module.bias
-
-                if w_hat is not None:
-                    w_hat = torch.matmul(w_hat, w)
-                        # (?, d, C) x (C, C*)  -> (?, d, C*)
-                if b is not None:
-                    if b_hat is not None:
-                        b_hat = torch.matmul(b_hat, w)
-                            # (?, C) x (C, C*) -> (?, C*)
-                        b_hat = b.unsqueeze(0) + b_hat
-            elif isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
+            if isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
                 rat = ratio[i].view(-1, ratio[i].size(-1))  # (?, C)
 
                 if w_hat is None:
@@ -59,6 +47,19 @@ class BrewLayer(nn.Module):
                         b_hat = rat * b_hat
                         # (?, C) + (?, C) -> (?, C*)
                 i += 1
+            elif isinstance(module, nn.Linear):
+                w = (module.weight).transpose(-2,- 1)
+                b = module.bias
+
+                if w_hat is not None:
+                    w_hat = torch.matmul(w_hat, w)
+                        # (?, d, C) x (C, C*)  -> (?, d, C*)
+                if b is not None:
+                    if b_hat is not None:
+                        b_hat = torch.matmul(b_hat, w)
+                            # (?, C) x (C, C*) -> (?, C*)
+                        b_hat = b.unsqueeze(0) + b_hat
+
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))
@@ -110,16 +111,18 @@ class BrewCnnLayer(nn.Module):
             if isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
                 rat = ratio[i]
                 # (B, C*, w, h)
-                if w_hat is None:
-                    w_hat = rat.unsqueeze(1) * w.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-                    # (?, 1, C1, w, h) * (1, d, C1, 1, 1)  -> (?, d, C1, w, h)
+                rat = torch.flatten(rat, start_dim=2, end_dim=3).transpose(1, 2).unsqueeze(2)
+                # (B, w * h, 1, C1)
+                if w_hat is None:    
+                    w_hat = rat * w.unsqueeze(0).unsqueeze(0)
+                    # (B, w * h, 1, C1) * (1, 1, d, C1) -> (B, w * h, d, C1)
                 else:
-                    w_hat = rat.unsqueeze(1) * w_hat  
-                    # (?, 1, C*, w, h) * (?, d, C*, w, h) -> (?, d, C*, w, h)
-
+                    w_hat = rat * w_hat  
+                    # (B, w * h, 1, C*) * (B, w * h, d, C*) -> (B, w * h, d, C*)
                 i += 1
             elif isinstance(module, nn.Unfold):
-                pass
+                if w_hat is not None:
+                    w_hat = module(w_hat)
             elif isinstance(module, nn.Fold):
                 pass
             elif isinstance(module, nn.Linear):
@@ -129,7 +132,7 @@ class BrewCnnLayer(nn.Module):
 
                 if w_hat is not None:
                     w_hat = torch.matmul(w_hat, w)
-                    # (?, d, C, w, h) x (C, C*)  -> (?, d, C*)
+                    # (B, w * h, d, C) x (C, C*)  -> (B, w * h, d, C*)
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))
@@ -149,7 +152,6 @@ class BrewCnnLayer(nn.Module):
                 x_base = x
                 x = module(x)
                 ratio.append(self.calculate_ratio(x, x_base))
-                print(ratio[-1].size())
             elif isinstance(module, nn.Unfold):
                 x = module(x)
             elif isinstance(module, nn.Fold):
@@ -160,8 +162,5 @@ class BrewCnnLayer(nn.Module):
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))
-
-            
-        exit()
 
         return x, ratio

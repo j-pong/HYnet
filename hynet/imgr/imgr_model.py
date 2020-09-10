@@ -71,8 +71,8 @@ class HynetImgrModel(AbsESPnetModel):
             label_hat, ratio = self.brew_layer(feat)
 
             # 2. brewing and check loss of p_hat results and normal result
-            p_hat = self.brew_layer.brew(ratio=ratio)
-            # p_hat = self.brew_cnn_layer.brew(ratio=ratio_cnn, w_hat=p_hat[0], b_hat=p_hat[1])
+            p_hat = self.brew_cnn_layer.brew(ratio=ratio_cnn)
+            p_hat = self.brew_layer.brew(ratio=ratio, w_hat=p_hat[0], b_hat=p_hat[1])
             if i == 0:
                 label_hat_hat = torch.matmul(feat.unsqueeze(-2), p_hat[0])
                 label_hat_hat = label_hat_hat.squeeze(-2)
