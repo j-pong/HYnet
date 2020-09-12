@@ -12,7 +12,7 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
-from hynet.imgr.brew_layer import BrewLayer, BrewCnnLayer
+from hynet.imgr.brew_layer import BrewLayer, BrewAttLayer
 
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
@@ -21,20 +21,21 @@ class HynetImgrModel(AbsESPnetModel):
         assert check_argument_types()
         super().__init__()
 
-        self.bias = True
         self.max_iter = 1
 
-        self.brew_cnn_layer = BrewCnnLayer()
+        self.hidden_size = 256
+        self.wh = 22
+
+        self.bias = True
+
+        self.brew_cnn_layer = BrewAttLayer(
+            hidden_size=self.hidden_size)
+
         self.brew_layer = BrewLayer(
-            sample_size=18*18*10,
-            hidden_size=512,
+            sample_size=self.wh * self.wh* self.hidden_size,
+            hidden_size=self.hidden_size,
             target_size=10,
             bias=self.bias)
-        # self.brew_recon_layer = BrewLayer(
-        #     sample_size=18*18*10,
-        #     hidden_size=512,
-        #     target_size=28*28,
-        #     bias=self.bias)    
 
         self.criterion = nn.CrossEntropyLoss()
         self.criterion_mse = nn.MSELoss()
@@ -58,7 +59,7 @@ class HynetImgrModel(AbsESPnetModel):
         image = image.view(batch_size, -1).float()
 
         imgs = [[],[]]
-        attns = [[],[]]
+        attns = [[],[],[]]
         accs = []
 
         losses = []
@@ -66,23 +67,22 @@ class HynetImgrModel(AbsESPnetModel):
             image = self.minimaxn(image).detach()
 
             # 1. feedforward neural network 
-            feat, ratio_cnn = self.brew_cnn_layer(image)
-            feat = torch.flatten(feat, start_dim=1)
-            label_hat, ratio = self.brew_layer(feat)
+            feat, _ = self.brew_cnn_layer(image)
+            feat_flat = torch.flatten(feat, start_dim=1)
+            label_hat, ratio = self.brew_layer(feat_flat)
 
             # 2. brewing and check loss of p_hat results and normal result
-            p_hat = self.brew_cnn_layer.brew(ratio=ratio_cnn)
-            p_hat = self.brew_layer.brew(ratio=ratio, w_hat=p_hat[0], b_hat=p_hat[1])
+            p_hat = self.brew_layer.brew(ratio=ratio)
             if i == 0:
-                label_hat_hat = torch.matmul(feat.unsqueeze(-2), p_hat[0])
+                label_hat_hat = torch.matmul(feat_flat.unsqueeze(-2), p_hat[0])
                 label_hat_hat = label_hat_hat.squeeze(-2)
                 if self.bias:
                     label_hat_hat += p_hat[1]
                 loss_brew = torch.pow(label_hat - label_hat_hat, 2).mean() 
 
             # 3. caculate measurment 
-                loss = self.criterion(label_hat, label)
-                losses.append(loss)
+            loss = self.criterion(label_hat, label)
+            losses.append(loss)
             acc = self._calc_acc(label_hat, label)        
             accs.append(acc)
 
@@ -95,20 +95,14 @@ class HynetImgrModel(AbsESPnetModel):
             w_neg = torch.relu(-1.0 * p_hat[0])
             attn_neg = torch.matmul(label_hat.unsqueeze(-2), w_neg.transpose(-2, -1))
             attn_neg = attn_neg.squeeze(-2)
-            attns[0].append(attn_pos[0].view(18, 18, 10).mean(-1))
-            attns[1].append(attn_neg[0].view(18, 18, 10).mean(-1))
-
-            # if i == 0:
-            #     attn = [attn_pos, attn_neg]
-            #     image_recon, ratio = self.brew_recon_layer(torch.cat(attn, dim=-1).detach())
-            #     image_recon = image_recon + attn_pos.detach() - attn_neg.detach()
-            #     loss_recong = self.criterion_mse(image_recon, image)
-            #     losses.append(loss_recong)
+            attns[0].append(attn_pos[0].view(self.hidden_size, self.wh, self.wh).mean(-3))
+            attns[1].append(attn_neg[0].view(self.hidden_size, self.wh, self.wh).mean(-3))
 
             # image = attn_pos * image
             imgs[0].append(image[0].view(28, 28))
-            # imgs[1].append(image_recon[0].view(28, 28))
-            imgs[1].append(feat[0].view(18, 18, 10).mean(-1))
+            imgs[1].append(feat[0].mean(-3))
+            kernel = self.brew_cnn_layer.att.kernel
+            attns[2].append(kernel[0])
 
         loss = 0.0
         for los in losses:
@@ -121,7 +115,7 @@ class HynetImgrModel(AbsESPnetModel):
                 acc_end=accs[-1]
             )
         if not self.training:
-            stats['aux'] = [imgs[1], attns[0], attns[1]]
+            stats['aux'] = [imgs[0] + imgs[1], attns[0] + attns[1], attns[2]]#[imgs[1], attns[0], attns[1]]
 
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device)
