@@ -108,9 +108,7 @@ EXPOSE 22
 #-------------------------------------------------------------------------------
 
 COPY start.sh /
-COPY cuda_path.sh /
 RUN chmod u+x /start.sh
-RUN chmod u+x /cuda_path.sh
 
 ENV PUID=5555
 ENV PGID=5555

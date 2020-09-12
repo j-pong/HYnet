@@ -25,5 +25,3 @@ echo "[start.sh] ssh-key generated."
 
 #-------------------------------------------------------------------------------
 exec /usr/sbin/sshd -D
-
-source /cuda_path.sh
