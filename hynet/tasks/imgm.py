@@ -57,17 +57,18 @@ class ImgmTask(AbsTask):
                 break
             
             img_crop, score = tm.recognize(img, template)
+            tm.peak_detection(score)
 
-            if tm.peak_detection(score):
-                import matplotlib.pyplot as plt
-                plt.clf()
-                plt.subplot(221)
-                plt.imshow(img)
-                plt.subplot(222)
-                plt.imshow(img_crop)
-                plt.subplot(213)
-                plt.imshow(template)
-                plt.savefig("imgm.png")
+            # print(score)
+                # import matplotlib.pyplot as plt
+                # plt.clf()
+                # plt.subplot(221)
+                # plt.imshow(img)
+                # plt.subplot(222)
+                # plt.imshow(img_crop)
+                # plt.subplot(213)
+                # plt.imshow(template)
+                # plt.savefig("imgm.png")
                 
         streamer.release()
 

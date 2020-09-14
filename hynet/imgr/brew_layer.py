@@ -83,124 +83,6 @@ class BrewLayer(nn.Module):
 
         return x, ratio
 
-class BrewCnnLayer(nn.Module):
-    def __init__(
-        self):
-        super().__init__()
-
-        self.cnn = nn.ModuleList([
-            nn.Unfold(kernel_size=(7,7), stride=(1,1)),
-            nn.Linear(in_features=7*7*1, out_features=10, bias=False),
-            nn.Fold(kernel_size=(1,1), output_size=(22,22)),
-            nn.ReLU(),
-            nn.Unfold(kernel_size=(5,5), stride=(1,1)),
-            nn.Linear(in_features=5*5*10, out_features=10, bias=False),
-            nn.Fold(kernel_size=(1,1), output_size=(18,18)),
-            nn.ReLU()
-        ])
-
-    @staticmethod
-    def calculate_ratio(x, x_base): 
-        rat = x / x_base
-        rat[torch.isnan(rat) | torch.isinf(rat)] = 0.0
-
-        return rat
-
-    def brew(self, ratio, split_dim=None, w_hat=None, b_hat=None, mode='ncwh'):
-        i = 0
-        
-        for module in self.cnn:
-            if isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
-                rat = ratio[i]
-                # (B, C*, w, h)
-                if mode == 'nwhc':
-                    # rat = torch.flatten(rat, start_dim=2, end_dim=3).transpose(1, 2).unsqueeze(2)
-                    # # (B, w * h, 1, C1)
-                    # if w_hat is None:    
-                    #     w_hat = rat * w.unsqueeze(0).unsqueeze(0)
-                    #     # (B, w * h, 1, C1) * (1, 1, d, C1) -> (B, w * h, d, C1)
-                    # else:
-                    #     w_hat = rat * w_hat  
-                    #     # (B, w * h, 1, C*) * (B, w * h, d, C*) -> (B, w * h, d, C*)
-                    NotImplementedError
-                elif mode == 'ncwh':
-                    _, _, width, height = rat.size()
-                    rat = torch.flatten(rat, start_dim=2, end_dim=3).unsqueeze(1)
-                    # (B, 1, C*, w * h)
-                    if w_hat is None:    
-                        w_hat = rat * w.unsqueeze(0).unsqueeze(-1)
-                        # (B, 1, C1, w * h) * (1, d, C1, 1) -> (B, d, C1, w * h)
-                    else:
-                        w_hat = rat * w_hat  
-                        # (B, 1, C*, w * h) * (B, d, C*, w * h) -> (B, d, C*, w * h)
-                i += 1
-            elif isinstance(module, nn.Unfold):
-                if w_hat is not None:
-                    w_hat = torch.flatten(w_hat, start_dim=1, end_dim=2)
-                    # (B, d, C*, w * h) ->  (B, d * C*, w * h)
-                    dc = w_hat.size(1)
-                    w_hat = w_hat.view(w_hat.size(0), 
-                                        dc,
-                                        width,
-                                        height)
-                    w_hat = module(w_hat)
-                    # (B, d * C*, w, h) -> (B, d * C* * ksz_w * ksz_h, w* * h*) 
-
-                    # test
-                    w_hat = w_hat[:,:,0].view(-1, dc, 25)
-                    # (B, d * C*, ksz_w * ksz_h) 
-                    print(w_hat.size())
-                    w_hat = F.fold(w_hat, output_size=(11, 11), kernel_size=(7,7))
-                    # (B, d * C*, cum_ksz_w, cum_ksz_h)
-                    print(w_hat.size())
-                    
-                    # (B, d * C* * ksz_w * ksz_h, w* * h*) -> (B, d * C*, ksz_w * ksz_h, w* * h*)
-                    # (w* =0, h* =0)
-                    # (B, d * C*, ksz_w * ksz_h) -> (B, (7+5-1) * (7+5-1) * 1, C*, 1)
-                    exit()
-            elif isinstance(module, nn.Fold):
-                pass
-            elif isinstance(module, nn.Linear):
-                w = (module.weight).transpose(-2,- 1)
-                # (C, C*)
-                assert module.bias is None
-
-                if w_hat is not None:
-                    w_hat = torch.matmul(w_hat.transpose(-2,- 1), w)
-                    # C = C_prev * ksz_w * ksz_h
-                    # (B, w* * h*, d, C) x (C, C*)  -> (B, w * h, d, C*)
-            else:
-                raise AttributeError(
-                    "Current network architecture, {}, is not supported!".format(module))
-
-        return w_hat, b_hat
-
-    def forward(self, x):
-        ratio = []
-
-        batch_size = x.size(0)
-
-        x = x.view(batch_size, 1, 28, 28)
-
-        # make patch for weight        
-        for module in self.cnn:
-            if isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
-                x_base = x
-                x = module(x)
-                ratio.append(self.calculate_ratio(x, x_base))
-            elif isinstance(module, nn.Unfold):
-                x = module(x)
-            elif isinstance(module, nn.Fold):
-                x = module(x)
-            elif isinstance(module, nn.Linear):
-                x = module(x.transpose(1, 2))
-                x = x.transpose(1, 2)
-            else:
-                raise AttributeError(
-                    "Current network architecture, {}, is not supported!".format(module))
-
-        return x, ratio
-
 class Att(nn.Module):
     def __init__(
         self):
@@ -236,7 +118,6 @@ class Att(nn.Module):
 
         return x
 
-
 class BrewAttLayer(nn.Module):
     def __init__(
         self,
@@ -245,95 +126,69 @@ class BrewAttLayer(nn.Module):
 
         self.hidden_size = hidden_size
 
-        self.att = Att()
+        self.atts = [Att(), Att()]
 
         self.cnn = nn.ModuleList([
             nn.Unfold(kernel_size=(7,7), stride=(1,1)),
             nn.Linear(in_features=7*7*1, out_features=self.hidden_size * 3, bias=False),
-            self.att,
-            nn.Linear(in_features=self.hidden_size, out_features=self.hidden_size * 3, bias=False),
-            self.att,
-            nn.Linear(in_features=self.hidden_size, out_features=self.hidden_size * 3, bias=False),
-            self.att,
+            self.att[0],
+            nn.Linear(in_features=self.hidden_size, out_features=self.hidden_size * 3),
+            self.att[1],
             nn.Fold(kernel_size=(1,1), output_size=(22,22)),
-            nn.ReLU(inplace=False)
         ])
 
-    @staticmethod
-    def calculate_ratio(x, x_base): 
+    def calculate_ratio(self, x, x_base): 
         rat = x / x_base
         rat[torch.isnan(rat) | torch.isinf(rat)] = 0.0
 
         return rat
+    
+    def mv_nrom(self, x):
+        mean = torch.mean(x, dim=2, keepdim=True)
+        var = torch.mean(torch.pow(x - mean, exponent=2), dim=2, keepdim=True)
+        x = (x - mean) / var
+        return x
 
-    def brew(self, ratio, w_hat=None, b_hat=None, mode='ncwh'):
+    def brew(self, ratio, w_hat=None, b_hat=None):
         i = 0
         
         for module in self.cnn:
-            if isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
-                rat = ratio[i]
-                # (B, C*, w, h)
-                if mode == 'nwhc':
-                    # rat = torch.flatten(rat, start_dim=2, end_dim=3).transpose(1, 2).unsqueeze(2)
-                    # # (B, w * h, 1, C1)
-                    # if w_hat is None:    
-                    #     w_hat = rat * w.unsqueeze(0).unsqueeze(0)
-                    #     # (B, w * h, 1, C1) * (1, 1, d, C1) -> (B, w * h, d, C1)
-                    # else:
-                    #     w_hat = rat * w_hat  
-                    #     # (B, w * h, 1, C*) * (B, w * h, d, C*) -> (B, w * h, d, C*)
-                    NotImplementedError
-                elif mode == 'ncwh':
-                    _, _, width, height = rat.size()
-                    rat = torch.flatten(rat, start_dim=2, end_dim=3).unsqueeze(1)
-                    # (B, 1, C*, w * h)
-                    if w_hat is None:    
-                        w_hat = rat * w.unsqueeze(0).unsqueeze(-1)
-                        # (B, 1, C1, w * h) * (1, d, C1, 1) -> (B, d, C1, w * h)
-                    else:
-                        w_hat = rat * w_hat  
-                        # (B, 1, C*, w * h) * (B, d, C*, w * h) -> (B, d, C*, w * h)
-                i += 1
-            elif isinstance(module, nn.Unfold):
+            if isinstance(module, nn.Unfold):
                 if w_hat is not None:
-                    w_hat = torch.flatten(w_hat, start_dim=1, end_dim=2)
-                    # (B, d, C*, w * h) ->  (B, d * C*, w * h)
-                    dc = w_hat.size(1)
-                    w_hat = w_hat.view(w_hat.size(0), 
-                                        dc,
-                                        width,
-                                        height)
-                    w_hat = module(w_hat)
-                    # (B, d * C*, w, h) -> (B, d * C* * ksz_w * ksz_h, w* * h*) 
-
-                    # test
-                    w_hat = w_hat[:,:,0].view(-1, dc, 25)
-                    # (B, d * C*, ksz_w * ksz_h) 
-                    print(w_hat.size())
-                    w_hat = F.fold(w_hat, output_size=(11, 11), kernel_size=(7,7))
-                    # (B, d * C*, cum_ksz_w, cum_ksz_h)
-                    print(w_hat.size())
-                    
-                    # (B, d * C* * ksz_w * ksz_h, w* * h*) -> (B, d * C*, ksz_w * ksz_h, w* * h*)
-                    # (w* =0, h* =0)
-                    # (B, d * C*, ksz_w * ksz_h) -> (B, (7+5-1) * (7+5-1) * 1, C*, 1)
-                    exit()
-            elif isinstance(module, nn.Fold):
-                pass
+                    pass
             elif isinstance(module, nn.Linear):
-                w = (module.weight).transpose(-2,- 1)
-                # (C, C*)
+                w = module.weight
+                # (C*, C)
                 assert module.bias is None
-
                 if w_hat is not None:
                     w_hat = torch.matmul(w_hat.transpose(-2,- 1), w)
-                    # C = C_prev * ksz_w * ksz_h
                     # (B, w* * h*, d, C) x (C, C*)  -> (B, w * h, d, C*)
+            elif isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
+                rat = ratio[i]
+                # (B, C*, w * h)
+                if w_hat is None:
+                    w_hat = rat.unsqueeze(2) * w.unsqueeze(0)
+                    # (B, C*, w * h) * (1, C1, d)  -> (?, d, C1)
+                else:
+                    w_hat = rat.unsqueeze(1) * w_hat  # (?, 1, C*) * (?, d, C*)
+
+                i += 1
+            elif isinstance(module, Att):
+                rat = ratio[i]
+                # (B, w * h, w * h)
+                if w_hat is None:
+                    w_hat = rat.unsqueeze(2) * w.unsqueeze(0)
+                    # (?, C1, 1, w * h) * (1, C1, d)  -> (?, d, C1)
+                else:
+                    w_hat = rat.unsqueeze(1) * w_hat  # (?, 1, C*) * (?, d, C*)
+
+                i += 1            
+            elif isinstance(module, nn.Fold):
+                pass
+            
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))
-
-
 
     def forward(self, x):
         ratio = []
@@ -344,20 +199,29 @@ class BrewAttLayer(nn.Module):
 
         # make patch for weight        
         for module in self.cnn:
-            if isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
-                x_base = x
-                x = module(x)
-                ratio.append(self.calculate_ratio(x, x_base))
-            elif isinstance(module, nn.Unfold):
-                x = module(x)
-            elif isinstance(module, nn.Fold):
+            if isinstance(module, nn.Unfold):
                 x = module(x)
             elif isinstance(module, nn.Linear):
                 x = module(x.transpose(1, 2))
-            elif isinstance(module, Att):
+                # (B, T, C)
+            elif isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU):
+                x_base = x
                 x = module(x)
+                ratio.append(self.calculate_ratio(x, x_base))
+            elif isinstance(module, Att):
+                mean = torch.mean(x, dim=2, keepdim=True)
+                var = torch.mean(torch.pow(x - mean, exponent=2), dim=2, keepdim=True)
+                # (B, T, C)
+
+                x = module(x)
+                x = self.mv_nrom(x)
+                x = x * var + mean 
+
                 x = x.transpose(1, 2)
+                # (B, C, T)
                 ratio.append(module.kernel)
+            elif isinstance(module, nn.Fold):
+                x = module(x)
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))

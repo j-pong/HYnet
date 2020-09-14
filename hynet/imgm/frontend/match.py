@@ -7,6 +7,8 @@ class TemplateMatching(object):
         # Template matching prepare
         self.methods = ['cv.TM_CCOEFF', 'cv.TM_CCOEFF_NORMED', 'cv.TM_CCORR',
                         'cv.TM_CCORR_NORMED', 'cv.TM_SQDIFF', 'cv.TM_SQDIFF_NORMED']
+        self.buff_size = 30
+        self.buff = [0] * self.buff_size
 
     def recognize(self, img, template, method_num=5):
         img_ = img
@@ -39,5 +41,9 @@ class TemplateMatching(object):
 
         return img_crop, np.min(res)
 
-    def peak_detection(self):
-        return NotImplementedError
+    def peak_detection(self, score):
+        self.buff.pop(0)
+        self.buff.append(score)
+
+        print(self.buff)
+        
