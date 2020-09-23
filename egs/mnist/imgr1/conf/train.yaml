@@ -1,4 +1,4 @@
-accum_grad: 1
+accum_grad: 6
 optim: adam
 max_epoch: 2000
 batch_size: 35

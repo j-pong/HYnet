@@ -41,6 +41,15 @@ class HynetImgrModel(AbsESPnetModel):
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
 
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight.data, mode='fan_out')
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                m.bias.data.zero_()
+
     def minimaxn(
         self, 
         x: torch.Tensor,
@@ -136,10 +145,7 @@ class HynetImgrModel(AbsESPnetModel):
 
             b_sz, _, w, h = feat.size()
             attn_pos = attn_pos.view(b_sz, -1, w, h)
-            # attn_neg = attn_neg.view(b_sz, -1, w, h)
-
             attn_pos = attn_pos.flatten(start_dim=1)
-            # attn_pos = attn_pos - attn_neg.flatten(start_dim=2)
             attn_pos = self.minimaxn(attn_pos, dim=1)
             attn_pos = attn_pos.view(b_sz, -1, w, h)
 
