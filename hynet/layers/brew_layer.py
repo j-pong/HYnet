@@ -16,17 +16,18 @@ class BrewLayer(nn.Module):
         self.fnn = nn.ModuleList([
             nn.Linear(sample_size, hidden_size, bias=bias),
             nn.ReLU(),
+            nn.Dropout(p=0.1),
             nn.Linear(hidden_size, hidden_size, bias=bias),
             nn.ReLU(),
+            nn.Dropout(p=0.1),
             nn.Linear(hidden_size, target_size, bias=bias)
         ])
 
     @torch.no_grad()
     def calculate_ratio(self, x, x_base):
         rat = x / x_base
-        sign = torch.sign(x_base)
-        rat *= sign
-        rat[x_base==0] = 0
+        
+        rat[x_base == 0] = 0.0
 
         return rat
 
@@ -45,7 +46,7 @@ class BrewLayer(nn.Module):
                         b_hat = torch.matmul(b_hat, w)
                         # (?, C) x (C, C*) -> (?, C*)
                         b_hat = b.unsqueeze(0) + b_hat
-            elif isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU) or isinstance(module, nn.Tanh):
+            elif isinstance(module, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
                 rat = ratio.pop(0)
                 rat = rat.view(-1, rat.size(-1))  # (?, C)
 
@@ -65,6 +66,7 @@ class BrewLayer(nn.Module):
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(module))
+        assert len(ratio) == 0
 
         return w_hat, b_hat
 
@@ -73,7 +75,7 @@ class BrewLayer(nn.Module):
         for idx, module in enumerate(self.fnn):
             if isinstance(module, nn.Linear):
                 x = module(x)
-            elif isinstance(module, nn.ReLU) or isinstance(module, nn.PReLU) or isinstance(module, nn.Tanh):
+            elif isinstance(module, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
                 x_base = x
                 x = module(x)
                 ratio.append(self.calculate_ratio(x, x_base))
@@ -291,6 +293,8 @@ class BrewCnnLayer(nn.Module):
             else:
                 raise AttributeError(
                     "Current network architecture, {}, is not supported!".format(layer))
+        assert len(ratio) == 0
+
         return w_hat, b_hat
 
     def forward(self, x):

@@ -13,6 +13,7 @@ from typing import Tuple
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
 from typeguard import check_argument_types
 from typeguard import check_return_type
 
@@ -24,7 +25,7 @@ from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str_or_none
 
-from hynet.train.dataset import MNISTDataset
+from hynet.train.dataset import MNISTDataset, CIFAR10Dataset
 from hynet.train.trainer import ImgrTrainer
 from hynet.iterators.img_iter_factory import ImgrIterFactory
 from hynet.imgr.imgr_model import HynetImgrModel
@@ -58,13 +59,6 @@ class ImgrTask(AbsTask):
                 "kaiming_normal",
                 None,
             ],
-        )
-
-        group.add_argument(
-            "--input_size",
-            type=int_or_none,
-            default=None,
-            help="The number of input dimension of the feature",
         )
 
         group.add_argument(
@@ -126,11 +120,23 @@ class ImgrTask(AbsTask):
             train = False
         else:
             ValueError("{} is not implemented!".format(mode))
+        
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+        ])
 
-        dataset = MNISTDataset(
+        dataset = CIFAR10Dataset(
             root='data',
             train=train,
-            download=True)
+            download=True,
+            transform=transform_train)
+        # dataset = MNISTDataset(
+        #     root='data',
+        #     train=train,
+        #     download=True)
 
         return ImgrIterFactory(
             dataset=dataset,

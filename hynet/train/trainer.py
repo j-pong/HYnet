@@ -278,19 +278,13 @@ class ImgrTrainer(Trainer):
             img_list = stats['aux']
 
             plt.clf()
-            len_max = len(img_list[0])
-            for i, img in enumerate(img_list[0]):
-                plt.subplot(3, len_max, i+1)
-                plt.imshow(img.detach().cpu().numpy())
-                plt.colorbar()
-            for j, img in enumerate(img_list[1]):
-                plt.subplot(3, len_max, i+j+2)
-                plt.imshow(img.detach().cpu().numpy())
-                plt.colorbar()
-            for k, img in enumerate(img_list[2]):
-                plt.subplot(3, len_max, i+j+k+3)
-                plt.imshow(img.detach().cpu().numpy())
-                plt.colorbar()
+            col_max = len(img_list)
+            row_max = len(img_list[0])
+            for i in range(col_max):
+                for j, img in enumerate(img_list[i]):
+                    plt.subplot(col_max, row_max, i * row_max + (j + 1))
+                    plt.imshow(img.detach().cpu().numpy())
+                    plt.colorbar()
             ind_plot += 1
 
             if output_dir is not None:

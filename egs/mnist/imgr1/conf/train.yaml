@@ -1,11 +1,10 @@
-optim: sgd
-init: xavier_uniform
+accum_grad: 1
+optim: adam
 max_epoch: 2000
-batch_size: 100
+batch_size: 35
 optim_conf:
     lr: 0.001
     weight_decay: 0
-patience: 4
 val_scheduler_criterion:
 - valid
 - loss

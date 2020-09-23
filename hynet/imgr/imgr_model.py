@@ -4,6 +4,8 @@ from typing import Optional
 from typing import Tuple
 from typing import Union
 
+import math
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -13,6 +15,8 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.layers.brew_layer import BrewLayer, BrewCnnLayer, BrewAttLayer
+from hynet.imgr.encoders.cifar10_vgg_encoder import Encoder
+# from hynet.imgr.encoders.mnist_encoder import Encoder
 
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
@@ -20,39 +24,22 @@ class HynetImgrModel(AbsESPnetModel):
     def __init__(self):
         assert check_argument_types()
         super().__init__()
-
+        # task related
         self.max_iter = 2
-
-        self.cnn_hidden_sizes = [32, 64]
-        self.cnn_kernel_sizes = [3, 3]
-        self.wh = 24
-
-        self.proj_hidden_size = 128
-        self.bias = True
-
-        self.brew_cnn_layer = BrewCnnLayer(
-            kernel_size=self.cnn_kernel_sizes[0],
-            hidden_size=self.cnn_hidden_sizes[0],
-            in_channel=1,
-            wh=26)
-        self.brew_cnn_layer2 = BrewCnnLayer(
-            kernel_size=self.cnn_kernel_sizes[1],
-            hidden_size=self.cnn_hidden_sizes[1], 
-            in_channel=self.cnn_hidden_sizes[0],
-            wh=self.wh)
-
-        self.flatten = nn.Flatten()
-
-        self.brew_layer = BrewLayer(
-            sample_size=self.wh * self.wh * self.cnn_hidden_sizes[1],
-            hidden_size=self.proj_hidden_size,
-            target_size=10,
-            bias=self.bias)
-
-        self.csim = nn.CosineSimilarity(dim=2)
-
+        # data related
+        self.in_ch_sz = 32  # 28
+        self.in_ch = 3  # 1
+        self.out_ch = 10
+        # network archictecture 
+        self.encoder = Encoder()
+        self.bias = True 
+        self.decoder = BrewLayer(
+            sample_size = self.encoder.img_size[0] * self.encoder.img_size[1] * 256,
+            hidden_size = 256,
+            target_size = self.out_ch,
+            bias = self.bias)
+        # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
-        self.criterion_mse = nn.MSELoss()
 
     def minimaxn(
         self, 
@@ -61,40 +48,46 @@ class HynetImgrModel(AbsESPnetModel):
     ):
         max_x = torch.max(x, dim=dim, keepdim=True)[0]
         min_x = torch.min(x, dim=dim, keepdim=True)[0]
-        x = (x - min_x) / (max_x - min_x)
 
+        norm = (max_x - min_x)
+        norm[norm == 0.0] = 1.0
+
+        x = (x - min_x) / norm
+        
         return x
 
     def inv(
         self,
-        x,
+        x: torch.Tensor,
         label_hat: torch.Tensor,
         w_hat: torch.Tensor
     ):
         assert len(label_hat.size()) == 3
 
         sign = torch.sign(x).unsqueeze(-1)
-        sign[sign==0.0] = 1.0
+        # sign[sign == 0.0] = 1.0
         w_hat *= sign
 
-        w_pos = torch.relu(w_hat)
-        attn_pos = torch.matmul(label_hat, w_pos.transpose(-2, -1))
-        attn_pos = attn_pos.squeeze(-2)
+        # w_pos = torch.relu(w_hat)
+        # attn_pos = torch.matmul(label_hat, w_pos.transpose(-2, -1))
+        # attn_pos = attn_pos.squeeze(-2)
 
-        w_neg = torch.relu(-1.0 * w_hat)
-        attn_neg = torch.matmul(label_hat, w_neg.transpose(-2, -1))
-        attn_neg = attn_neg.squeeze(-2)
+        # w_neg = torch.relu(-1.0 * w_hat)
+        # attn_neg = torch.matmul(label_hat, w_neg.transpose(-2, -1))
+        # attn_neg = attn_neg.squeeze(-2)
 
-        return attn_pos, attn_neg
+        # return attn_pos, attn_neg
+
+        attn = torch.matmul(label_hat, w_hat.transpose(-2, -1))
+        attn = attn.squeeze(-2)
+
+        return attn
 
     def forward(
         self,
         image: torch.Tensor,
         label: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        batch_size = image.shape[0]
-        image = image.view(batch_size, -1).float()
-
         logger = {'imgs':[], 
                   'attns': [[],[],[]], 
                   'accs':[],
@@ -105,22 +98,21 @@ class HynetImgrModel(AbsESPnetModel):
         for i in range(self.max_iter):
             # 0. prepare data
             if i == 0:
-                image = self.minimaxn(image, dim=1).detach()
-                image = image.view(batch_size, 1, 28, 28)
+                with torch.no_grad():
+                    image = image.float()
+                    image = image.flatten(start_dim=2)
+                    image = self.minimaxn(image, dim=2)           
+                    image = image.view(image.size(0), self.in_ch, self.in_ch_sz, self.in_ch_sz)
 
             # 1. feedforward neural network
-            feat, _ = self.brew_cnn_layer(image)
-            feat, _ = self.brew_cnn_layer2(feat)
+            feat = self.encoder(image)
             if i > 0:
-                attn_pos = attn_pos.flatten(start_dim=2)
-                attn_pos = self.minimaxn(attn_pos, dim=2)
-                attn_pos = attn_pos.view(batch_size, -1, self.wh, self.wh)
-                feat = feat * (1 - attn_pos.detach())
-            feat_flat = self.flatten(feat)
-            label_hat, ratio = self.brew_layer(feat_flat)
+                feat = feat * attn_pos.detach()
+            feat_flat = feat.flatten(start_dim=1)
+            label_hat, ratio = self.decoder(feat_flat)
 
             # 2. brewing and check loss of p_hat results and normal result
-            p_hat = self.brew_layer.brew(ratio=ratio)
+            p_hat = self.decoder.brew(ratio=ratio)
             
             # 2.1 check brewing error
             if i == 0:
@@ -130,54 +122,56 @@ class HynetImgrModel(AbsESPnetModel):
                     label_hat_hat += p_hat[1]
                 logger['loss_brew'] = torch.pow(label_hat - label_hat_hat, 2).mean()
                 
-            # 3. caculate measurment 
-            losses.append(self.criterion(label_hat, label))
+                # 3. caculate measurment 
+                losses.append(self.criterion(label_hat, label))
             # 3.1 other measurment
             acc = self._calc_acc(label_hat, label)        
             logger['accs'].append(acc)
 
             # 4. inverse atte ntion with feature
-            inverse_application = 'sup'
-            if inverse_application == 'sup':
-                label_hat = label_hat - p_hat[1]
-                label_hat = torch.softmax(label_hat, dim=-1).unsqueeze(-2)
-                
-                attn_pos, attn_neg = self.inv(feat_flat, label_hat, p_hat[0])
+            label_hat = label_hat - p_hat[1]
+            label_hat = torch.softmax(label_hat, dim=-1).unsqueeze(-2)
+            
+            attn_pos = self.inv(feat_flat, label_hat, p_hat[0])
 
-                attn_pos = attn_pos.view(batch_size, self.cnn_hidden_sizes[1], self.wh, self.wh)
-                attn_neg = attn_neg.view(batch_size, self.cnn_hidden_sizes[1], self.wh, self.wh)
+            b_sz, _, w, h = feat.size()
+            attn_pos = attn_pos.view(b_sz, -1, w, h)
+            # attn_neg = attn_neg.view(b_sz, -1, w, h)
 
-                logger['accs_cs'] = 0.0
+            attn_pos = attn_pos.flatten(start_dim=1)
+            # attn_pos = attn_pos - attn_neg.flatten(start_dim=2)
+            attn_pos = self.minimaxn(attn_pos, dim=1)
+            attn_pos = attn_pos.view(b_sz, -1, w, h)
 
-            elif inverse_application == 'sim':
-                label_hat = F.one_hot(torch.arange(start=0, end=10), 
-                                      num_classes=10).float().to(label.device)
-                label_hat = label_hat.view(1, 10, 10)
-                label_hat = label_hat.repeat(batch_size, 1, 1)
+            logger['accs_cs'] = 0.0
 
-                attn_pos, attn_neg = self.inv(feat_flat, label_hat, p_hat[0])
-                label_hat_hat_cs = self.csim(attn_pos, feat.flatten(start_dim=1).unsqueeze(1))
+            # elif inverse_application == 'sim':
+            #     label_hat = F.one_hot(torch.arange(start=0, end=self.out_ch), 
+            #                           num_classes=self.out_ch).float().to(label.device)
+            #     label_hat = label_hat.view(1, self.out_ch, self.out_ch)
+            #     label_hat = label_hat.repeat(b_sz, 1, 1)
 
-                logger['accs_cs'] = self._calc_acc(label_hat_hat_cs, label)     
+            #     attn_pos, attn_neg = self.inv(feat_flat, label_hat, p_hat[0])
+            #     label_hat_hat_cs = F.cosine_similarity(attn_pos, feat.flatten(start_dim=1).unsqueeze(1), dim=2)
+
+            #     logger['accs_cs'] = self._calc_acc(label_hat_hat_cs, label)     
 
                 
             # 5. for logging
             if not self.training:
-                if inverse_application == 'sim':
-                    attn_pos = attn_pos[:, 0]
-                    attn_neg = attn_neg[:, 0]
+                # if inverse_application == 'sim':
+                #     attn_pos = attn_pos[:, 0]
+                #     attn_neg = attn_neg[:, 0]
 
-                logger['attns'][0].append(attn_pos[0].mean(-3))
-                logger['attns'][0].append(attn_pos[0, 0])
-                logger['attns'][0].append(attn_pos[0, 1])
+                logger['attns'][0].append(attn_pos[0].mean(0))
 
-                logger['attns'][1].append(attn_neg[0].mean(-3))
-                logger['attns'][1].append(attn_neg[0, 0])
-                logger['attns'][1].append(attn_neg[0, 1])
+                # logger['attns'][1].append(attn_neg[0].mean(0))
+                logger['attns'][1].append(attn_pos[0].mean(0))
 
-                logger['imgs'].append(feat[0].mean(-3))
-                logger['imgs'].append(feat[0, 0])
-                logger['imgs'].append(feat[0, 1])
+                logger['imgs'].append(image[0].transpose(1,0).transpose(2,1))
+                # logger['imgs'].append(feat[0].mean(0))
+                # logger['imgs'].append(feat[0, 0])
+                # logger['imgs'].append(feat[0, 1])
 
         loss = 0.0
         for los in losses:
@@ -196,7 +190,7 @@ class HynetImgrModel(AbsESPnetModel):
                             logger['attns'][1]]
 
         loss, stats, weight = force_gatherable(
-            (loss, stats, batch_size), loss.device)
+            (loss, stats, b_sz), loss.device)
         return loss, stats, weight
 
     def _calc_acc(
