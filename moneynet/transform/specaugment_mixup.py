@@ -4,6 +4,7 @@ import random
 
 import numpy
 import torch
+
 from moneynet.nets.pytorch_backend.ICT.nets_utils import mixup_data
 
 def Mix_then_Spec(xs, hlens, ys_pad, mask, specmix_params, train=True):
@@ -247,6 +248,7 @@ def Spec_Mix_Sep(xs, hlens, ys_pad, mask, specmix_params, train=True):
         xs, hlens, ys_pad, ys_pad_b, lam, mask = Mixup(xs, hlens, ys_pad, mask, specmix_params, train=train)
     elif augment == 1:
         xs, hlens, ys_pad, ys_pad_b, lam, mask = Spec(xs, hlens, ys_pad, mask, specmix_params, train=train)
+
     return xs, hlens, ys_pad, ys_pad_b, lam, mask
 
 def Specmix(xs_pad, ilens, ys_pad, src_mask, specmix_params, train=True):
