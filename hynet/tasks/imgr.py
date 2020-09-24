@@ -132,7 +132,7 @@ class ImgrTask(AbsTask):
             transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
-])
+            ])
 
         dataset = CIFAR10Dataset(
             root='data',
@@ -142,7 +142,8 @@ class ImgrTask(AbsTask):
         # dataset = MNISTDataset(
         #     root='data',
         #     train=train,
-        #     download=True)
+        #     download=True,
+        #     transform=transform)
 
         return ImgrIterFactory(
             dataset=dataset,

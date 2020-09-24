@@ -37,7 +37,6 @@ class Encoder(nn.Module):
         self.out_channels = 256
 
     def forward(self, x):
-        """Forward pass of ResNet."""
-        x = self.conv_layer(x)
+        x =  self.conv_layer(x)
 
         return x
