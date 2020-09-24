@@ -161,8 +161,8 @@ def get_parser(parser=None, required=True):
     # augmentation related
     parser.add_argument(
         "--augment",
-        type=str,
-        default=strtobool,
+        type=strtobool,
+        default=False,
         help="Do Augmentation or Not",
     )
     # recognition options to compute CER/WER

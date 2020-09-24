@@ -38,6 +38,30 @@ def mixup_data(x, y, ilens, alpha, scheme="global"):
     y = torch.Tensor(y).to(y_device).long()
     return mixed_x, y, y_b, index, lam
 
+def reverse_mixup_data(x, y, ilens, alpha, scheme="global"):
+    '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
+    x_device = x.device
+    y_device = y.device
+
+    if alpha > 0.:
+        lam = np.random.uniform(alpha, 1)
+    else:
+        lam = 1.
+
+    x = x.data.cpu().numpy()
+    y = y.data.cpu().numpy()
+
+    batch_size = x.shape[0]
+    index = torch.randperm(batch_size)
+    mixed_x = torch.Tensor(lam * x + (1 - lam) * np.flip(x[index, :],1))
+    y_b = y[index]
+
+    mixed_x = mixed_x.to(x_device)
+
+    y_b = torch.flip(torch.Tensor(y_b),[1]).to(y_device).long()
+    y = torch.Tensor(y).to(y_device).long()
+    return mixed_x, y, y_b, index, lam
+
 def mixup_logit(y, ilens, index, lam, scheme="global"):
     '''Compute the mixup logit'''
     device = y.device
