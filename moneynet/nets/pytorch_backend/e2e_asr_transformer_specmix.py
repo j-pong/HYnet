@@ -327,13 +327,14 @@ class E2E(ASRInterface, torch.nn.Module):
             ignore_index=self.ignore_id,
             reduction="mean",
         )
-        loss_ce_b = F.cross_entropy(
-            pred_pad.view(-1, self.odim),
-            ys_pad_b.view(-1),
-            ignore_index=self.ignore_id,
-            reduction="mean"
-        )
-        loss_att = lam * loss_ce_a + (1-lam) * loss_ce_b
+        # loss_ce_b = F.cross_entropy(
+        #     pred_pad.view(-1, self.odim),
+        #     ys_pad_b.view(-1),
+        #     ignore_index=self.ignore_id,
+        #     reduction="mean"
+        # )
+        lam=1
+        loss_att = lam * loss_ce_a# + (1-lam) * loss_ce_b
         self.acc = th_accuracy(
             pred_pad.view(-1, self.odim), ys_pad, ignore_label=self.ignore_id
         )

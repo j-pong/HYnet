@@ -18,7 +18,8 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-train_config=conf/tuning/train_pytorch_transformer_mixup.yaml
+train_config=conf/tuning/train_pytorch_transformer_specmix.yaml
+preprocess_config=
 augment_config=conf/specmix.yaml
 decode_config=conf/decode.yaml
 
@@ -298,6 +299,7 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
         asr_hyb_train.py \
         --config ${train_config} \
         --config2 ${augment_config} \
+        --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
         --backend pytorch \
         --outdir ${expdir}/results \
