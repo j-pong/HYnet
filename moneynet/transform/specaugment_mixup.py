@@ -260,7 +260,7 @@ def Specmix(xs_pad, ilens, ys_pad, src_mask, specmix_params, train=True):
     elif specmix_params["augmentation"] == "mixup":
         xs_pad, ilens, ys_pad, ys_pad_b, lam, src_mask = Mixup(*args)
     elif specmix_params["augmentation"] == "specaug":
-        xs_pad, ilens, ys_pad, ys_pad_b, lam, src_mask = Mixup(*args)
+        xs_pad, ilens, ys_pad, ys_pad_b, lam, src_mask = Spec(*args)
     elif specmix_params["augmentation"] == "separate":
         xs_pad, ilens, ys_pad, ys_pad_b, lam, src_mask = Spec_Mix_Sep(*args)
 
