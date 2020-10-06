@@ -277,20 +277,19 @@ class ImgrTrainer(Trainer):
             _, stats, _ = model(**batch)
             img_list = stats['aux']
 
-            plt.clf()
             col_max = len(img_list)
             row_max = len(img_list[0])
-            for i in range(col_max):
-                for j, img in enumerate(img_list[i]):
-                    plt.subplot(col_max, row_max, i * row_max + (j + 1))
-                    plt.imshow(img.detach().cpu().numpy())
-                    plt.colorbar()
-            ind_plot += 1
+            for idx in range(3):
+                plt.clf()
+                for i in range(col_max):
+                    for j, img in enumerate(img_list[i]):
+                        plt.subplot(col_max, row_max, i * row_max + (j + 1))
+                        plt.imshow(img[idx].detach().cpu().numpy())
+                        plt.colorbar()
 
-            if output_dir is not None:
-                p = output_dir / f"valid_{ids[0]}" / f"{ind_plot}.{reporter.get_epoch()}ep.png"
-                p.parent.mkdir(parents=True, exist_ok=True)
-                plt.savefig(p)
+                if output_dir is not None:
+                    p = output_dir / f"valid_{ids[idx]}" / f"{ind_plot}.{reporter.get_epoch()}ep.png"
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    plt.savefig(p)
 
-            if ind_plot == 3:
-                break
+            break

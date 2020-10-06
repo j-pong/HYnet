@@ -1,11 +1,12 @@
 import torch
-from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1, conv3x3
 from torch import nn
+
+from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1, conv3x3
 
 class Encoder(nn.Module):
 
-    def __init__(self, block=BasicBlock, layers=[2,2,2,2], zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None,
+    def __init__(self, block=Bottleneck, layers=[3, 4, 23, 3], zero_init_residual=False,
+                 groups=1, width_per_group=64 * 2, replace_stride_with_dilation=None,
                  norm_layer=None):
         super(Encoder, self).__init__()
         if norm_layer is None:
@@ -54,7 +55,7 @@ class Encoder(nn.Module):
                     nn.init.constant_(m.bn2.weight, 0)
         
         self.img_size = [1, 1]
-        self.out_channels = 512
+        self.out_channels = 2048
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         norm_layer = self._norm_layer
@@ -83,14 +84,21 @@ class Encoder(nn.Module):
     def _forward_impl(self, x):
         # See note [TorchScript super()]
         x = self.conv1(x)
+        # print(x.size())
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
+        # print(x.size())
 
         x = self.layer1(x)
+        # print(x.size())
         x = self.layer2(x)
+        # print(x.size())
         x = self.layer3(x)
+        # print(x.size())
         x = self.layer4(x)
+        # print(x.size())
+        # exit()
 
         return x
 
