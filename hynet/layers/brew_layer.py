@@ -24,7 +24,6 @@ def calculate_ratio(x, module, mode='grad', training=True):
         # checkout inplace option for accuratly gradient
         if module.inplace is not None:
             assert module.inplace is False
-
         # caculate gradient
         rat = torch.autograd.grad(x.sum(), x_base, 
                                     retain_graph=True,

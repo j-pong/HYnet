@@ -68,7 +68,7 @@ class EnDecoder(nn.Module):
         max_len = mlist.__len__()
         for idx in range(max_len):
             m = mlist.__getitem__(max_len - idx - 1)
-            print(x.size(), m)
+            # print(x.size(), m)
             if isinstance(m, nn.Conv2d):
                 if len(rats) == 0:
                     raise NotImplementedError
