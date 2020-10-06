@@ -77,32 +77,18 @@ def linear_maxpool2d(x, m, r=None):
     
     return x
 
-@torch.no_grad()
-def brew_bias(mlist, ratio, b_hat=None):
-    for m in mlist:
-        if isinstance(m, nn.Linear):
-            w = (m.weight).transpose(-2,- 1)
-            b = m.bias
-
-            if b_hat is not None:
-                b_hat = torch.matmul(b_hat, w)
-                # (?, C) x (C, C*) -> (?, C*)
-                b_hat = b.unsqueeze(0) + b_hat
-
-        elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
-            rat = ratio.pop(0)
-            rat = rat.view(-1, rat.size(-1))  # (?, C)
-
-            if b_hat is None:
-                b_hat = rat * b.unsqueeze(0)
-                # (?, C1) * (1, C1) -> (?, C1)
-            else:
-                b_hat = rat * b_hat
-                # (?, C) + (?, C) -> (?, C*)
-        elif isinstance(m, nn.MaxPool2d):
-            rat = ratio.pop(0)
+def make_layers(in_channels , cfg, batch_norm=False, bias=False):
+    layers = []
+    
+    for v in cfg:
+        if v == 'M':
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2, return_indices=True)]
         else:
-            pass
-    assert len(ratio) == 0
+            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, bias=bias)
+            if batch_norm:
+                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU()]
+            else:
+                layers += [conv2d, nn.ReLU()]
+            in_channels = v
 
-    return b_hat
+    return layers

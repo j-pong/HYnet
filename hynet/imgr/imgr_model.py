@@ -35,7 +35,7 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
         # task related
         self.brew_excute = True
-        self.max_iter = 1
+        self.max_iter = 2
         # data related
         self.in_ch = 3  # 1
         self.out_ch = 10
@@ -46,13 +46,9 @@ class HynetImgrModel(AbsESPnetModel):
         self.criterion = nn.CrossEntropyLoss()
         self.mse = nn.MSELoss()
 
-    def shapley_value(self, attn):
+    def shapley_value(self, attn, x):
         attn_pos = torch.relu(attn)
         attn_neg = torch.relu(-1.0 * attn)
-        
-        # attn_pos = attn_pos.flatten(start_dim=2)
-        # attn_pos = minimaxn(attn_pos, dim=2)
-        # attn_pos = attn_pos.view(b_sz, -1, in_w, in_h)
 
         return attn_pos, attn_neg
 
@@ -72,36 +68,47 @@ class HynetImgrModel(AbsESPnetModel):
         for i in range(self.max_iter):
             b_sz, _, in_h, in_w = image.size()
             # 1. feedforward neural network
-            logit, ratio, ratio_split_idx = self.model(image)
             if self.brew_excute:
-                logit_hat = self.model.forward_linear(image, ratio.copy())
-                logger['loss_brew'] = self.mse(logit, logit_hat).detach()
+                if i > 0:
+                    image = image * attn
+            logit, ratio, ratio_split_idx = self.model(image)
             
             # 3. caculate measurment 
-            losses.append(self.criterion(logit, label))
+            if i == 0:
+                losses.append(self.criterion(logit, label))
             # 3.1 other measurment
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
 
             # 4. inverse attention with feature
             if self.brew_excute:
+                logit_hat = self.model.forward_linear(image, ratio.copy())
+                logger['loss_brew'] = self.mse(logit, logit_hat).detach()
+
                 # TODO(j-pong): These line for non-bias free case. But we needs more smart way!
                 # b_hat = self.model.brew_bias(self.model.decoder, ratio[ratio_split_idx:].copy())
                 # logit_softmax = torch.softmax(logit - b_hat, dim=-1)
                 
-                logit_softmax = torch.softmax(logit, dim=-1)
-                attn = self.model.backward_linear(logit_softmax, 
-                                                  self.model.decoder, 
-                                                  ratio[ratio_split_idx:])
-                attn = attn.view(b_sz,
-                                 self.model.out_channels,
-                                 self.model.img_size[0],
-                                 self.model.img_size[1])
-                attn = self.model.backward_linear(attn, 
-                                                  self.model.encoder, 
-                                                  ratio[:ratio_split_idx])
+                with torch.no_grad():
+                    logit_softmax = torch.softmax(logit, dim=-1)
+                    attn = self.model.backward_linear(logit_softmax, 
+                                                    self.model.decoder, 
+                                                    ratio[ratio_split_idx:])
+                    attn = attn.view(b_sz,
+                                    self.model.out_channels,
+                                    self.model.img_size[0],
+                                    self.model.img_size[1])
+                    attn = self.model.backward_linear(attn, 
+                                                    self.model.encoder, 
+                                                    ratio[:ratio_split_idx])
+                    sign = torch.sign(image)
+                    attn = attn * sign
 
-                attn_pos, attn_neg = self.shapley_value(attn)
+                    attn_pos, attn_neg = self.shapley_value(attn, image)
+
+                    attn = attn.flatten(start_dim=2) 
+                    attn = minimaxn(attn_pos, dim=-1)
+                    attn = attn.view(b_sz, -1, in_h, in_w)
                     
                 # 5. for logging
                 if not self.training:

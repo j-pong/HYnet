@@ -2,24 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from hynet.layers.brew_layer import linear_linear, linear_conv2d, linear_maxpool2d, calculate_ratio
-
-
-def make_layers(in_channels , cfg, batch_norm=False, bias=False):
-    layers = []
-    
-    for v in cfg:
-        if v == 'M':
-            layers += [nn.MaxPool2d(kernel_size=2, stride=2, return_indices=True)]
-        else:
-            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, bias=bias)
-            if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU()]
-            else:
-                layers += [conv2d, nn.ReLU()]
-            in_channels = v
-
-    return layers
+from hynet.layers.brew_layer import linear_linear, linear_conv2d, linear_maxpool2d, calculate_ratio, make_layers
 
 class EnDecoder(nn.Module):
 
