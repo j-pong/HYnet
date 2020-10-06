@@ -46,7 +46,7 @@ class HynetImgrModel(AbsESPnetModel):
         self.criterion = nn.CrossEntropyLoss()
         self.mse = nn.MSELoss()
 
-    def shap(self, attn):
+    def shapley_value(self, attn):
         attn_pos = torch.relu(attn)
         attn_neg = torch.relu(-1.0 * attn)
         
@@ -101,7 +101,7 @@ class HynetImgrModel(AbsESPnetModel):
                                                   self.model.encoder, 
                                                   ratio[:ratio_split_idx])
 
-                attn_pos, attn_neg = self.shap(attn)
+                attn_pos, attn_neg = self.shapley_value(attn)
                     
                 # 5. for logging
                 if not self.training:

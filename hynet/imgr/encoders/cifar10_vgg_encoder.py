@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from hynet.layers.brew_layer import linear_linear, linear_conv2d, linear_maxpool2d
+from hynet.layers.brew_layer import linear_linear, linear_conv2d, linear_maxpool2d, calculate_ratio
 
 
 def make_layers(in_channels , cfg, batch_norm=False, bias=False):
@@ -61,34 +61,6 @@ class EnDecoder(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
-    
-    @torch.enable_grad()
-    def calculate_ratio(self, x, module, mode='grad'):
-        if self.training:
-            x_base = x
-        else:
-            x_base = torch.autograd.Variable(x)
-            x_base.requires_grad = True
-        x = module(x_base)
-
-        if mode == 'ratio':
-            mask = (x_base == 0)
-            rat = x / x_base
-            
-            rat[mask] = 0.0
-
-        elif mode == 'grad':
-            # checkout inplace option for accuratly gradient
-            if module.inplace is not None:
-                assert module.inplace is False
-
-            # caculate gradient
-            rat = torch.autograd.grad(x.sum(), x_base, 
-                                      retain_graph=True,
-                                      create_graph=True)[0]
-            rat = rat.data
-
-        return x, rat.detach()
 
     @torch.no_grad()
     def backward_linear(self, x, mlist, ratio, b_hat=None):
@@ -132,7 +104,6 @@ class EnDecoder(nn.Module):
 
     
     def forward_linear_impl(self, x, mlist, ratio):
-
         for m in mlist:
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Flatten)):
                 x = m(x)
@@ -146,21 +117,13 @@ class EnDecoder(nn.Module):
                 raise NotImplementedError
 
         return x
-    
-    def forward_linear(self, x, ratio):
-
-        x = self.forward_linear_impl(x, self.encoder, ratio)
-        x = self.forward_linear_impl(x, self.decoder, ratio)
-        assert len(ratio) == 0
-
-        return x
 
     def forward_impl(self, x, mlist, ratio):
         for m in mlist:
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Flatten)):
                 x = m(x)
             elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
-                x, rat = self.calculate_ratio(x, m)
+                x, rat = calculate_ratio(x, m, mode='grad', training=self.training)
                 ratio.append(rat)
             elif isinstance(m, nn.MaxPool2d):
                 x, rat = m(x)
@@ -169,6 +132,13 @@ class EnDecoder(nn.Module):
                 raise NotImplementedError
             
         return x, ratio
+
+    def forward_linear(self, x, ratio):
+        x = self.forward_linear_impl(x, self.encoder, ratio)
+        x = self.forward_linear_impl(x, self.decoder, ratio)
+        assert len(ratio) == 0
+
+        return x
 
     def forward(self, x):
         ratio = []
