@@ -58,7 +58,13 @@ def linear_conv2d(x, m, r=None):
         
         if r is not None:
             x = x * r
-        x = F.conv_transpose2d(x, w, stride=m.stride, padding=m.padding)
+        x = F.conv_transpose2d(x, w, stride=m.stride)
+        pads = m.padding
+        pad_h,  pad_w = pads 
+        if pad_h > 0:
+            x = x[:, :, pad_h:-pad_h, :]
+        if pad_w > 0:
+            x = x[:, :, :, pad_w:-pad_w]
     else:
         raise AttributeError("This module is not approprate to this function.")
     

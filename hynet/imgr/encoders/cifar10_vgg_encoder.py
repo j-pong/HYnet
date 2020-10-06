@@ -67,8 +67,8 @@ class EnDecoder(nn.Module):
         rats = []
         max_len = mlist.__len__()
         for idx in range(max_len):
-            # print(x.size())
             m = mlist.__getitem__(max_len - idx - 1)
+            print(x.size(), m)
             if isinstance(m, nn.Conv2d):
                 if len(rats) == 0:
                     raise NotImplementedError
@@ -91,7 +91,7 @@ class EnDecoder(nn.Module):
                 rats.append(ratio.pop())
             elif isinstance(m, nn.MaxPool2d):
                 rat = ratio.pop()
-                x = F.max_unpool2d(x, rat, m.kernel_size, m.stride)
+                x = linear_maxpool2d(x, m, rat)
             elif isinstance(m, nn.Flatten):
                 pass
             elif isinstance(m, nn.BatchNorm2d):
@@ -102,10 +102,9 @@ class EnDecoder(nn.Module):
 
         return x
 
-    
     def forward_linear_impl(self, x, mlist, ratio):
         for m in mlist:
-            if isinstance(m, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Flatten)):
+            if isinstance(m, (nn.Conv2d, nn.Linear, nn.Flatten)):
                 x = m(x)
             elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
                 rat = ratio.pop(0)
@@ -113,6 +112,8 @@ class EnDecoder(nn.Module):
             elif isinstance(m, nn.MaxPool2d):
                 rat = ratio.pop(0)
                 x, _ = m(x)
+            elif isinstance(m, nn.BatchNorm2d):
+                raise NotImplementedError
             else:
                 raise NotImplementedError
 

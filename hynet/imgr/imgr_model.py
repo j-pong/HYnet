@@ -70,7 +70,7 @@ class HynetImgrModel(AbsESPnetModel):
 
         losses = []
         for i in range(self.max_iter):
-            b_sz, _, in_w, in_h = image.size()
+            b_sz, _, in_h, in_w = image.size()
             # 1. feedforward neural network
             logit, ratio, ratio_split_idx = self.model(image)
             if self.brew_excute:
@@ -116,7 +116,7 @@ class HynetImgrModel(AbsESPnetModel):
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_)
                     logger['attns'][0].append(image[:,:,:,0])
-                    logger['attns'][0].append(image[:,:,:,1])
+                    logger['attns'][1].append(image[:,:,:,1])
 
         loss = 0.0
         for los in losses:
