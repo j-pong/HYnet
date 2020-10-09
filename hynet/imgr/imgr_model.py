@@ -5,6 +5,7 @@ from typing import Tuple
 from typing import Union
 
 import math
+import copy
 
 import torch
 from torch import nn
@@ -15,6 +16,7 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
+# from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
 
 def minimaxn(x, dim):
     max_x = torch.max(x, dim=dim, keepdim=True)[0]
@@ -36,12 +38,15 @@ class HynetImgrModel(AbsESPnetModel):
         # task related
         self.brew_excute = True
         self.max_iter = 2
+
         # data related
-        self.in_ch = 3  # 1
+        self.in_ch = 3
         self.out_ch = 10
+
         # network archictecture 
         self.model = EnDecoder(in_channels=self.in_ch,
                                num_classes=self.out_ch)
+                               
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
         self.mse = nn.MSELoss()
@@ -51,7 +56,6 @@ class HynetImgrModel(AbsESPnetModel):
         attn_neg = torch.relu(-1.0 * attn)
 
         return attn_pos, attn_neg
-
 
     def forward(
         self,
@@ -67,57 +71,55 @@ class HynetImgrModel(AbsESPnetModel):
         losses = []
         for i in range(self.max_iter):
             b_sz, _, in_h, in_w = image.size()
-            # 1. feedforward neural network
+            # feedforward neural network
             if self.brew_excute:
                 if i > 0:
                     image = image * attn
-            logit, ratio, ratio_split_idx = self.model(image)
+            logit, ratios = self.model(image)
             
-            # 3. caculate measurment 
-            if i == 0:
+            # caculate measurment 
+            if i == 0: 
                 losses.append(self.criterion(logit, label))
-            # 3.1 other measurment
+            # other measurment
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
 
-            # 4. inverse attention with feature
+            # inverse attention with feature 
             if self.brew_excute:
-                logit_hat = self.model.forward_linear(image, ratio.copy())
+                logit_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
                 logger['loss_brew'] = self.mse(logit, logit_hat).detach()
-
-                # TODO(j-pong): These line for non-bias free case. But we needs more smart way!
-                # b_hat = self.model.brew_bias(self.model.decoder, ratio[ratio_split_idx:].copy())
-                # logit_softmax = torch.softmax(logit - b_hat, dim=-1)
                 
-                with torch.no_grad():
-                    logit_softmax = torch.softmax(logit, dim=-1)
-                    attn = self.model.backward_linear(logit_softmax, 
-                                                    self.model.decoder, 
-                                                    ratio[ratio_split_idx:])
-                    attn = attn.view(b_sz,
-                                    self.model.out_channels,
-                                    self.model.img_size[0],
-                                    self.model.img_size[1])
-                    attn = self.model.backward_linear(attn, 
-                                                    self.model.encoder, 
-                                                    ratio[:ratio_split_idx])
-                    sign = torch.sign(image)
-                    attn = attn * sign
+                # label generation
+                logit_softmax = torch.softmax(logit, dim=-1)
 
-                    attn_pos, attn_neg = self.shapley_value(attn, image)
+                # backward
+                attn = self.model.backward_linear(logit_softmax, 
+                                                  self.model.decoder, 
+                                                  ratios[1])
+                attn = attn.view(b_sz,
+                                 self.model.out_channels,
+                                 self.model.img_size[0],
+                                 self.model.img_size[1])
+                attn = self.model.backward_linear(attn, 
+                                                  self.model.encoder, 
+                                                  ratios[0])
+                
+                sign = torch.sign(image)
+                attn = attn * sign
+                attn_pos, attn_neg = self.shapley_value(attn, image)
 
-                    attn = attn.flatten(start_dim=2) 
-                    attn = minimaxn(attn_pos, dim=-1)
-                    attn = attn.view(b_sz, -1, in_h, in_w)
+                attn = attn.flatten(start_dim=2) 
+                attn = minimaxn(attn, dim=-1)
+                attn = attn.view(b_sz, -1, in_h, in_w)
                     
                 # 5. for logging
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_.sum(-1))
-                    attn_pos = attn_pos.permute(0, 2, 3, 1)
-                    logger['attns'][0].append(attn_pos.sum(-1))
-                    attn_neg = attn_neg.permute(0, 2, 3, 1)
-                    logger['attns'][1].append(attn_neg.sum(-1))
+                    attn_pos_ = attn_pos.permute(0, 2, 3, 1)
+                    logger['attns'][0].append(attn_pos_.sum(-1))
+                    attn_neg_ = attn_neg.permute(0, 2, 3, 1)
+                    logger['attns'][1].append(attn_neg_.sum(-1))
             else:
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)

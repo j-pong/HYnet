@@ -121,16 +121,17 @@ class ImgrTask(AbsTask):
         else:
             ValueError("{} is not implemented!".format(mode))
         
-        # transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
         if train:
             transform = transforms.Compose([
                 transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
-                transforms.ToTensor()
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
             ])
         else:
             transform = transforms.Compose([
-                transforms.ToTensor()
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
             ])
 
         dataset = CIFAR10Dataset(
@@ -138,6 +139,11 @@ class ImgrTask(AbsTask):
             train=train,
             download=True,
             transform=transform)
+
+        # transform = transforms.Compose([
+        #         transforms.ToTensor(),
+        #         transforms.Normalize(mean=[0.507], std=[0.267])
+        #     ])
         # dataset = MNISTDataset(
         #     root='data',
         #     train=train,
