@@ -37,7 +37,7 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
         # task related
         self.brew_excute = True
-        self.max_iter = 2
+        self.max_iter = 5
 
         # data related
         self.in_ch = 3
@@ -51,11 +51,26 @@ class HynetImgrModel(AbsESPnetModel):
         self.criterion = nn.CrossEntropyLoss()
         self.mse = nn.MSELoss()
 
-    def shapley_value(self, attn, x):
+    def shapley_value(self, attn):
         attn_pos = torch.relu(attn)
         attn_neg = torch.relu(-1.0 * attn)
 
         return attn_pos, attn_neg
+
+    def backward_linear(self, y, ratios):
+        # backward
+        attn = self.model.backward_linear_impl(y, 
+                                               self.model.decoder, 
+                                               ratios[1])
+        attn = attn.view(attn.size(0),
+                         self.model.out_channels,
+                         self.model.img_size[0],
+                         self.model.img_size[1])
+        attn = self.model.backward_linear_impl(attn, 
+                                               self.model.encoder, 
+                                               ratios[0])
+        
+        return attn
 
     def forward(
         self,
@@ -65,7 +80,6 @@ class HynetImgrModel(AbsESPnetModel):
         logger = {'imgs':[], 
                   'attns': [[],[]], 
                   'accs':[],
-                  'accs_cs': 0.0, 
                   'loss_brew': 0.0}
 
         losses = []
@@ -78,7 +92,7 @@ class HynetImgrModel(AbsESPnetModel):
             logit, ratios = self.model(image)
             
             # caculate measurment 
-            if i == 0: 
+            if i == 0: # i < self.max_iter - 1: 
                 losses.append(self.criterion(logit, label))
             # other measurment
             acc = self._calc_acc(logit, label)        
@@ -91,23 +105,19 @@ class HynetImgrModel(AbsESPnetModel):
                 
                 # label generation
                 logit_softmax = torch.softmax(logit, dim=-1)
-
-                # backward
-                attn = self.model.backward_linear(logit_softmax, 
-                                                  self.model.decoder, 
-                                                  ratios[1])
-                attn = attn.view(b_sz,
-                                 self.model.out_channels,
-                                 self.model.img_size[0],
-                                 self.model.img_size[1])
-                attn = self.model.backward_linear(attn, 
-                                                  self.model.encoder, 
-                                                  ratios[0])
+                mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                attn_other = self.backward_linear(logit_softmax_other, ratios)
                 
+                # sign-field
                 sign = torch.sign(image)
+                attn = attn_cent 
                 attn = attn * sign
-                attn_pos, attn_neg = self.shapley_value(attn, image)
+                attn_pos, attn_neg = self.shapley_value(attn)
 
+                # attention normalization
                 attn = attn.flatten(start_dim=2) 
                 attn = minimaxn(attn, dim=-1)
                 attn = attn.view(b_sz, -1, in_h, in_w)
@@ -116,10 +126,10 @@ class HynetImgrModel(AbsESPnetModel):
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_.sum(-1))
-                    attn_pos_ = attn_pos.permute(0, 2, 3, 1)
-                    logger['attns'][0].append(attn_pos_.sum(-1))
-                    attn_neg_ = attn_neg.permute(0, 2, 3, 1)
-                    logger['attns'][1].append(attn_neg_.sum(-1))
+                    attn1 = attn_other.permute(0, 2, 3, 1)
+                    logger['attns'][0].append(attn1.sum(-1))
+                    attn2 = attn.permute(0, 2, 3, 1)
+                    logger['attns'][1].append(attn2.sum(-1))
             else:
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
@@ -135,8 +145,8 @@ class HynetImgrModel(AbsESPnetModel):
                 loss=loss.detach(),
                 loss_brew=logger['loss_brew'],
                 acc_start=logger['accs'][0],
-                acc_end=logger['accs'][-1],
-                acc_cs=logger['accs_cs'] 
+                acc_mid=logger['accs'][1],
+                acc_end=logger['accs'][4]
             )
         if not self.training:
             stats['aux'] = [logger['imgs'], 

@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from torch import nn
 
 @torch.enable_grad()
-def calculate_ratio(x, module, mode='grad', training=True):
-    if training:
+def calculate_ratio(x, module, mode='ratio', training=True):
+    if training or mode == 'ratio':
         x_base = x
     else:
         # validation mode has no backward graph for autograd 
@@ -44,6 +44,7 @@ def linear_linear(x, m, r=None):
             x = x 
         else:
             x = x * r
+        w = torch.relu(w)
         x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
     else:                
         raise AttributeError("This module is not approprate to this function.")
@@ -58,6 +59,7 @@ def linear_conv2d(x, m, r=None):
         
         if r is not None:
             x = x * r
+        w = torch.relu(w)
         x = F.conv_transpose2d(x, w, stride=m.stride)
         pads = m.padding
         pad_h,  pad_w = pads 
@@ -94,7 +96,7 @@ class BrewModel(nn.Module):
                     nn.init.constant_(m.bias, 0)
     
     @torch.no_grad()
-    def backward_linear(self, x, mlist, ratio, b_hat=None):
+    def backward_linear_impl(self, x, mlist, ratio, b_hat=None):
         rats = []
         max_len = mlist.__len__()
         for idx in range(max_len):
@@ -134,6 +136,10 @@ class BrewModel(nn.Module):
         return x
 
     def forward_linear_impl(self, x, mlist, ratio):
+        # Todo(j-pong): extract bias that first apeeal and forward and add with layers
+        # b_1 = m.bias
+        # b_2 = rat * m(b_1) + b_r
+        # this lines is solution of bias case 
         for m in mlist:
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Flatten)):
                 x = m(x)
@@ -153,7 +159,7 @@ class BrewModel(nn.Module):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Flatten)):
                 x = m(x)
             elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
-                x, rat = calculate_ratio(x, m, mode='grad', training=self.training)
+                x, rat = calculate_ratio(x, m, training=self.training)
                 ratio.append(rat)
             elif isinstance(m, nn.MaxPool2d):
                 x, rat = m(x)
