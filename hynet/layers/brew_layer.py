@@ -36,7 +36,6 @@ def linear_linear(x, m, r=None):
     if isinstance(m, nn.Linear):
         w = m.weight
         b = m.bias
-        assert b is None
                     
         # w = r.unsqueeze(2) * w.unsqueeze(0)
         # x = torch.matmul(x.unsqueeze(1), w).squeeze(1)
@@ -44,7 +43,6 @@ def linear_linear(x, m, r=None):
             x = x 
         else:
             x = x * r
-        w = torch.relu(w)
         x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
     else:                
         raise AttributeError("This module is not approprate to this function.")
@@ -59,7 +57,6 @@ def linear_conv2d(x, m, r=None):
         
         if r is not None:
             x = x * r
-        w = torch.relu(w)
         x = F.conv_transpose2d(x, w, stride=m.stride)
         pads = m.padding
         pad_h,  pad_w = pads 
@@ -95,7 +92,6 @@ class BrewModel(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
     
-    @torch.no_grad()
     def backward_linear_impl(self, x, mlist, ratio, b_hat=None):
         rats = []
         max_len = mlist.__len__()
@@ -135,24 +131,39 @@ class BrewModel(nn.Module):
 
         return x
 
-    def forward_linear_impl(self, x, mlist, ratio):
+    def forward_linear_impl(self, x, mlist, ratio, b_hat=None):
         # Todo(j-pong): extract bias that first apeeal and forward and add with layers
         # b_1 = m.bias
         # b_2 = rat * m(b_1) + b_r
         # this lines is solution of bias case 
         for m in mlist:
-            if isinstance(m, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Flatten)):
+            if isinstance(m, nn.Conv2d):
                 x = m(x)
+            elif isinstance(m, nn.Linear):
+                x = m(x)
+                b = m.bias
+                if b is not None:
+                    if b_hat is None:
+                        b_hat = b.unsqueeze(0)
+                    else:
+                        b_hat = m(b_hat)
+                    x = x - b
             elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
                 rat = ratio.pop(0)
                 x = x * rat
+                if b_hat is not None:
+                    b_hat = b_hat * rat
             elif isinstance(m, nn.MaxPool2d):
                 rat = ratio.pop(0)
                 x, _ = m(x)
+            elif isinstance(m, nn.Flatten):
+                x = m(x)
+            elif isinstance(m, nn.BatchNorm2d):
+                raise NotImplementedError
             else:
                 raise NotImplementedError
 
-        return x
+        return x, b_hat
 
     def forward_impl(self, x, mlist, ratio):
         for m in mlist:
@@ -170,12 +181,12 @@ class BrewModel(nn.Module):
         return x
 
     def forward_linear(self, x, ratios):
-        x = self.forward_linear_impl(x, self.encoder, ratios[0])
-        x = self.forward_linear_impl(x, self.decoder, ratios[1])
+        x, b_hat = self.forward_linear_impl(x, self.encoder, ratios[0])
+        x, b_hat = self.forward_linear_impl(x, self.decoder, ratios[1], b_hat=b_hat)
         assert len(ratios[0]) == 0
         assert len(ratios[1]) == 0
 
-        return x
+        return x, b_hat
 
     def forward(self, x):
         ratios = [[], []]

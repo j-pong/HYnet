@@ -8,7 +8,8 @@ class EnDecoder(BrewModel):
 
     def __init__(self,
                  in_channels,
-                 num_classes):
+                 num_classes,
+                 bias=False):
         super().__init__()
 
         # self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M']
@@ -20,13 +21,13 @@ class EnDecoder(BrewModel):
         self.out_channels = 128
         self.decoder = nn.ModuleList([
             nn.Flatten(start_dim=1),
-            nn.Linear(self.out_channels * self.img_size[0] * self.img_size[1], 4096, bias=False),
+            nn.Linear(self.out_channels * self.img_size[0] * self.img_size[1], 4096, bias=bias),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, 4096, bias=False),
+            nn.Linear(4096, 4096, bias=bias),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, num_classes, bias=False)
+            nn.Linear(4096, num_classes, bias=bias)
         ])
 
         self._initialization(self.encoder)

@@ -100,27 +100,32 @@ class HynetImgrModel(AbsESPnetModel):
 
             # inverse attention with feature 
             if self.brew_excute:
-                logit_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
-                logger['loss_brew'] = self.mse(logit, logit_hat).detach()
-                
-                # label generation
-                logit_softmax = torch.softmax(logit, dim=-1)
-                mask = F.one_hot(label, num_classes=self.out_ch).bool()
-                logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
-                logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                attn_other = self.backward_linear(logit_softmax_other, ratios)
-                
-                # sign-field
-                sign = torch.sign(image)
-                attn = attn_cent 
-                attn = attn * sign
-                attn_pos, attn_neg = self.shapley_value(attn)
+                with torch.no_grad():
+                    logit_hat, b_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
+                    if b_hat is not None:
+                        logit_hat_ = logit_hat + b_hat
+                    else:
+                        logit_hat_ = logit_hat
+                    logger['loss_brew'] = self.mse(logit, logit_hat_).detach()
+                    
+                    # label generation
+                    logit_softmax = torch.softmax(logit_hat, dim=-1)
+                    mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                    logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                    attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                    logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                    attn_other = self.backward_linear(logit_softmax_other, ratios)
+                    
+                    # sign-field
+                    sign = torch.sign(image)
+                    attn = attn_cent 
+                    attn = attn * sign
+                    attn_pos, attn_neg = self.shapley_value(attn)
 
-                # attention normalization
-                attn = attn.flatten(start_dim=2) 
-                attn = minimaxn(attn, dim=-1)
-                attn = attn.view(b_sz, -1, in_h, in_w)
+                    # attention normalization
+                    attn = attn.flatten(start_dim=2) 
+                    attn = minimaxn(attn, dim=-1)
+                    attn = attn.view(b_sz, -1, in_h, in_w)
                     
                 # 5. for logging
                 if not self.training:
