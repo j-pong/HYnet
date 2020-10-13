@@ -135,9 +135,9 @@ class HynetImgrModel(AbsESPnetModel):
                 attn_other = self.backward_lrp(logit_softmax_other, ratios)
                 
                 # sign-field
-                sign = torch.sign(image)
+                # sign = torch.sign(image)
                 attn = attn_cent 
-                attn = attn * sign
+                # attn = attn * sign
                 attn_pos, attn_neg = self.shapley_value(attn)
 
                 # attention normalization
@@ -151,7 +151,12 @@ class HynetImgrModel(AbsESPnetModel):
                     logger['imgs'].append(image_.sum(-1))
                     attn1 = attn_other.permute(0, 2, 3, 1)
                     logger['attns'][0].append(attn1.sum(-1))
-                    attn2 = attn.permute(0, 2, 3, 1)
+
+                    minmax = torch.pow(torch.abs(attn_cent), 3).mean()
+                    minmax = 10 * (torch.pow(minmax, 1.0 / 3))
+                    attn_cent = torch.clamp(attn_cent, -minmax, minmax)
+
+                    attn2 = attn_cent.permute(0, 2, 3, 1)
                     logger['attns'][1].append(attn2.sum(-1))
             else:
                 if not self.training:

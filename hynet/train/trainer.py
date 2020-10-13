@@ -284,7 +284,7 @@ class ImgrTrainer(Trainer):
                 for i in range(col_max):
                     for j, img in enumerate(img_list[i]):
                         plt.subplot(col_max, row_max, i * row_max + (j + 1))
-                        plt.imshow(img[idx].detach().cpu().numpy())
+                        plt.imshow(img[idx].detach().cpu().numpy(), interpolation='nearest')
                         plt.colorbar()
 
                 if output_dir is not None:

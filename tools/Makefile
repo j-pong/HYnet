@@ -106,4 +106,5 @@ espnet.done: pytorch.done
 
 hynet.done: espnet.done
 	. ./activate_python.sh && python3 -m pip install -e .. 
+	. ./activate_python.sh && conda install captum -c pytorch
 	touch hynet.done

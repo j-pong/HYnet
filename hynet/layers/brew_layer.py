@@ -102,16 +102,29 @@ class BrewModel(nn.Module):
             if isinstance(m, (nn.Conv2d, nn.Linear, nn.MaxPool2d)):
                 rat = ratio.pop()
                 rat = (rat.data).requires_grad_(True)
-
-                z = m(rat)
                 if isinstance(m, nn.MaxPool2d):
-                    z, _ = z    
-                z = z + 1e-9 
+                    z, _ = m(rat)
+                elif isinstance(m, nn.Conv2d):
+                    w = F.relu(m.weight)
+                    # w = m.weight
+                    b = m.bias
+                    z = F.conv2d(rat, w, bias=b, stride=m.stride, padding=m.padding)
+                elif isinstance(m, nn.Linear):
+                    w = F.relu(m.weight)
+                    # w = m.weight
+                    b = m.bias
+                    z = F.linear(rat, w, b)
+                else:
+                    z = m(rat)
+                z = z + 1e-9 + 0.25 * ((z ** 2).mean()**.5).data
                 s = (x / z).data
-                # (z * s).sum().backward()
-                # c = rat.grad
-                c = torch.autograd.grad((z * s).sum(), rat, retain_graph=True,
-                                    create_graph=True)[0]
+                if isinstance(m, nn.Linear):
+                    c = F.linear(s, w.t())
+                else:
+                    c = torch.autograd.grad((z * s).sum(), 
+                                            rat, 
+                                            retain_graph=True,
+                                            create_graph=True)[0]
                 x = (rat * c).data
         assert len(ratio) == 0
 
@@ -155,7 +168,6 @@ class BrewModel(nn.Module):
     # ==============================
     # BREW layers
     # ==============================
-    @torch.enable_grad()
     def backward_linear_impl(self, x, mlist, ratio, b_hat=None):
         rats = []
         max_len = mlist.__len__()
