@@ -278,13 +278,16 @@ class BrewModel(nn.Module):
 
         return x, b_hat
 
-    def forward(self, x):
+    def forward(self, x, return_ratios=False):
         ratios = [[], []]
 
         x = self.forward_impl(x, self.encoder, ratios[0])
         x = self.forward_impl(x, self.decoder, ratios[1])
-        
-        return x, ratios
+
+        if return_ratios:
+            return x, ratios
+        else:
+            return x
 
 
 def make_layers(in_channels , cfg, batch_norm=False, bias=False):

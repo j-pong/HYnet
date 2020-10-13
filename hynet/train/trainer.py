@@ -10,6 +10,8 @@ from typing import Optional
 from typing import Tuple
 from typing import Sequence
 
+import numpy as np
+
 import humanfriendly
 import torch
 from typeguard import check_argument_types
@@ -284,7 +286,7 @@ class ImgrTrainer(Trainer):
                 for i in range(col_max):
                     for j, img in enumerate(img_list[i]):
                         plt.subplot(col_max, row_max, i * row_max + (j + 1))
-                        plt.imshow(img[idx].detach().cpu().numpy(), interpolation='nearest')
+                        plt.imshow(img[idx].detach().cpu().numpy(), cmap='seismic')
                         plt.colorbar()
 
                 if output_dir is not None:

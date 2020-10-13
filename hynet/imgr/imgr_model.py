@@ -18,6 +18,11 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
 
+from captum.attr import IntegratedGradients
+from captum.attr import Saliency
+from captum.attr import DeepLift
+from captum.attr import NoiseTunnel
+
 def minimaxn(x, dim):
     max_x = torch.max(x, dim=dim, keepdim=True)[0]
     min_x = torch.min(x, dim=dim, keepdim=True)[0]
@@ -29,6 +34,14 @@ def minimaxn(x, dim):
     
     return x
 
+def attribute_image_features(net, target, algorithm, input, **kwargs):
+    net.zero_grad()
+    tensor_attributions = algorithm.attribute(input,
+                                              target=target,
+                                              **kwargs
+                                             )
+    
+    return tensor_attributions
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
 
@@ -37,7 +50,8 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
         # task related
         self.brew_excute = True
-        self.max_iter = 5
+        self.max_iter = 3
+        self.xai_mode = 'brew'
 
         # data related
         self.in_ch = 3
@@ -51,7 +65,7 @@ class HynetImgrModel(AbsESPnetModel):
         self.criterion = nn.CrossEntropyLoss()
         self.mse = nn.MSELoss()
 
-    def shapley_value(self, attn):
+    def pn_decomp(self, attn):
         attn_pos = torch.relu(attn)
         attn_neg = torch.relu(-1.0 * attn)
 
@@ -104,8 +118,11 @@ class HynetImgrModel(AbsESPnetModel):
             if self.brew_excute:
                 if i > 0:
                     image = image * attn
-            # logit, ratios = self.model(image)
-            logit, ratios = self.model.forward_lrp(image)
+
+            if self.xai_mode == 'lrp_custom':
+                logit, ratios = self.model.forward_lrp(image)
+            else:
+                logit, ratios = self.model.forward(image, return_ratios=True)
             
             # caculate measurment 
             if i == 0: # i < self.max_iter - 1: 
@@ -116,48 +133,76 @@ class HynetImgrModel(AbsESPnetModel):
 
             # inverse attention with feature 
             if self.brew_excute:
-                # logit_hat, b_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
-                # if b_hat is not None:
-                #     logit_hat_ = logit_hat + b_hat
-                # else:
-                #     logit_hat_ = logit_hat
-                # logger['loss_brew'] = self.mse(logit, logit_hat_).detach()
-                logit_hat = logit
-                
-                # label generation
-                logit_softmax = torch.softmax(logit_hat, dim=-1)
-                mask = F.one_hot(label, num_classes=self.out_ch).bool()
-                logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                # attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
-                attn_cent = self.backward_lrp(logit_softmax_cent, copy.deepcopy(ratios))
-                logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                # attn_other = self.backward_linear(logit_softmax_other, ratios)
-                attn_other = self.backward_lrp(logit_softmax_other, ratios)
-                
-                # sign-field
-                # sign = torch.sign(image)
-                attn = attn_cent 
-                # attn = attn * sign
-                attn_pos, attn_neg = self.shapley_value(attn)
+                if self.xai_mode == 'brew':
+                    logit_hat, b_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
+                    if b_hat is not None:
+                        logit_hat_ = logit_hat + b_hat
+                    else:
+                        logit_hat_ = logit_hat
+                    logger['loss_brew'] = self.mse(logit, logit_hat_).detach()
+                    # label generation
+                    logit_softmax = torch.softmax(logit_hat, dim=-1)
+                    mask = F.one_hot(label, num_classes=self.out_ch).bool()
 
-                # attention normalization
-                attn = attn.flatten(start_dim=2) 
-                attn = minimaxn(attn, dim=-1)
-                attn = attn.view(b_sz, -1, in_h, in_w).detach()
+                    logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                    attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                    logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                    attn_other = self.backward_linear(logit_softmax_other, ratios)
+
+                    # sign-field
+                    sign = torch.sign(image)
+                    attn = attn_cent 
+                    attn = attn * sign
+                elif self.xai_mode == 'lrp_custom':
+                    # label generation
+                    logit_softmax = torch.softmax(logit, dim=-1)
+                    mask = F.one_hot(label, num_classes=self.out_ch).bool()
+
+                    logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                    attn_cent = self.backward_lrp(logit_softmax_cent, copy.deepcopy(ratios))
+                    logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                    attn_other = self.backward_lrp(logit_softmax_other, ratios)
+
+                    attn = attn_cent
+                elif self.xai_mode == 'saliency':
+                    saliency = Saliency(self.model)
+                    grads = saliency.attribute(image, target=label)
+                    attn = grads.squeeze()
+                elif self.xai_mode == 'ig':
+                    ig = IntegratedGradients(self.model)
+                    attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
+                                                                baselines=image * 0, 
+                                                                return_convergence_delta=True)
+                    attn = attr_ig.squeeze()
+                elif self.xai_mode == 'ig_nt':
+                    ig = IntegratedGradients(self.model)
+                    nt = NoiseTunnel(ig)
+                    attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
+                                                            baselines=image * 0, 
+                                                            nt_type='smoothgrad_sq',
+                                                            n_samples=100, stdevs=0.2)
+                    attn = attr_ig_nt.squeeze(0)
+                elif self.xai_mode == 'dl':
+                    dl = DeepLift(self.model)
+                    attr_dl = attribute_image_features(self.model, label, dl, image, 
+                                                        baselines=image * 0)
+                    attn = attr_dl.squeeze(0)
+                attn_pos, attn_neg = self.pn_decomp(attn)
                     
                 # 5. for logging
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_.sum(-1))
-                    attn1 = attn_other.permute(0, 2, 3, 1)
+                    attn1 = attn_pos.permute(0, 2, 3, 1)
                     logger['attns'][0].append(attn1.sum(-1))
-
-                    minmax = torch.pow(torch.abs(attn_cent), 3).mean()
-                    minmax = 10 * (torch.pow(minmax, 1.0 / 3))
-                    attn_cent = torch.clamp(attn_cent, -minmax, minmax)
-
-                    attn2 = attn_cent.permute(0, 2, 3, 1)
+                    attn2 = attn_neg.permute(0, 2, 3, 1)
                     logger['attns'][1].append(attn2.sum(-1))
+
+                # attention normalization
+                attn = attn.flatten(start_dim=2) 
+                attn = minimaxn(attn, dim=-1)
+                attn = attn.view(b_sz, -1, in_h, in_w).float().detach()
+
             else:
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
@@ -174,7 +219,7 @@ class HynetImgrModel(AbsESPnetModel):
                 loss_brew=logger['loss_brew'],
                 acc_start=logger['accs'][0],
                 acc_mid=logger['accs'][1],
-                acc_end=logger['accs'][4]
+                acc_end=logger['accs'][2]
             )
         if not self.training:
             stats['aux'] = [logger['imgs'], 
