@@ -72,6 +72,21 @@ class HynetImgrModel(AbsESPnetModel):
         
         return attn
 
+    def backward_lrp(self, y, ratios):
+        # backward
+        attn = self.model.backward_lrp_impl(y, 
+                                            self.model.decoder, 
+                                            ratios[1])
+        attn = attn.view(attn.size(0),
+                         self.model.out_channels,
+                         self.model.img_size[0],
+                         self.model.img_size[1])
+        attn = self.model.backward_lrp_impl(attn, 
+                                            self.model.encoder, 
+                                            ratios[0])
+        
+        return attn
+
     def forward(
         self,
         image: torch.Tensor,
@@ -89,7 +104,8 @@ class HynetImgrModel(AbsESPnetModel):
             if self.brew_excute:
                 if i > 0:
                     image = image * attn
-            logit, ratios = self.model(image)
+            # logit, ratios = self.model(image)
+            logit, ratios = self.model.forward_lrp(image)
             
             # caculate measurment 
             if i == 0: # i < self.max_iter - 1: 
@@ -100,32 +116,34 @@ class HynetImgrModel(AbsESPnetModel):
 
             # inverse attention with feature 
             if self.brew_excute:
-                with torch.no_grad():
-                    logit_hat, b_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
-                    if b_hat is not None:
-                        logit_hat_ = logit_hat + b_hat
-                    else:
-                        logit_hat_ = logit_hat
-                    logger['loss_brew'] = self.mse(logit, logit_hat_).detach()
-                    
-                    # label generation
-                    logit_softmax = torch.softmax(logit_hat, dim=-1)
-                    mask = F.one_hot(label, num_classes=self.out_ch).bool()
-                    logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                    attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
-                    logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                    attn_other = self.backward_linear(logit_softmax_other, ratios)
-                    
-                    # sign-field
-                    sign = torch.sign(image)
-                    attn = attn_cent 
-                    attn = attn * sign
-                    attn_pos, attn_neg = self.shapley_value(attn)
+                # logit_hat, b_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
+                # if b_hat is not None:
+                #     logit_hat_ = logit_hat + b_hat
+                # else:
+                #     logit_hat_ = logit_hat
+                # logger['loss_brew'] = self.mse(logit, logit_hat_).detach()
+                logit_hat = logit
+                
+                # label generation
+                logit_softmax = torch.softmax(logit_hat, dim=-1)
+                mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                # attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                attn_cent = self.backward_lrp(logit_softmax_cent, copy.deepcopy(ratios))
+                logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                # attn_other = self.backward_linear(logit_softmax_other, ratios)
+                attn_other = self.backward_lrp(logit_softmax_other, ratios)
+                
+                # sign-field
+                sign = torch.sign(image)
+                attn = attn_cent 
+                attn = attn * sign
+                attn_pos, attn_neg = self.shapley_value(attn)
 
-                    # attention normalization
-                    attn = attn.flatten(start_dim=2) 
-                    attn = minimaxn(attn, dim=-1)
-                    attn = attn.view(b_sz, -1, in_h, in_w)
+                # attention normalization
+                attn = attn.flatten(start_dim=2) 
+                attn = minimaxn(attn, dim=-1)
+                attn = attn.view(b_sz, -1, in_h, in_w).detach()
                     
                 # 5. for logging
                 if not self.training:
