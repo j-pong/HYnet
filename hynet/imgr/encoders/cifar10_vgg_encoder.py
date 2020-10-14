@@ -9,7 +9,7 @@ class EnDecoder(BrewModel):
     def __init__(self,
                  in_channels,
                  num_classes,
-                 bias=True):
+                 bias=False):
         super().__init__()
 
         # self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M']

@@ -18,9 +18,9 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
 
-from captum.attr import IntegratedGradients
+from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency
-from captum.attr import DeepLift
+from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
 def minimaxn(x, dim):
@@ -146,10 +146,12 @@ class HynetImgrModel(AbsESPnetModel):
                         # label generation
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        attn_cent, rhos = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                        attn_cent, rhos_ = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                        if rhos is not None:
+                            rhos = rhos_ # rhos element multiplication needs
                         logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
                         attn_other, _ = self.backward_linear(logit_softmax_other, ratios)
-                        
+
                         # sign-field
                         sign = torch.sign(image)
                         attn = attn_cent 
@@ -180,13 +182,19 @@ class HynetImgrModel(AbsESPnetModel):
                         nt = NoiseTunnel(ig)
                         attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
                                                                 baselines=image * 0, 
-                                                                nt_type='smoothgrad_sq',
-                                                                n_samples=100, stdevs=0.2)
+                                                                nt_type='smoothgrad',
+                                                                n_samples=4, stdevs=0.02)
                         attn = attr_ig_nt.squeeze(0)
                     elif self.xai_mode == 'dl':
                         dl = DeepLift(self.model)
                         attr_dl = attribute_image_features(self.model, label, dl, image, 
                                                             baselines=image * 0)
+                        attn = attr_dl.squeeze(0)
+                    elif self.xai_mode == 'dls':
+                        dl = DeepLiftShap(self.model)
+                        attr_dl, delta = attribute_image_features(self.model, label, dl, image, 
+                                                            baselines=image * 0, 
+                                                            return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
                     attn_pos, attn_neg = self.pn_decomp(attn)
                         
@@ -194,7 +202,7 @@ class HynetImgrModel(AbsESPnetModel):
                     if not self.training:
                         image_ = image.permute(0, 2, 3, 1)
                         logger['imgs'].append(image_.sum(-1))
-                        attn1 = attn_pos.permute(0, 2, 3, 1)
+                        attn1 = attn.permute(0, 2, 3, 1)
                         logger['attns'][0].append(attn1.sum(-1))
                         attn2 = attn_neg.permute(0, 2, 3, 1)
                         logger['attns'][1].append(attn2.sum(-1))
@@ -204,7 +212,7 @@ class HynetImgrModel(AbsESPnetModel):
                     attn = minimaxn(attn, dim=-1)
                     attn = attn.view(b_sz, -1, in_h, in_w).float().detach()
 
-            else:
+            else: 
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_)
@@ -214,8 +222,6 @@ class HynetImgrModel(AbsESPnetModel):
         loss = 0.0
         for los in losses:
             loss += los
-        # prevent backpropagation
-        # loss *= 0
 
         stats = dict(
                 loss=loss.detach(),
