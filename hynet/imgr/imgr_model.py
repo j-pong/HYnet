@@ -133,93 +133,92 @@ class HynetImgrModel(AbsESPnetModel):
 
             # inverse attention with feature 
             if self.brew_excute:
-                if self.xai_mode == 'brew':
-                    logit_hat, b_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
-                    if b_hat is not None:
-                        logit_hat_ = logit_hat + b_hat
-                    else:
-                        logit_hat_ = logit_hat
-                    logger['loss_brew'] = self.mse(logit, logit_hat_).detach()
-                    # label generation
-                    logit_softmax = torch.softmax(logit_hat, dim=-1)
-                    mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                with torch.no_grad():
+                    if self.xai_mode == 'brew':
+                        logit_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
+                        logit_softmax = torch.softmax(logit_hat, dim=-1)
+                        logger['loss_brew'] = self.mse(logit, logit_hat).detach()
 
-                    logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                    attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
-                    logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                    attn_other = self.backward_linear(logit_softmax_other, ratios)
+                        # label generation
+                        mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                        logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                        attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                        logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                        attn_other = self.backward_linear(logit_softmax_other, ratios)
 
-                    # sign-field
-                    sign = torch.sign(image)
-                    attn = attn_cent 
-                    attn = attn * sign
-                elif self.xai_mode == 'lrp_custom':
-                    # label generation
-                    logit_softmax = torch.softmax(logit, dim=-1)
-                    mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                        # sign-field
+                        sign = torch.sign(image)
+                        attn = attn_cent 
+                        attn = attn * sign
+                    elif self.xai_mode == 'lrp_custom':
+                        # label generation
+                        logit_softmax = torch.softmax(logit, dim=-1)
+                        mask = F.one_hot(label, num_classes=self.out_ch).bool()
 
-                    logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                    attn_cent = self.backward_lrp(logit_softmax_cent, copy.deepcopy(ratios))
-                    logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                    attn_other = self.backward_lrp(logit_softmax_other, ratios)
+                        logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                        attn_cent = self.backward_lrp(logit_softmax_cent, copy.deepcopy(ratios))
+                        logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                        attn_other = self.backward_lrp(logit_softmax_other, ratios)
 
-                    attn = attn_cent
-                elif self.xai_mode == 'saliency':
-                    saliency = Saliency(self.model)
-                    grads = saliency.attribute(image, target=label)
-                    attn = grads.squeeze()
-                elif self.xai_mode == 'ig':
-                    ig = IntegratedGradients(self.model)
-                    attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
+                        attn = attn_cent
+                    elif self.xai_mode == 'saliency':
+                        saliency = Saliency(self.model)
+                        grads = saliency.attribute(image, target=label)
+                        attn = grads.squeeze()
+                    elif self.xai_mode == 'ig':
+                        ig = IntegratedGradients(self.model)
+                        attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
+                                                                    baselines=image * 0, 
+                                                                    return_convergence_delta=True)
+                        attn = attr_ig.squeeze()
+                    elif self.xai_mode == 'ig_nt':
+                        ig = IntegratedGradients(self.model)
+                        nt = NoiseTunnel(ig)
+                        attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
                                                                 baselines=image * 0, 
-                                                                return_convergence_delta=True)
-                    attn = attr_ig.squeeze()
-                elif self.xai_mode == 'ig_nt':
-                    ig = IntegratedGradients(self.model)
-                    nt = NoiseTunnel(ig)
-                    attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
-                                                            baselines=image * 0, 
-                                                            nt_type='smoothgrad_sq',
-                                                            n_samples=100, stdevs=0.2)
-                    attn = attr_ig_nt.squeeze(0)
-                elif self.xai_mode == 'dl':
-                    dl = DeepLift(self.model)
-                    attr_dl = attribute_image_features(self.model, label, dl, image, 
-                                                        baselines=image * 0)
-                    attn = attr_dl.squeeze(0)
-                attn_pos, attn_neg = self.pn_decomp(attn)
-                    
-                # 5. for logging
-                if not self.training:
-                    image_ = image.permute(0, 2, 3, 1)
-                    logger['imgs'].append(image_.sum(-1))
-                    attn1 = attn_pos.permute(0, 2, 3, 1)
-                    logger['attns'][0].append(attn1.sum(-1))
-                    attn2 = attn_neg.permute(0, 2, 3, 1)
-                    logger['attns'][1].append(attn2.sum(-1))
+                                                                nt_type='smoothgrad_sq',
+                                                                n_samples=100, stdevs=0.2)
+                        attn = attr_ig_nt.squeeze(0)
+                    elif self.xai_mode == 'dl':
+                        dl = DeepLift(self.model)
+                        attr_dl = attribute_image_features(self.model, label, dl, image, 
+                                                            baselines=image * 0)
+                        attn = attr_dl.squeeze(0)
+                    attn_pos, attn_neg = self.pn_decomp(attn)
+                        
+                    # 5. for logging
+                    if not self.training:
+                        image_ = image.permute(0, 2, 3, 1)
+                        logger['imgs'].append(image_.sum(-1))
+                        attn1 = attn_pos.permute(0, 2, 3, 1)
+                        logger['attns'][0].append(attn1.sum(-1))
+                        attn2 = attn_neg.permute(0, 2, 3, 1)
+                        logger['attns'][1].append(attn2.sum(-1))
 
-                # attention normalization
-                attn = attn.flatten(start_dim=2) 
-                attn = minimaxn(attn, dim=-1)
-                attn = attn.view(b_sz, -1, in_h, in_w).float().detach()
+                    # attention normalization
+                    attn = attn.flatten(start_dim=2) 
+                    attn = minimaxn(attn, dim=-1)
+                    attn = attn.view(b_sz, -1, in_h, in_w).float().detach()
 
             else:
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_)
-                    logger['attns'][0].append(image[:,:,:,0])
-                    logger['attns'][1].append(image[:,:,:,1])
+                    logger['attns'][0].append(image_[:,:,:,0])
+                    logger['attns'][1].append(image_[:,:,:,1])
 
         loss = 0.0
         for los in losses:
             loss += los
+        # prevent backpropagation
+        # loss *= 0
 
         stats = dict(
                 loss=loss.detach(),
                 loss_brew=logger['loss_brew'],
                 acc_start=logger['accs'][0],
                 acc_mid=logger['accs'][1],
-                acc_end=logger['accs'][2]
+                acc_end=logger['accs'][-1]
             )
         if not self.training:
             stats['aux'] = [logger['imgs'], 
