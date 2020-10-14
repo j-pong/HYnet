@@ -37,11 +37,12 @@ def linear_linear(x, m, r=None):
         w = m.weight
         b = m.bias
                     
-        # w = r.unsqueeze(2) * w.unsqueeze(0)
-        # x = torch.matmul(x.unsqueeze(1), w).squeeze(1)
         if r is not None:
             x = x * r
         x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
+        # Todo(j-pong): check this line for equal to original
+        # w = r.unsqueeze(2) * w.unsqueeze(0)
+        # x = torch.matmul(x.unsqueeze(1), w).squeeze(1)
     else:                
         raise AttributeError("This module is not approprate to this function.")
     
@@ -168,6 +169,7 @@ class BrewModel(nn.Module):
     # ==============================
     def backward_linear_impl(self, x, mlist, ratio):
         rats = []
+        rho = []
         max_len = mlist.__len__()
         for idx in range(max_len):
             m = mlist.__getitem__(max_len - idx - 1)
@@ -179,6 +181,7 @@ class BrewModel(nn.Module):
                     for r in rats:
                         rat = r * rat
                     rats = []
+                rho.append(rat)
                 x = linear_conv2d(x, m, rat)
             elif isinstance(m, nn.Linear):
                 if len(rats) == 0:
@@ -188,6 +191,7 @@ class BrewModel(nn.Module):
                     for r in rats:
                         rat = r * rat
                     rats = []
+                rho.append(rat)
                 x = linear_linear(x, m, rat)
             elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
                 rats.append(ratio.pop())
@@ -202,7 +206,7 @@ class BrewModel(nn.Module):
                 raise NotImplementedError
         assert len(ratio) == 0
 
-        return x
+        return x, rho
 
     def forward_linear_impl(self, x, mlist, ratio, b_hat=None):
         for m in mlist:
@@ -251,16 +255,42 @@ class BrewModel(nn.Module):
 
         return x
 
-    def forward_impl(self, x, mlist, ratio):
+    def forward_impl(self, x, mlist, ratio, rho=None):
         for m in mlist:
-            if isinstance(m, (nn.Conv2d, nn.Linear, nn.Flatten)):
-                x = m(x)
+            if isinstance(m, nn.Conv2d):
+                if rho is not None:
+                    rh = rho.pop()
+                    w = m.weight
+                    b = m.bias
+                    if rh is not None:
+                        b = b.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                        b = b.repeat(x.size(0), 1, x.size(2), x.size(3))
+                        x = F.conv2d(x, w, stride=m.stride, padding=m.padding) + b * rh
+                    else:
+                        x = F.conv2d(x, w, bias=b, stride=m.stride, padding=m.padding)
+                else:
+                    x = m(x)
+            elif isinstance(m, nn.Linear):
+                if rho is not None:
+                    rh = rho.pop()
+                    w = m.weight
+                    b = m.bias
+                    if rh is not None:
+                        b = b.unsqueeze(0)
+                        b = b.repeat(x.size(0), 1)
+                        x = F.linear(x, w) + b * rh
+                    else:
+                        x = F.linear(x, w, b)
+                else:
+                    x = m(x)
             elif isinstance(m, (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)):
                 x, rat = calculate_ratio(x, m, training=self.training)
                 ratio.append(rat)
             elif isinstance(m, nn.MaxPool2d):
                 x, rat = m(x)
                 ratio.append(rat)
+            elif isinstance(m, nn.Flatten):
+                x = m(x)
             elif isinstance(m, nn.BatchNorm2d):
                 raise NotImplementedError
             else:
@@ -276,11 +306,15 @@ class BrewModel(nn.Module):
 
         return x
 
-    def forward(self, x, return_ratios=False):
+    def forward(self, x, return_ratios=False, rhos=None):
         ratios = [[], []]
 
-        x = self.forward_impl(x, self.encoder, ratios[0])
-        x = self.forward_impl(x, self.decoder, ratios[1])
+        if rhos is not None:
+            x = self.forward_impl(x, self.encoder, ratios[0], rhos[1])
+            x = self.forward_impl(x, self.decoder, ratios[1], rhos[0])
+        else:
+            x = self.forward_impl(x, self.encoder, ratios[0])
+            x = self.forward_impl(x, self.decoder, ratios[1])
 
         if return_ratios:
             return x, ratios

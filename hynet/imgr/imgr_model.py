@@ -72,19 +72,22 @@ class HynetImgrModel(AbsESPnetModel):
         return attn_pos, attn_neg
 
     def backward_linear(self, y, ratios):
+        rhos = []
         # backward
-        attn = self.model.backward_linear_impl(y, 
+        attn, rho = self.model.backward_linear_impl(y, 
                                                self.model.decoder, 
                                                ratios[1])
+        rhos.append(rho)
         attn = attn.view(attn.size(0),
                          self.model.out_channels,
                          self.model.img_size[0],
                          self.model.img_size[1])
-        attn = self.model.backward_linear_impl(attn, 
+        attn, rho = self.model.backward_linear_impl(attn, 
                                                self.model.encoder, 
                                                ratios[0])
+        rhos.append(rho)
         
-        return attn
+        return attn, rhos
 
     def backward_lrp(self, y, ratios):
         # backward
@@ -112,6 +115,7 @@ class HynetImgrModel(AbsESPnetModel):
                   'loss_brew': 0.0}
 
         losses = []
+        rhos = None
         for i in range(self.max_iter):
             b_sz, _, in_h, in_w = image.size()
             # feedforward neural network
@@ -122,7 +126,7 @@ class HynetImgrModel(AbsESPnetModel):
             if self.xai_mode == 'lrp_custom':
                 logit, ratios = self.model.forward_lrp(image)
             else:
-                logit, ratios = self.model.forward(image, return_ratios=True)
+                logit, ratios = self.model.forward(image, return_ratios=True, rhos=rhos)
             
             # caculate measurment 
             if i == 0: # i < self.max_iter - 1: 
@@ -142,9 +146,21 @@ class HynetImgrModel(AbsESPnetModel):
                         # label generation
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        attn_cent = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
+                        attn_cent, rhos = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
                         logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        attn_other = self.backward_linear(logit_softmax_other, ratios)
+                        attn_other, _ = self.backward_linear(logit_softmax_other, ratios)
+
+                        # for rh in rhos[0]:
+                        #     if rh is not None:
+                        #         print(rh.size())
+                        #     else:
+                        #         print(rh)
+                        # for rh in rhos[1]:
+                        #     if rh is not None:
+                        #         print(rh.size())
+                        #     else:
+                        #         print(rh)
+                        # exit()
 
                         # sign-field
                         sign = torch.sign(image)
