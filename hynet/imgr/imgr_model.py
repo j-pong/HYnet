@@ -50,7 +50,7 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
         # task related
         self.brew_excute = True
-        self.max_iter = 3
+        self.max_iter = 5
         self.xai_mode = 'brew'
 
         # data related
@@ -149,19 +149,7 @@ class HynetImgrModel(AbsESPnetModel):
                         attn_cent, rhos = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
                         logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
                         attn_other, _ = self.backward_linear(logit_softmax_other, ratios)
-
-                        # for rh in rhos[0]:
-                        #     if rh is not None:
-                        #         print(rh.size())
-                        #     else:
-                        #         print(rh)
-                        # for rh in rhos[1]:
-                        #     if rh is not None:
-                        #         print(rh.size())
-                        #     else:
-                        #         print(rh)
-                        # exit()
-
+                        
                         # sign-field
                         sign = torch.sign(image)
                         attn = attn_cent 
