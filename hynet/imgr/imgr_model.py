@@ -50,7 +50,7 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
         # task related
         self.brew_excute = True
-        self.max_iter = 5
+        self.max_iter = 3
         self.xai_mode = 'brew'
 
         # data related
@@ -70,24 +70,6 @@ class HynetImgrModel(AbsESPnetModel):
         attn_neg = torch.relu(-1.0 * attn)
 
         return attn_pos, attn_neg
-
-    def backward_linear(self, y, ratios):
-        rhos = []
-        # backward
-        attn, rho = self.model.backward_linear_impl(y, 
-                                               self.model.decoder, 
-                                               ratios[1])
-        rhos.append(rho)
-        attn = attn.view(attn.size(0),
-                         self.model.out_channels,
-                         self.model.img_size[0],
-                         self.model.img_size[1])
-        attn, rho = self.model.backward_linear_impl(attn, 
-                                               self.model.encoder, 
-                                               ratios[0])
-        rhos.append(rho)
-        
-        return attn, rhos
 
     def backward_lrp(self, y, ratios):
         # backward
@@ -115,21 +97,26 @@ class HynetImgrModel(AbsESPnetModel):
                   'loss_brew': 0.0}
 
         losses = []
-        rhos = None
         for i in range(self.max_iter):
             b_sz, _, in_h, in_w = image.size()
             # feedforward neural network
             if self.brew_excute:
+                # adversarial attack 
+                # last_i = self.max_iter - 1
+                # if i > 0 and last_i > i:
+                #     image = image * (1 - attn)
+                # elif i == last_i:
+                #     image = image * attn
+                # superposition disentangling
                 if i > 0:
                     image = image * attn
-
             if self.xai_mode == 'lrp_custom':
                 logit, ratios = self.model.forward_lrp(image)
             else:
-                logit, ratios = self.model.forward(image, return_ratios=True, rhos=rhos)
+                logit = self.model.forward(image)
             
             # caculate measurment 
-            if i == 0: # i < self.max_iter - 1: 
+            if i < self.max_iter - 1: 
                 losses.append(self.criterion(logit, label))
             # other measurment
             acc = self._calc_acc(logit, label)        
@@ -139,18 +126,17 @@ class HynetImgrModel(AbsESPnetModel):
             if self.brew_excute:
                 with torch.no_grad():
                     if self.xai_mode == 'brew':
-                        logit_hat = self.model.forward_linear(image, copy.deepcopy(ratios))
+                        logit_hat = self.model.forward_linear(image)
                         logit_softmax = torch.softmax(logit_hat, dim=-1)
                         logger['loss_brew'] = self.mse(logit, logit_hat).detach()
 
                         # label generation
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        attn_cent, rhos_ = self.backward_linear(logit_softmax_cent, copy.deepcopy(ratios))
-                        if rhos is not None:
-                            rhos = rhos_ # rhos element multiplication needs
+                        attn_cent = self.model.backward_linear(logit_softmax_cent)
+
                         logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        attn_other, _ = self.backward_linear(logit_softmax_other, ratios)
+                        attn_other = self.model.backward_linear(logit_softmax_other)
 
                         # sign-field
                         sign = torch.sign(image)
