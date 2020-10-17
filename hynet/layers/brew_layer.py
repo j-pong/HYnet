@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 @torch.enable_grad()
-def grad_activation(x, module, mode='soft', training=True):
+def grad_activation(x, module, mode='hard', training=True):
     if training or mode == 'hard':
         x_base = x
     else:
@@ -30,20 +30,25 @@ def grad_activation(x, module, mode='soft', training=True):
         dfdx = torch.autograd.grad(x.sum(), x_base, retain_graph=True, create_graph=True)
         dfdx = dfdx[0].data
         epsil = x - dfdx * x_base
+        epsil = epsil.detach()
 
-    return x, dfdx.detach(), epsil.detach()
+    return x, dfdx.detach(), epsil
 
 def linear_linear(x, m, r=None):
     if isinstance(m, nn.Linear):
         w = m.weight
         b = m.bias
-                    
+        # if r is not None:
+        #     w_ = r.unsqueeze(2) * w.unsqueeze(0)
+        # else:
+        #     w_ = w
+        # x_hat = torch.matmul(x.unsqueeze(1), w_).squeeze(1)
+
         if r is not None:
             x = x * r
         x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
         # Todo(j-pong): check this line for equal to original
-        # w = r.unsqueeze(2) * w.unsqueeze(0)
-        # x = torch.matmul(x.unsqueeze(1), w).squeeze(1)
+        # print(F.mse_loss(x, x_hat))
     else:                
         raise AttributeError("This module is not approprate to this function.")
     

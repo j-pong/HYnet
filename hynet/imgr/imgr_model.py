@@ -112,6 +112,12 @@ class HynetImgrModel(AbsESPnetModel):
                     image = image * attn
             if self.xai_mode == 'lrp_custom':
                 logit, ratios = self.model.forward_lrp(image)
+            elif self.xai_mode == 'brew':
+                if i > 0:
+                    bm = True
+                else:
+                    bm = False
+                logit = self.model.forward(image, bias_mask=bm)
             else:
                 logit = self.model.forward(image)
             
@@ -160,8 +166,8 @@ class HynetImgrModel(AbsESPnetModel):
                     elif self.xai_mode == 'ig':
                         ig = IntegratedGradients(self.model)
                         attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
-                                                                    baselines=image * 0, 
-                                                                    return_convergence_delta=True)
+                                                                  baselines=image * 0, 
+                                                                  return_convergence_delta=True)
                         attn = attr_ig.squeeze()
                     elif self.xai_mode == 'ig_nt':
                         ig = IntegratedGradients(self.model)

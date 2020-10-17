@@ -190,7 +190,7 @@ class BrewModel(nn.Module):
                             b = b.unsqueeze(0)
                             b = b.repeat(x.size(0), 1)
                             b = a * b
-                            x = F.linear(x, w)
+                            x = F.linear(x, w) + b
                         else:
                             x = F.linear(x, w, b)   
                 else:
@@ -218,7 +218,6 @@ class BrewModel(nn.Module):
                 mlist.aug_hat["a_hat"][idx_lin] = a_hat_cum
                 # self.aug_hat["c_hat"][idx_lin] = c_hat_cum
                 a_hat_cum = None
-            
         return x
 
     def backward_linear(self, y):
