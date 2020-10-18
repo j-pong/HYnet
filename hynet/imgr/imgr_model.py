@@ -17,22 +17,13 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
+from hynet.layers.brew import attn_norm
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
-def minimaxn(x, dim):
-    max_x = torch.max(x, dim=dim, keepdim=True)[0]
-    min_x = torch.min(x, dim=dim, keepdim=True)[0]
-
-    norm = (max_x - min_x)
-    norm[norm == 0.0] = 1.0
-
-    x = (x - min_x) / norm
-    
-    return x
 
 def attribute_image_features(net, target, algorithm, input, **kwargs):
     net.zero_grad()
@@ -49,9 +40,12 @@ class HynetImgrModel(AbsESPnetModel):
         assert check_argument_types()
         super().__init__()
         # task related
-        self.brew_excute = True
+        self.brew_excute = False
         self.bias = True
-        self.max_iter = 3
+        if self.brew_excute:
+            self.max_iter = 3
+        else:
+            self.max_iter = 1
         self.xai_mode = 'brew'
 
         # data related
@@ -82,20 +76,16 @@ class HynetImgrModel(AbsESPnetModel):
                   'accs':[]}
 
         losses = []
-        last_i = self.max_iter - 1
-        for i in range(self.max_iter):
-            b_sz, _, in_h, in_w = image.size()
+        b_sz, in_ch, in_h, in_w = image.size()
+        assert self.in_ch == in_ch
 
-            if self.brew_excute:
-                # # adversarial attack 
-                # if i > 0 and last_i > i:
-                #     image = image * (1 - attn)
-                # elif i == last_i:
-                #     image = image * attn
-                # superposition disentangling
-                if i > 0:
-                    image = image * attn
-            if self.xai_mode == 'lrp_custom':
+        for i in range(self.max_iter):
+            # 1. preprocessing with each iteration
+            if i > 0:
+                attn = attn_norm(attn)
+                image = image * attn.detach()
+            # 2. forward pass for training network
+            if self.xai_mode == 'lrp':
                 logit, ratios = self.model.forward_lrp(image)
             elif self.xai_mode == 'brew':
                 if i > 0:
@@ -106,10 +96,9 @@ class HynetImgrModel(AbsESPnetModel):
             else:
                 logit = self.model.forward(image)
             
-            # caculate measurment 
+            # 3. caculate measurment 
             if i == 0: 
                 losses.append(self.criterion(logit, label))
-            # other measurment
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
 
@@ -122,16 +111,13 @@ class HynetImgrModel(AbsESPnetModel):
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
                         
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        attn_cent = self.model.backward_linear(logit_softmax_cent)
+                        attn_cent = self.model.backward_linear(image, logit_softmax_cent)
 
                         logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        attn_other = self.model.backward_linear(logit_softmax_other)
-
-                        # sign-field
-                        sign = torch.sign(image)
-                        attn = attn_cent 
-                        attn = attn * sign
-                    elif self.xai_mode == 'lrp_custom':
+                        attn_other = self.model.backward_linear(image, logit_softmax_other)
+                        
+                        attn = attn_cent
+                    elif self.xai_mode == 'lrp':
                         # label generation
                         logit_softmax = torch.softmax(logit, dim=-1)
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
@@ -171,6 +157,7 @@ class HynetImgrModel(AbsESPnetModel):
                                                             baselines=image * 0, 
                                                             return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
+                    
                     attn_pos, attn_neg = self.pn_decomp(attn)
                         
                     # 5. for logging
@@ -181,11 +168,6 @@ class HynetImgrModel(AbsESPnetModel):
                         logger['attns'][0].append(attn1.sum(-1))
                         attn2 = attn_neg.permute(0, 2, 3, 1)
                         logger['attns'][1].append(attn2.sum(-1))
-
-                    # attention normalization
-                    attn = attn.flatten(start_dim=2) 
-                    attn = minimaxn(attn, dim=-1)
-                    attn = attn.view(b_sz, -1, in_h, in_w).float().detach()
 
             else: 
                 if not self.training:
@@ -198,12 +180,19 @@ class HynetImgrModel(AbsESPnetModel):
         for los in losses:
             loss += los
 
-        stats = dict(
-                loss=loss.detach(),
-                acc_start=logger['accs'][0],
-                acc_mid=logger['accs'][1],
-                acc_end=logger['accs'][-1]
-            )
+        if self.max_iter > 1:
+            stats = dict(
+                    loss=loss.detach(),
+                    acc_start=logger['accs'][0],
+                    acc_mid=logger['accs'][1],
+                    acc_end=logger['accs'][-1]
+                )
+        else:
+            stats = dict(
+                    loss=loss.detach(),
+                    acc_start=logger['accs'][0]
+                )
+                
         if not self.training:
             stats['aux'] = [logger['imgs'], 
                             logger['attns'][0],

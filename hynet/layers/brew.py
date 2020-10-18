@@ -12,6 +12,27 @@ lienar_layer = (nn.Conv2d, nn.Linear)
 piece_wise_activation = (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)
 piece_shrink_activation = (nn.MaxPool1d, nn.MaxPool2d)
 
+def minimaxn(x, dim):
+    max_x = torch.max(x, dim=dim, keepdim=True)[0]
+    min_x = torch.min(x, dim=dim, keepdim=True)[0]
+
+    norm = (max_x - min_x)
+    norm[norm == 0.0] = 1.0
+
+    x = (x - min_x) / norm
+    
+    return x
+
+def attn_norm(attn):
+    # attention normalization
+    b_sz, ch, in_h, in_w = attn.size()
+    # attn normalization
+    attn = attn.flatten(start_dim=2) 
+    attn = minimaxn(attn, dim=-1)
+    attn = attn.view(b_sz, ch, in_h, in_w).float()
+    
+    return attn
+
 class LRPModel(nn.Module):
     @torch.enable_grad()
     def backward_lrp_impl(self, x, mlist, ratio):
@@ -261,10 +282,14 @@ class BrewModel(nn.Module):
                 a_hat_cum = None
         return x
 
-    def backward_linear(self, y):
+    def backward_linear(self, x, y):
         # backward
         attn = self.backward_linear_impl(y, self.decoder)
         attn = self.backward_linear_impl(attn, self.encoder)
+
+        # sign-field
+        sign = torch.sign(x)
+        attn = attn * sign
         
         return attn
 

@@ -16,7 +16,7 @@ def grad_activation(x, module, mode='hard', training=True):
     x = module(x_base)
 
     if mode == 'hard':
-        # approximate grad of activation f(x)/x = f'(0)
+        # approximate grad of activation f(x) / x = f'(0)
         dfdx = x / x_base
         # prevent inf or nan case
         mask = (x_base == 0)
