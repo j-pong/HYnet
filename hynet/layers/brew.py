@@ -33,6 +33,28 @@ def attn_norm(attn):
     
     return attn
 
+def linear_layer_with_a(x, a, m):
+    w = m.weight
+    b = m.bias
+    if isinstance(m, nn.Conv2d):
+        if a is not None:
+            b = b.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            b = b.repeat(x.size(0), 1, x.size(2), x.size(3))
+            b = a * b
+            x = F.conv2d(x, w, stride=m.stride, padding=m.padding) + b
+        else:
+            x = F.conv2d(x, w, bias=b, stride=m.stride, padding=m.padding)
+    elif isinstance(m, nn.Linear):
+        if a is not None:
+            b = b.unsqueeze(0)
+            b = b.repeat(x.size(0), 1)
+            b = a * b
+            x = F.linear(x, w) + b
+        else:
+            x = F.linear(x, w, b)
+    
+    return x
+
 class LRPModel(nn.Module):
     @torch.enable_grad()
     def backward_lrp_impl(self, x, mlist, ratio):
@@ -151,8 +173,8 @@ class BrewModel(nn.Module):
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
-                a_hat = mlist.aug_hat["a_hat"][idx]
-                x = linear_maxpool2d(x, m, a_hat)
+                ind = mlist.aug_hat["c_hat"][idx]
+                x = linear_maxpool2d(x, m, ind)
             elif isinstance(m, nn.Flatten):
                 x = x.view(self.attn_size[0], self.attn_size[1],
                            self.attn_size[2], self.attn_size[3])
@@ -169,27 +191,9 @@ class BrewModel(nn.Module):
             if isinstance(m, lienar_layer):
                 if bias_mask:
                     a = mlist.aug_hat_prev["a_hat"][idx]
-                    w = m.weight
-                    b = m.bias
-                    if isinstance(m, nn.Conv2d):
-                        if a is not None:
-                            b = b.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-                            b = b.repeat(x.size(0), 1, x.size(2), x.size(3))
-                            b = a * b
-                            x = F.conv2d(x, w, stride=m.stride, padding=m.padding) + b
-                        else:
-                            x = F.conv2d(x, w, bias=b, stride=m.stride, padding=m.padding)
-                    elif isinstance(m, nn.Linear):
-                        if a is not None:
-                            b = b.unsqueeze(0)
-                            b = b.repeat(x.size(0), 1)
-                            b = a * b
-                            x = F.linear(x, w) + b
-                        else:
-                            x = F.linear(x, w, b)
+                    x = linear_layer_with_a(x, a, m)
                 else:
                     x = m(x)
-
                 a = mlist.aug_hat["a_hat"][idx]
                 # c = self.aug_hat["c_hat"][idx]
                 if a is not None:
@@ -199,9 +203,9 @@ class BrewModel(nn.Module):
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
-                a = mlist.aug_hat["a_hat"][idx]
+                ind = mlist.aug_hat["c_hat"][idx]
                 x_flat = x.flatten(start_dim=2)
-                x = x_flat.gather(dim=2, index=a.flatten(start_dim=2)).view_as(a)
+                x = x_flat.gather(dim=2, index=ind.flatten(start_dim=2)).view_as(ind)
             elif isinstance(m, nn.Flatten):
                 x = m(x)
             else:
@@ -221,12 +225,12 @@ class BrewModel(nn.Module):
             m = mlist.__getitem__(idx)
             # make save activation flag
             if idx == (max_len - 1):
-                if isinstance(m, lienar_layer) or isinstance(m, piece_wise_activation):
+                if isinstance(m, lienar_layer) or isinstance(m, piece_wise_activation)  or isinstance(m, piece_shrink_activation):
                     save_aug = True
                 else:
                     save_aug = False
-            elif isinstance(mlist.__getitem__(idx + 1), lienar_layer) or isinstance(mlist.__getitem__(idx + 1), piece_shrink_activation):
-                if isinstance(m, piece_wise_activation):
+            elif isinstance(mlist.__getitem__(idx + 1), lienar_layer):
+                if isinstance(m, piece_wise_activation) or isinstance(m, piece_shrink_activation):
                     save_aug = True
                 else:
                     save_aug = False
@@ -236,25 +240,8 @@ class BrewModel(nn.Module):
             # forward processs
             if isinstance(m, lienar_layer):
                 if bias_mask:
-                    a = mlist.aug_hat["a_hat"][idx]
-                    w = m.weight
-                    b = m.bias
-                    if isinstance(m, nn.Conv2d):
-                        if a is not None:
-                            b = b.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-                            b = b.repeat(x.size(0), 1, x.size(2), x.size(3))
-                            b = a * b
-                            x = F.conv2d(x, w, stride=m.stride, padding=m.padding) + b
-                        else:
-                            x = F.conv2d(x, w, bias=b, stride=m.stride, padding=m.padding)
-                    elif isinstance(m, nn.Linear):
-                        if a is not None:
-                            b = b.unsqueeze(0)
-                            b = b.repeat(x.size(0), 1)
-                            b = a * b
-                            x = F.linear(x, w) + b
-                        else:
-                            x = F.linear(x, w, b)
+                    a = mlist.aug_hat_prev["a_hat"][idx]
+                    x = linear_layer_with_a(x, a, m)
                 else:
                     x = m(x)
                 idx_lin = idx
@@ -267,8 +254,12 @@ class BrewModel(nn.Module):
                     a_hat_cum = a_hat
                     # c_hat_cum = c_hat
             elif isinstance(m, piece_shrink_activation):
-                x, a_hat = m(x)
-                mlist.aug_hat["a_hat"][idx] = a_hat
+                x, a_hat, ind = grad_activation(x, m, training=self.training, shrink=True)
+                if a_hat_cum is not None:
+                    a_hat_cum = a_hat * a_hat_cum
+                else:
+                    a_hat_cum = a_hat
+                mlist.aug_hat["c_hat"][idx] = ind
             elif isinstance(m, nn.Flatten):
                 x = m(x)
             else:
@@ -304,8 +295,8 @@ class BrewModel(nn.Module):
         x_linear = self.forward_linear_impl(x_linear, self.decoder, bias_mask)
 
         # linearization error check
-        loss = F.mse_loss(x_non_linear, x_linear)
-        if loss > 1e-19:
-            raise ValueError("loss of brew {} bigger than 1e-19".format(loss))
+        loss_brew = F.mse_loss(x_non_linear, x_linear)
+        if loss_brew > 1e-19:
+            raise ValueError("loss of brew {} bigger than 1e-19".format(loss_brew))
 
         return x_non_linear

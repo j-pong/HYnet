@@ -40,9 +40,9 @@ class HynetImgrModel(AbsESPnetModel):
         assert check_argument_types()
         super().__init__()
         # task related
-        self.brew_excute = False
-        self.bias = True
-        if self.brew_excute:
+        self.xai_excute = True
+        self.bias = False
+        if self.xai_excute:
             self.max_iter = 3
         else:
             self.max_iter = 1
@@ -81,18 +81,21 @@ class HynetImgrModel(AbsESPnetModel):
 
         for i in range(self.max_iter):
             # 1. preprocessing with each iteration
-            if i > 0:
-                attn = attn_norm(attn)
-                image = image * attn.detach()
-            # 2. forward pass for training network
-            if self.xai_mode == 'lrp':
-                logit, ratios = self.model.forward_lrp(image)
-            elif self.xai_mode == 'brew':
+            if self.xai_excute:
                 if i > 0:
-                    bm = True
+                    attn = attn_norm(attn)
+                    image = image * attn.detach()
+                # 2. forward pass for training network
+                if self.xai_mode == 'lrp':
+                    logit, ratios = self.model.forward_lrp(image)
+                elif self.xai_mode == 'brew' and self.bias:
+                    if i > 0:
+                        bm = True
+                    else:
+                        bm = False
+                    logit = self.model.forward(image, bias_mask=bm)
                 else:
-                    bm = False
-                logit = self.model.forward(image, bias_mask=bm)
+                    logit = self.model.forward(image)
             else:
                 logit = self.model.forward(image)
             
@@ -103,7 +106,7 @@ class HynetImgrModel(AbsESPnetModel):
             logger['accs'].append(acc)
 
             # inverse attention with feature 
-            if self.brew_excute:
+            if self.xai_excute:
                 with torch.no_grad():
                     if self.xai_mode == 'brew':
                         # label generation

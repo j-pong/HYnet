@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 @torch.enable_grad()
-def grad_activation(x, module, mode='hard', training=True):
+def grad_activation(x, module, mode='soft', training=True, shrink=False):
     if training or mode == 'hard':
         x_base = x
     else:
@@ -14,6 +14,9 @@ def grad_activation(x, module, mode='hard', training=True):
         x_base = torch.autograd.Variable(x)
         x_base.requires_grad = True
     x = module(x_base)
+    if isinstance(x, tuple):
+        ind = x[1]
+        x = x[0]
 
     if mode == 'hard':
         # approximate grad of activation f(x) / x = f'(0)
@@ -24,13 +27,16 @@ def grad_activation(x, module, mode='hard', training=True):
         epsil = 0.0
     elif mode == 'soft':
         # checkout inplace option for accuratly gradient
-        if module.inplace is not None:
+        if (not shrink) and (module.inplace is not None):
             assert module.inplace is False
         # caculate grad via auto grad respect to x_base
         dfdx = torch.autograd.grad(x.sum(), x_base, retain_graph=True, create_graph=True)
         dfdx = dfdx[0].data
-        epsil = x - dfdx * x_base
-        epsil = epsil.detach()
+        if shrink:
+            epsil = ind
+        else:
+            epsil = x - dfdx * x_base
+            epsil = epsil.detach()
 
     return x, dfdx.detach(), epsil
 
@@ -43,7 +49,6 @@ def linear_linear(x, m, r=None):
         # else:
         #     w_ = w
         # x_hat = torch.matmul(x.unsqueeze(1), w_).squeeze(1)
-
         if r is not None:
             x = x * r
         x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
