@@ -50,6 +50,7 @@ class HynetImgrModel(AbsESPnetModel):
         super().__init__()
         # task related
         self.brew_excute = True
+        self.bias = True
         self.max_iter = 3
         self.xai_mode = 'brew'
 
@@ -59,32 +60,17 @@ class HynetImgrModel(AbsESPnetModel):
 
         # network archictecture 
         self.model = EnDecoder(in_channels=self.in_ch,
-                               num_classes=self.out_ch)
+                               num_classes=self.out_ch,
+                               bias=self.bias)
                                
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
-        self.mse = nn.MSELoss()
 
     def pn_decomp(self, attn):
         attn_pos = torch.relu(attn)
         attn_neg = torch.relu(-1.0 * attn)
 
         return attn_pos, attn_neg
-
-    def backward_lrp(self, y, ratios):
-        # backward
-        attn = self.model.backward_lrp_impl(y, 
-                                            self.model.decoder, 
-                                            ratios[1])
-        attn = attn.view(attn.size(0),
-                         self.model.out_channels,
-                         self.model.img_size[0],
-                         self.model.img_size[1])
-        attn = self.model.backward_lrp_impl(attn, 
-                                            self.model.encoder, 
-                                            ratios[0])
-        
-        return attn
 
     def forward(
         self,
@@ -93,16 +79,15 @@ class HynetImgrModel(AbsESPnetModel):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         logger = {'imgs':[], 
                   'attns': [[],[]], 
-                  'accs':[],
-                  'loss_brew': 0.0}
+                  'accs':[]}
 
         losses = []
+        last_i = self.max_iter - 1
         for i in range(self.max_iter):
             b_sz, _, in_h, in_w = image.size()
-            # feedforward neural network
+
             if self.brew_excute:
-                # adversarial attack 
-                # last_i = self.max_iter - 1
+                # # adversarial attack 
                 # if i > 0 and last_i > i:
                 #     image = image * (1 - attn)
                 # elif i == last_i:
@@ -122,7 +107,7 @@ class HynetImgrModel(AbsESPnetModel):
                 logit = self.model.forward(image)
             
             # caculate measurment 
-            if i < self.max_iter - 1: 
+            if i == 0: 
                 losses.append(self.criterion(logit, label))
             # other measurment
             acc = self._calc_acc(logit, label)        
@@ -132,12 +117,10 @@ class HynetImgrModel(AbsESPnetModel):
             if self.brew_excute:
                 with torch.no_grad():
                     if self.xai_mode == 'brew':
-                        logit_hat = self.model.forward_linear(image)
-                        logit_softmax = torch.softmax(logit_hat, dim=-1)
-                        logger['loss_brew'] = self.mse(logit, logit_hat).detach()
-
                         # label generation
+                        logit_softmax = torch.softmax(logit, dim=-1)
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
+                        
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
                         attn_cent = self.model.backward_linear(logit_softmax_cent)
 
@@ -217,7 +200,6 @@ class HynetImgrModel(AbsESPnetModel):
 
         stats = dict(
                 loss=loss.detach(),
-                loss_brew=logger['loss_brew'],
                 acc_start=logger['accs'][0],
                 acc_mid=logger['accs'][1],
                 acc_end=logger['accs'][-1]

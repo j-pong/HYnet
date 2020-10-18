@@ -1,3 +1,5 @@
+import copy 
+
 import numpy as np
 
 import torch
@@ -47,6 +49,21 @@ class LRPModel(nn.Module):
 
         return x
 
+    def backward_lrp(self, y, ratios):
+        # backward
+        attn = self.model.backward_lrp_impl(y, 
+                                            self.model.decoder, 
+                                            ratios[1])
+        attn = attn.view(attn.size(0),
+                         self.model.out_channels,
+                         self.model.img_size[0],
+                         self.model.img_size[1])
+        attn = self.model.backward_lrp_impl(attn, 
+                                            self.model.encoder, 
+                                            ratios[0])
+        
+        return attn
+
     def forward_lrp_impl(self, x, mlist, ratio):
         max_len = mlist.__len__()
         for idx, m in enumerate(mlist):
@@ -88,6 +105,7 @@ class BrewModuleList(nn.ModuleList):
         super().__init__(modules)
 
         self.aug_hat = {"a_hat":{}, "c_hat":{}}
+        self.aug_hat_prev = None
 
 class BrewModel(nn.Module):
     def __init__(self):
@@ -119,26 +137,50 @@ class BrewModel(nn.Module):
                            self.attn_size[2], self.attn_size[3])
             else:
                 raise NotImplementedError
+            mlist.aug_hat_prev = copy.deepcopy(mlist.aug_hat)
 
         return x
 
-    def forward_linear_impl(self, x, mlist):
+    def forward_linear_impl(self, x, mlist, bias_mask=False):
         max_len = mlist.__len__()
         for idx in range(max_len):
             m = mlist.__getitem__(idx)
             if isinstance(m, lienar_layer):
-                a_hat = mlist.aug_hat["a_hat"][idx]
-                # c_hat = self.aug_hat["c_hat"][idx]
-                if a_hat is not None:
-                    x = m(x) * a_hat # + c_hat
+                if bias_mask:
+                    a = mlist.aug_hat_prev["a_hat"][idx]
+                    w = m.weight
+                    b = m.bias
+                    if isinstance(m, nn.Conv2d):
+                        if a is not None:
+                            b = b.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                            b = b.repeat(x.size(0), 1, x.size(2), x.size(3))
+                            b = a * b
+                            x = F.conv2d(x, w, stride=m.stride, padding=m.padding) + b
+                        else:
+                            x = F.conv2d(x, w, bias=b, stride=m.stride, padding=m.padding)
+                    elif isinstance(m, nn.Linear):
+                        if a is not None:
+                            b = b.unsqueeze(0)
+                            b = b.repeat(x.size(0), 1)
+                            b = a * b
+                            x = F.linear(x, w) + b
+                        else:
+                            x = F.linear(x, w, b)
                 else:
                     x = m(x)
+
+                a = mlist.aug_hat["a_hat"][idx]
+                # c = self.aug_hat["c_hat"][idx]
+                if a is not None:
+                    x = x * a # + c
+                else:
+                    x = x
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
-                a_hat = mlist.aug_hat["a_hat"][idx]
+                a = mlist.aug_hat["a_hat"][idx]
                 x_flat = x.flatten(start_dim=2)
-                x = x_flat.gather(dim=2, index=a_hat.flatten(start_dim=2)).view_as(a_hat)
+                x = x_flat.gather(dim=2, index=a.flatten(start_dim=2)).view_as(a)
             elif isinstance(m, nn.Flatten):
                 x = m(x)
             else:
@@ -181,8 +223,7 @@ class BrewModel(nn.Module):
                             b = b.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
                             b = b.repeat(x.size(0), 1, x.size(2), x.size(3))
                             b = a * b
-                            x = F.conv2d(x, w, stride=m.stride, padding=m.padding)
-                            x = x + b
+                            x = F.conv2d(x, w, stride=m.stride, padding=m.padding) + b
                         else:
                             x = F.conv2d(x, w, bias=b, stride=m.stride, padding=m.padding)
                     elif isinstance(m, nn.Linear):
@@ -192,7 +233,7 @@ class BrewModel(nn.Module):
                             b = a * b
                             x = F.linear(x, w) + b
                         else:
-                            x = F.linear(x, w, b)   
+                            x = F.linear(x, w, b)
                 else:
                     x = m(x)
                 idx_lin = idx
@@ -227,15 +268,19 @@ class BrewModel(nn.Module):
         
         return attn
 
-    def forward_linear(self, x):
-        x = self.forward_linear_impl(x, self.encoder)
-        x = self.forward_linear_impl(x, self.decoder)
-
-        return x
-
     def forward(self, x, bias_mask=False):
-        x = self.forward_impl(x, self.encoder, bias_mask)
-        self.attn_size = x.size()
-        x = self.forward_impl(x, self.decoder, bias_mask)
+        # regular forward pass
+        x_non_linear = self.forward_impl(x, self.encoder, bias_mask)
+        self.attn_size = x_non_linear.size()
+        x_non_linear = self.forward_impl(x_non_linear, self.decoder, bias_mask)
 
-        return x
+        # linearization
+        x_linear = self.forward_linear_impl(x, self.encoder, bias_mask)
+        x_linear = self.forward_linear_impl(x_linear, self.decoder, bias_mask)
+
+        # linearization error check
+        loss = F.mse_loss(x_non_linear, x_linear)
+        if loss > 1e-19:
+            raise ValueError("loss of brew {} bigger than 1e-19".format(loss))
+
+        return x_non_linear

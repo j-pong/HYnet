@@ -25,15 +25,16 @@ class EnDecoder(BrewModel):
     def __init__(self,
                  in_channels,
                  num_classes,
-                 bias=True):
+                 bias=False):
         super(EnDecoder, self).__init__()
 
-        self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M']
+        # self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M']
+        self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M']
         self.encoder = BrewModuleList(
             make_layers(in_channels, self.cfg, bias=bias)
         )
-        self.img_size = [2, 2]
-        self.out_channels = 512
+        self.img_size = [4, 4]
+        self.out_channels = self.cfg[-2]
         self.decoder = BrewModuleList([
             nn.Flatten(start_dim=1),
             nn.Linear(self.out_channels * self.img_size[0] * self.img_size[1], 4096, bias=bias),
