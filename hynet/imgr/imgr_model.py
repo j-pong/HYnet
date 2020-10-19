@@ -89,8 +89,10 @@ class HynetImgrModel(AbsESPnetModel):
             if self.xai_excute:
                 # 1. preprocessing with each iteration
                 if i > 0:
-                    attn = attn_norm(attn)
-                    image = image * attn.detach()
+                    max_img = torch.max(image, dim=1, keepdim=True)[0]
+                    min_img = torch.min(image, dim=1, keepdim=True)[0]
+                    attn = attn_norm(attn).detach()
+                    image = attn_norm(image * attn, max_img, min_img)
                 # 2. forward pass for training network
                 if self.xai_mode == 'lrp':
                     logit, ratios = self.model.forward_lrp(image)

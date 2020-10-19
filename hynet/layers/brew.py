@@ -12,23 +12,26 @@ lienar_layer = (nn.Conv2d, nn.Linear)
 piece_wise_activation = (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)
 piece_shrink_activation = (nn.MaxPool1d, nn.MaxPool2d)
 
-def minimaxn(x, dim):
+def minimaxn(x, dim, max_b=1.0, min_a=0.0):
     max_x = torch.max(x, dim=dim, keepdim=True)[0]
     min_x = torch.min(x, dim=dim, keepdim=True)[0]
 
     norm = (max_x - min_x)
     norm[norm == 0.0] = 1.0
 
-    x = (x - min_x) / norm
+    x = (x - min_x) * (max_b - min_a)/ norm + min_a
     
     return x
 
-def attn_norm(attn):
+def attn_norm(attn, max_b=1.0, min_a=0.0):
     # attention normalization
     b_sz, ch, in_h, in_w = attn.size()
     # attn normalization
     attn = attn.flatten(start_dim=2) 
-    attn = minimaxn(attn, dim=-1)
+    if isinstance(max_b, torch.Tensor):
+        max_b = max_b.flatten(start_dim=2)
+        min_a = min_a.flatten(start_dim=2)
+    attn = minimaxn(attn, dim=-1, max_b=max_b, min_a=min_a)
     attn = attn.view(b_sz, ch, in_h, in_w).float()
     
     return attn
@@ -54,7 +57,6 @@ class BrewModel(nn.Module):
             m = mlist.__getitem__(idx)
             if isinstance(m, lienar_layer):
                 a = mlist.aug_hat["a_hat"][idx]
-                # c_hat = self.aug_hat["c_hat"][idx]
                 if isinstance(m, nn.Conv2d):
                     x = linear_conv2d(x, m, a)
                 elif isinstance(m, nn.Linear):
@@ -62,7 +64,8 @@ class BrewModel(nn.Module):
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
-                ind = mlist.aug_hat["c_hat"][idx]
+                a = mlist.aug_hat["a_hat"][idx]
+                _, ind = m(a)
                 x = linear_maxpool2d(x, m, ind)
             elif isinstance(m, nn.Flatten):
                 x = x.view(self.attn_size[0], self.attn_size[1],
@@ -81,13 +84,14 @@ class BrewModel(nn.Module):
                 a = mlist.aug_hat["a_hat"][idx]
                 # c = self.aug_hat["c_hat"][idx]
                 if a is not None:
-                    x = x * a # + c
+                    x = a * x # + c
                 else:
                     x = x
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
-                ind = mlist.aug_hat["c_hat"][idx]
+                a = mlist.aug_hat["a_hat"][idx]
+                _, ind = m(a)
                 x_flat = x.flatten(start_dim=2)
                 x = x_flat.gather(dim=2, index=ind.flatten(start_dim=2)).view_as(ind)
             elif isinstance(m, nn.Flatten):
@@ -109,12 +113,12 @@ class BrewModel(nn.Module):
             m = mlist.__getitem__(idx)
             # make save activation flag
             if idx == (max_len - 1):
-                if isinstance(m, lienar_layer) or isinstance(m, piece_wise_activation)  or isinstance(m, piece_shrink_activation):
+                if isinstance(m, lienar_layer) or isinstance(m, piece_wise_activation):
                     save_aug = True
                 else:
                     save_aug = False
-            elif isinstance(mlist.__getitem__(idx + 1), lienar_layer):
-                if isinstance(m, piece_wise_activation) or isinstance(m, piece_shrink_activation):
+            elif isinstance(mlist.__getitem__(idx + 1), lienar_layer) or isinstance(mlist.__getitem__(idx + 1), piece_shrink_activation):
+                if isinstance(m, piece_wise_activation):
                     save_aug = True
                 else:
                     save_aug = False
@@ -129,17 +133,13 @@ class BrewModel(nn.Module):
                 x, a_hat, c_hat = grad_activation(x, m, training=self.training)
                 if a_hat_cum is not None:
                     a_hat_cum = a_hat * a_hat_cum
-                    # c_hat_cum = c_hat * c_hat_cum + c_hat
+                    # c_hat_cum = a_hat * c_hat_cum  + c_hat
                 else:
                     a_hat_cum = a_hat
                     # c_hat_cum = c_hat
             elif isinstance(m, piece_shrink_activation):
-                x, a_hat, ind = grad_activation(x, m, training=self.training, shrink=True)
-                if a_hat_cum is not None:
-                    a_hat_cum = a_hat * a_hat_cum
-                else:
-                    a_hat_cum = a_hat
-                mlist.aug_hat["c_hat"][idx] = ind
+                x, a_hat, _ = grad_activation(x, m, training=self.training, shrink=True)
+                mlist.aug_hat["a_hat"][idx] = a_hat
             elif isinstance(m, nn.Flatten):
                 x = m(x)
             else:
@@ -189,7 +189,7 @@ class BrewModel(nn.Module):
 
             # linearization error check
             loss_brew = F.mse_loss(x_non_linear, x_linear)
-            if loss_brew > 1e-19:
-                raise ValueError("loss of brew {} bigger than 1e-19".format(loss_brew))
+            if loss_brew > 1e-20:
+                raise ValueError("loss of brew {} bigger than 1e-20".format(loss_brew))
 
         return x_non_linear
