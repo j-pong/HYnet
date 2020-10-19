@@ -1,6 +1,6 @@
 accum_grad: 1
 optim: adam
-max_epoch: 100
+max_epoch: 201
 batch_size: 200
 optim_conf:
     lr: 0.001
@@ -13,3 +13,7 @@ best_model_criterion:
     - acc
     - max
 keep_nbest_models: 1
+xai_excute: 0
+xai_mode: brew
+cfg_type: B4
+bias: 0

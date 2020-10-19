@@ -40,9 +40,11 @@ def grad_activation(x, module, mode='soft', training=True, shrink=False):
 
     return x, dfdx.detach(), epsil
 
-def linear_linear(x, m, r=None):
+def linear_linear(x, m, r=None, gamma=1.0):
     if isinstance(m, nn.Linear):
         w = m.weight
+        if gamma < 1.0:
+            w = F.leaky_relu(w, gamma)
         b = m.bias
         # if r is not None:
         #     w_ = r.unsqueeze(2) * w.unsqueeze(0)
@@ -59,9 +61,11 @@ def linear_linear(x, m, r=None):
     
     return x
 
-def linear_conv2d(x, m, r=None):
+def linear_conv2d(x, m, r=None, gamma=1.0):
     if isinstance(m, nn.Conv2d):
         w = m.weight
+        if gamma < 1.0:
+            w = F.leaky_relu(w, gamma)
         b = m.bias 
         
         if r is not None:

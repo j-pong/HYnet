@@ -60,12 +60,35 @@ class ImgrTask(AbsTask):
                 None,
             ],
         )
-
         group.add_argument(
             "--model_conf",
             action=NestedDictAction,
             default=get_default_kwargs(HynetImgrModel),
             help="The keyword arguments for model class.",
+        )
+        group.add_argument(
+            "--xai_excute",
+            type=int,
+            default=0,
+            help=""   
+        )
+        group.add_argument(
+            "--xai_mode",
+            type=str,
+            default="brew",
+            help=""   
+        )
+        group.add_argument(
+            "--cfg_type",
+            type=str,
+            default="B0",
+            help=""   
+        )
+        group.add_argument(
+            "--bias",
+            type=int,
+            default=0,
+            help=""   
         )
 
     @classmethod
@@ -98,7 +121,11 @@ class ImgrTask(AbsTask):
 
         # 1. Build model
         model = HynetImgrModel(
-            **args.model_conf,
+            args.xai_excute,
+            args.xai_mode,
+            args.cfg_type,
+            args.bias,
+            **args.model_conf   
         )
 
         # 2. Initialize

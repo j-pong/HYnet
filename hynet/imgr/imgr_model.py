@@ -36,17 +36,22 @@ def attribute_image_features(net, target, algorithm, input, **kwargs):
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
 
-    def __init__(self):
+    def __init__(self, 
+                 xai_excute, 
+                 xai_mode, 
+                 cfg_type, 
+                 bias):
         assert check_argument_types()
         super().__init__()
         # task related
-        self.xai_excute = True
-        self.bias = False
+        self.xai_excute = xai_excute
         if self.xai_excute:
             self.max_iter = 3
         else:
             self.max_iter = 1
-        self.xai_mode = 'brew'
+        self.xai_mode = xai_mode
+        self.cfg_type = cfg_type
+        self.bias = bias
 
         # data related
         self.in_ch = 3
@@ -55,7 +60,8 @@ class HynetImgrModel(AbsESPnetModel):
         # network archictecture 
         self.model = EnDecoder(in_channels=self.in_ch,
                                num_classes=self.out_ch,
-                               bias=self.bias)
+                               bias=self.bias,
+                               model_type=self.cfg_type)
                                
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
@@ -80,20 +86,23 @@ class HynetImgrModel(AbsESPnetModel):
         assert self.in_ch == in_ch
 
         for i in range(self.max_iter):
-            # 1. preprocessing with each iteration
             if self.xai_excute:
+                # 1. preprocessing with each iteration
                 if i > 0:
                     attn = attn_norm(attn)
                     image = image * attn.detach()
                 # 2. forward pass for training network
                 if self.xai_mode == 'lrp':
                     logit, ratios = self.model.forward_lrp(image)
-                elif self.xai_mode == 'brew' and self.bias:
-                    if i > 0:
-                        bm = True
+                elif self.xai_mode == 'brew':
+                    if self.bias:
+                        if i > 0:
+                            bm = True
+                        else:
+                            bm = False
                     else:
                         bm = False
-                    logit = self.model.forward(image, bias_mask=bm)
+                    logit = self.model.forward(image, bias_mask=bm, mode='brew')
                 else:
                     logit = self.model.forward(image)
             else:

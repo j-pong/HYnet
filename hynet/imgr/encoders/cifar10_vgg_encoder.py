@@ -4,6 +4,18 @@ import torch.nn.functional as F
 
 from hynet.layers.brew import BrewModel, BrewModuleList
 
+cfgs = {
+    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'B0': [64, 64],
+    'B1': [64, 64, 'M'],
+    'B2': [64, 64, 'M', 128, 128, 'M'], # check 7 
+    'B3': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M'], # check 9
+    'B4': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M',], # check 11
+    'B5': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'], # check 13
+    'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+}
+
 def make_layers(in_channels , cfg, batch_norm=False, bias=False):
     layers = []
     
@@ -25,15 +37,19 @@ class EnDecoder(BrewModel):
     def __init__(self,
                  in_channels,
                  num_classes,
-                 bias=False):
+                 bias=False,
+                 model_type='B3'):
         super(EnDecoder, self).__init__()
 
-        # self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M']
-        self.cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 'M']
+        self.cfg = cfgs[model_type]
         self.encoder = BrewModuleList(
             make_layers(in_channels, self.cfg, bias=bias)
         )
-        self.img_size = [4, 4]
+        wh = 32
+        for i in self.cfg:
+            if i == 'M':
+                wh = wh / 2
+        self.img_size = [int(wh), int(wh)]
         self.out_channels = self.cfg[-2]
         self.decoder = BrewModuleList([
             nn.Flatten(start_dim=1),
