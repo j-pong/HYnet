@@ -17,7 +17,6 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
-from hynet.layers.brew import attn_norm
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency
@@ -33,6 +32,18 @@ def attribute_image_features(net, target, algorithm, input, **kwargs):
                                              )
     
     return tensor_attributions
+
+def minimaxn(x, dim, b=1.0, a=0.0):
+    max_x = torch.max(x, dim=dim, keepdim=True)[0]
+    min_x = torch.min(x, dim=dim, keepdim=True)[0]
+
+    norm = (max_x - min_x)
+    norm[norm == 0.0] = 1.0
+
+    x = (x - min_x) * (b - a)/ norm + a
+    
+    return x
+
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
 
@@ -66,11 +77,35 @@ class HynetImgrModel(AbsESPnetModel):
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
 
-    def pn_decomp(self, attn):
+    def attn_pn_decomp(self, attn):
         attn_pos = torch.relu(attn)
         attn_neg = torch.relu(-1.0 * attn)
 
         return attn_pos, attn_neg
+
+    def attn_norm(self, attn, b=1.0, a=0.0):
+        # attention normalization
+        b_sz, ch, in_h, in_w = attn.size()
+        # attn normalization
+        attn = attn.flatten(start_dim=2) 
+        if isinstance(b, torch.Tensor):
+            b = b.flatten(start_dim=2)
+            a = a.flatten(start_dim=2)
+        attn = minimaxn(attn, -1, b, a)
+        attn = attn.view(b_sz, ch, in_h, in_w).float()
+        
+        return attn
+
+    def attn_apply(self, x, attn):
+        attn = self.attn_norm(attn).detach()
+
+        # max_x = torch.max(x, dim=1, keepdim=True)[0]
+        # min_x = torch.min(x, dim=1, keepdim=True)[0]
+        # x = self.attn_norm(x * attn, max_x, min_x)
+
+        x = attn * x
+
+        return x
 
     def forward(
         self,
@@ -86,17 +121,13 @@ class HynetImgrModel(AbsESPnetModel):
         assert self.in_ch == in_ch
 
         for i in range(self.max_iter):
+            # select forward mode
             if self.xai_excute:
                 # 1. preprocessing with each iteration
                 if i > 0:
-                    max_img = torch.max(image, dim=1, keepdim=True)[0]
-                    min_img = torch.min(image, dim=1, keepdim=True)[0]
-                    attn = attn_norm(attn).detach()
-                    image = attn_norm(image * attn, max_img, min_img)
+                    image = self.attn_apply(image, attn)
                 # 2. forward pass for training network
-                if self.xai_mode == 'lrp':
-                    logit, ratios = self.model.forward_lrp(image)
-                elif self.xai_mode == 'brew':
+                if self.xai_mode == 'brew':
                     if self.bias:
                         if i > 0:
                             bm = True
@@ -111,7 +142,7 @@ class HynetImgrModel(AbsESPnetModel):
                 logit = self.model.forward(image)
             
             # 3. caculate measurment 
-            if i == 0: 
+            if i == 0: #< self.max_iter - 1: 
                 losses.append(self.criterion(logit, label))
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
@@ -131,17 +162,6 @@ class HynetImgrModel(AbsESPnetModel):
                         attn_other = self.model.backward_linear(image, logit_softmax_other)
                         
                         attn = attn_cent
-                    elif self.xai_mode == 'lrp':
-                        # label generation
-                        logit_softmax = torch.softmax(logit, dim=-1)
-                        mask = F.one_hot(label, num_classes=self.out_ch).bool()
-
-                        logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        attn_cent = self.backward_lrp(logit_softmax_cent, copy.deepcopy(ratios))
-                        logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        attn_other = self.backward_lrp(logit_softmax_other, ratios)
-
-                        attn = attn_cent
                     elif self.xai_mode == 'saliency':
                         saliency = Saliency(self.model)
                         grads = saliency.attribute(image, target=label)
@@ -152,6 +172,8 @@ class HynetImgrModel(AbsESPnetModel):
                                                                   baselines=image * 0, 
                                                                   return_convergence_delta=True)
                         attn = attr_ig.squeeze()
+                        attn_cent = attn
+                        attn_other = attn
                     elif self.xai_mode == 'ig_nt':
                         ig = IntegratedGradients(self.model)
                         nt = NoiseTunnel(ig)
@@ -171,16 +193,14 @@ class HynetImgrModel(AbsESPnetModel):
                                                             baselines=image * 0, 
                                                             return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
-                    
-                    attn_pos, attn_neg = self.pn_decomp(attn)
                         
                     # 5. for logging
                     if not self.training:
                         image_ = image.permute(0, 2, 3, 1)
                         logger['imgs'].append(image_.sum(-1))
-                        attn1 = attn.permute(0, 2, 3, 1)
+                        attn1 = attn_cent.permute(0, 2, 3, 1)
                         logger['attns'][0].append(attn1.sum(-1))
-                        attn2 = attn_neg.permute(0, 2, 3, 1)
+                        attn2 = attn_other.permute(0, 2, 3, 1)
                         logger['attns'][1].append(attn2.sum(-1))
 
             else: 

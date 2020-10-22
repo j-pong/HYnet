@@ -12,30 +12,6 @@ lienar_layer = (nn.Conv2d, nn.Linear)
 piece_wise_activation = (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)
 piece_shrink_activation = (nn.MaxPool1d, nn.MaxPool2d)
 
-def minimaxn(x, dim, max_b=1.0, min_a=0.0):
-    max_x = torch.max(x, dim=dim, keepdim=True)[0]
-    min_x = torch.min(x, dim=dim, keepdim=True)[0]
-
-    norm = (max_x - min_x)
-    norm[norm == 0.0] = 1.0
-
-    x = (x - min_x) * (max_b - min_a)/ norm + min_a
-    
-    return x
-
-def attn_norm(attn, max_b=1.0, min_a=0.0):
-    # attention normalization
-    b_sz, ch, in_h, in_w = attn.size()
-    # attn normalization
-    attn = attn.flatten(start_dim=2) 
-    if isinstance(max_b, torch.Tensor):
-        max_b = max_b.flatten(start_dim=2)
-        min_a = min_a.flatten(start_dim=2)
-    attn = minimaxn(attn, dim=-1, max_b=max_b, min_a=min_a)
-    attn = attn.view(b_sz, ch, in_h, in_w).float()
-    
-    return attn
-
 class BrewModuleList(nn.ModuleList):
     def __init__(self, modules = None):
         super().__init__(modules)
