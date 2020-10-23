@@ -217,6 +217,7 @@ class HynetImgrModel(AbsESPnetModel):
         if self.max_iter > 1:
             stats = dict(
                     loss=loss.detach(),
+                    loss_brew=self.model.loss_brew.detach(),
                     acc_start=logger['accs'][0],
                     acc_mid=logger['accs'][1],
                     acc_end=logger['accs'][-1]

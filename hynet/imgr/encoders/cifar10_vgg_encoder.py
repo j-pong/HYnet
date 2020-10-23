@@ -16,6 +16,8 @@ cfgs = {
     'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
 }
 
+activation = nn.Tanh # nn.ReLU
+
 def make_layers(in_channels , cfg, batch_norm=False, bias=False):
     layers = []
     
@@ -25,9 +27,9 @@ def make_layers(in_channels , cfg, batch_norm=False, bias=False):
         else:
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, bias=bias)
             if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU()]
+                layers += [conv2d, nn.BatchNorm2d(v), activation()]
             else:
-                layers += [conv2d, nn.ReLU()]
+                layers += [conv2d, activation()]
             in_channels = v
 
     return layers
@@ -54,10 +56,10 @@ class EnDecoder(BrewModel):
         self.decoder = BrewModuleList([
             nn.Flatten(start_dim=1),
             nn.Linear(self.out_channels * self.img_size[0] * self.img_size[1], 4096, bias=bias),
-            nn.ReLU(),
+            activation(),
             nn.Dropout(),
             nn.Linear(4096, 4096, bias=bias),
-            nn.ReLU(),
+            activation(),
             nn.Dropout(),
             nn.Linear(4096, num_classes, bias=bias)
         ])

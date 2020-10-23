@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from torch import nn
 
 @torch.enable_grad()
-def grad_activation(x, module, mode='soft', training=True, shrink=False):
-    if training or mode == 'hard':
+def grad_activation(x, module, training=True, shrink=False):
+    if training:
         x_base = x
     else:
         # validation mode has no backward graph for autograd 
@@ -19,24 +19,24 @@ def grad_activation(x, module, mode='soft', training=True, shrink=False):
     else:
         x = module(x_base)
 
-    # if mode == 'hard':
-    #     # approximate grad of activation f(x) / x = f'(0)
-    #     dfdx = x / x_base
-    #     # prevent inf or nan case
-    #     mask = (x_base == 0)
-    #     dfdx[mask] = 0.0
-    #     epsil = 0.0
-    # elif mode == 'soft':
-    
-    # checkout inplace option for accuratly gradient
-    if (not shrink) and (module.inplace is not None):
-        assert module.inplace is False
-    # caculate grad via auto grad respect to x_base
-    dfdx = torch.autograd.grad(x.sum(), x_base, retain_graph=True, create_graph=True)
-    dfdx = dfdx[0].data
     if shrink:
+        x = module(x_base)[0]
+        # checkout inplace option for accuratly gradient
+        if isinstance(module, nn.ReLU):
+            assert module.inplace is False
+        # caculate grad via auto grad respect to x_base
+        dfdx = torch.autograd.grad(x.sum(), x_base, retain_graph=True, create_graph=True)
+        dfdx = dfdx[0].data
+
         epsil = 0.0
     else:
+        x = module(x_base)
+        # approximate grad of activation f(x) / x = f'(0)
+        dfdx = x / x_base
+        # prevent inf or nan case
+        mask = (x_base == 0)
+        dfdx[mask] = 0.0
+        
         epsil = x - dfdx * x_base
         epsil = epsil.detach()
 
