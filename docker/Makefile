@@ -8,17 +8,17 @@ DOCKER=docker
 # JUPYTER=lab
 #-------------------------------------------------------------------------------
 ARG_IMAGE_NAME?=moneynet/cuda:base
-ARG_CONTAINER_NAME?=moneynet-docker
+ARG_CONTAINER_NAME?=KT-docker
 # ARG_CONTAINER_HOSTNAME?=$(shell echo $(ARG_CONTAINER_NAME) | tr a-z A-Z)
 ARG_CONTAINER_HOSTNAME?=$(ARG_CONTAINER_NAME)
 #-------------------------------------------------------------------------------
 ARG_PUID?=$(shell id -u)
 ARG_PGID?=$(shell id -g)
 #-------------------------------------------------------------------------------
-ARG_PORT_SSH?=32769
-ARG_PORT_TENSORBOARD?=9206
+ARG_PORT_SSH?=32768
+ARG_PORT_TENSORBOARD?=9205
 #-------------------------------------------------------------------------------
-ARG_WORKSPACE_HOST?=$(realpath ../..)
+ARG_WORKSPACE_HOST?=$(shell pwd)/../../
 ARG_WORKSPACE_CONTAINER?=/home/Workspace
 
 #*******************************************************************************

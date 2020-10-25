@@ -63,11 +63,11 @@ WORKDIR ${workspace}
 ARG root_passwd=root
 RUN echo "root:${root_passwd}" | chpasswd
 
-ARG user=jpong
+ARG user=KT
 ARG group=jpong
 ARG uid=911
 ARG gid=911
-ARG passwd=dsp2020
+ARG passwd=1234
 
 RUN groupadd -g ${gid} ${group} \
   && useradd -u ${uid} -g ${gid} -m -s /bin/bash ${user} \
