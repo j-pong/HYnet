@@ -135,7 +135,7 @@ class HynetImgrModel(AbsESPnetModel):
                             bm = False
                     else:
                         bm = False
-                    logit = self.model.forward(image, bias_mask=bm, mode='brew')
+                    logit = self.model.forward(image, mode='brew')
                 else:
                     logit = self.model.forward(image)
             else:
@@ -217,7 +217,7 @@ class HynetImgrModel(AbsESPnetModel):
         if self.max_iter > 1:
             stats = dict(
                     loss=loss.detach(),
-                    loss_brew=self.model.loss_brew.detach(),
+                    loss_brew=self.model.loss_brew,
                     acc_start=logger['accs'][0],
                     acc_mid=logger['accs'][1],
                     acc_end=logger['accs'][-1]

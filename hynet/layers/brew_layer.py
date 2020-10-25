@@ -16,11 +16,6 @@ def grad_activation(x, module, training=True, shrink=False):
 
     if shrink:
         x = module(x_base)[0]
-    else:
-        x = module(x_base)
-
-    if shrink:
-        x = module(x_base)[0]
         # checkout inplace option for accuratly gradient
         if isinstance(module, nn.ReLU):
             assert module.inplace is False

@@ -35,10 +35,15 @@ class BrewModel(nn.Module):
             m = mlist.__getitem__(idx)
             if isinstance(m, lienar_layer):
                 a = mlist.aug_hat["a_hat"][idx]
+                c = mlist.aug_hat["c_hat"][idx]
                 if isinstance(m, nn.Conv2d):
                     x = linear_conv2d(x, m, a)
+                    if c is not None:
+                        x += linear_conv2d(c, m)
                 elif isinstance(m, nn.Linear):
                     x = linear_linear(x, m, a)
+                    if c is not None:
+                        x += linear_linear(c, m)
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
@@ -53,7 +58,7 @@ class BrewModel(nn.Module):
 
         return x
 
-    def forward_linear_impl(self, x, mlist, bias_mask=False):
+    def forward_linear_impl(self, x, mlist):
         max_len = mlist.__len__()
         for idx in range(max_len):
             m = mlist.__getitem__(idx)
@@ -79,7 +84,7 @@ class BrewModel(nn.Module):
 
         return x
 
-    def forward_impl(self, x, mlist, bias_mask=False):
+    def forward_impl(self, x, mlist):
         a_hat_cum = None
         c_hat_cum = None
 
@@ -143,7 +148,7 @@ class BrewModel(nn.Module):
         
         return attn
 
-    def forward(self, x, bias_mask=False, mode='none'):
+    def forward(self, x, mode='none'):
         if mode == 'none':
             for m in self.encoder:
                 if isinstance(m, piece_shrink_activation):
@@ -167,7 +172,7 @@ class BrewModel(nn.Module):
             x_linear = self.forward_linear_impl(x_linear, self.decoder)
 
             # linearization error check
-            self.loss_brew = F.mse_loss(x_non_linear, x_linear)
+            self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
             if self.loss_brew.float() > 1e-18:
                 raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
 

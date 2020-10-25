@@ -1,7 +1,7 @@
 accum_grad: 1
 optim: adam
 max_epoch: 100
-batch_size: 200
+batch_size: 80
 optim_conf:
     lr: 0.001
     weight_decay: 0
