@@ -12,6 +12,133 @@ from espnet.nets.e2e_asr_common import get_vgg2l_odim
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.nets_utils import to_device
 
+class LayerNorm(torch.nn.Module):
+    def __init__(self, features, eps=1e-6):
+        super(LayerNorm, self).__init__()
+        self.gamma = torch.nn.Parameter(torch.ones(features))
+        self.beta = torch.nn.Parameter(torch.zeros(features))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.gamma * (x - mean) / (std + self.eps) + self.beta
+
+class liGRU(torch.nn.Module):
+    def __init__(self, idim, elayers, cdim, hdim, dropout, lnorm, bnorm, typ="bligru"):
+        super(liGRU, self).__init__()
+
+        # Reading parameters
+        bidir = typ[0] == "b"
+
+        self.elayers = elayers
+        self.cdim = cdim
+        self.typ = typ
+        self.bidir = bidir
+        self.dropout = dropout
+        self.bnorm = bnorm
+        self.lnorm = lnorm
+
+        # List initialization
+        self.wh = torch.nn.ModuleList([])
+        self.uh = torch.nn.ModuleList([])
+
+        self.wz = torch.nn.ModuleList([])  # Update Gate
+        self.uz = torch.nn.ModuleList([])  # Update Gate
+
+        self.ln = torch.nn.ModuleList([])  # Layer Norm
+        self.bn_wh = torch.nn.ModuleList([])  # Batch Norm
+        self.bn_wz = torch.nn.ModuleList([])  # Batch Norm
+
+        self.act = torch.nn.ModuleList([])  # Activations
+
+        current_input = idim
+
+        # Initialization of hidden layers
+
+        for i in range(self.elayers):
+
+            add_bias = True
+
+            if self.lnorm or self.bnorm:
+                add_bias = False
+
+            # Feed-forward connections
+            self.wh.append(torch.nn.Linear(current_input, self.cdim, bias=add_bias))
+            self.wz.append(torch.nn.Linear(current_input, self.cdim, bias=add_bias))
+
+            # Recurrent connections
+            self.uh.append(torch.nn.Linear(self.cdim, self.cdim, bias=False))
+            self.uz.append(torch.nn.Linear(self.cdim, self.cdim, bias=False))
+
+            # batch norm initialization
+            self.bn_wh.append(torch.nn.BatchNorm1d(self.cdim, momentum=0.05))
+            self.bn_wz.append(torch.nn.BatchNorm1d(self.cdim, momentum=0.05))
+
+            self.ln.append(LayerNorm(self.cdim))
+
+            if self.bidir:
+                current_input = 2 * self.cdim
+            else:
+                current_input = self.cdim
+
+        self.out_dim = self.cdim + self.bidir * self.cdim
+
+    def forward(self, x, ilens, prev_state=None):
+
+        for i in range(self.elayers):
+
+            # Initial state and concatenation
+            if self.bidir:
+                h_init = torch.zeros(2 * x.shape[0], self.cdim).to(x.device)
+                x = torch.cat([x, torch.flip(x.clone(),dims=(0,1))], 0)
+            else:
+                h_init = torch.zeros(x.shape[0], self.cdim).to(x.device)
+
+            # Feed-forward affine transformations (all steps in parallel)
+            wh_out = self.wh[i](x)
+            wz_out = self.wz[i](x)
+
+            # Apply batch norm if needed (all steps in parallel)
+            if self.bnorm:
+
+                wh_out_bn = self.bn_wh[i](wh_out.view(wh_out.shape[0] * wh_out.shape[1], wh_out.shape[2]))
+                wh_out = wh_out_bn.view(wh_out.shape[0], wh_out.shape[1], wh_out.shape[2])
+
+                wz_out_bn = self.bn_wz[i](wz_out.view(wz_out.shape[0] * wz_out.shape[1], wz_out.shape[2]))
+                wz_out = wz_out_bn.view(wz_out.shape[0], wz_out.shape[1], wz_out.shape[2])
+
+            # Processing time steps
+            hiddens = []
+            ht = h_init
+
+            for k in range(x.shape[1]):
+
+                # ligru equation
+                zt = torch.sigmoid(wz_out[:,k] + self.uz[i](ht))  # ht: (2*B,F)
+                at = wh_out[:,k] + self.uh[i](ht)
+                hcand = F.dropout(F.relu(at),p=self.dropout)
+                ht = zt * ht + (1 - zt) * hcand
+
+                if self.lnorm:
+                    ht = self.ln[i](ht)
+
+                hiddens.append(ht)
+
+            # Stacking hidden states
+            h = torch.stack(hiddens)    # h: (T,2*B,F)
+            h = h.transpose(0,1)    # (2*B,T,F)
+
+            # Bidirectional concatenations
+            if self.bidir:
+                h_f = h[int(x.shape[0] / 2)]    # B T F
+                h_b = torch.flip(h[int(x.shape[0] / 2) :].contiguous(), 1)  # B T F
+                h = torch.cat([h_f, h_b], 2)    # B T 2*F
+
+            # Setup x for the next hidden layer
+            x = h
+
+        return x, ilens, None
 
 class RNNP(torch.nn.Module):
     """RNN with projection layer module
@@ -281,7 +408,7 @@ class Encoder(torch.nn.Module):
     ):
         super(Encoder, self).__init__()
         typ = etype.lstrip("vgg").rstrip("p")
-        if typ not in ["lstm", "gru", "blstm", "bgru"]:
+        if typ not in ["lstm", "gru", "ligru", "blstm", "bgru", "bligru"]:
             logging.error("Error: need to specify an appropriate encoder architecture")
 
         if etype.startswith("vgg"):
@@ -327,6 +454,10 @@ class Encoder(torch.nn.Module):
                 )
                 logging.info(typ.upper() + " with every-layer projection for encoder")
             else:
+                if "ligru" in etype:
+                    self.enc = self.enc = torch.nn.ModuleList(
+                    [liGRU(idim, elayers, eunits, eprojs, dropout, lnorm, bnorm, typ=typ)]
+                )
                 self.enc = torch.nn.ModuleList(
                     [RNN(idim, elayers, eunits, eprojs, dropout, lnorm, bnorm, typ=typ)]
                 )

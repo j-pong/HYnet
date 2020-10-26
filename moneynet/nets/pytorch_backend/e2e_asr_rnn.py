@@ -102,6 +102,8 @@ class E2E(ASRInterface, torch.nn.Module):
                 "vggbgrup",
                 "vgggru",
                 "vggbgru",
+                "ligru",
+                "bligru"
             ],
             help="Type of encoder network architecture",
         )

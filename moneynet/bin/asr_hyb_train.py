@@ -118,6 +118,12 @@ def get_parser(parser=None, required=True):
         help="Filename of train label data (json)",
     )
     parser.add_argument(
+        "--train-mono-json",
+        type=str,
+        default=None,
+        help="Filename of train label data (json)",
+    )
+    parser.add_argument(
         "--valid-json",
         type=str,
         default=None,
@@ -151,6 +157,13 @@ def get_parser(parser=None, required=True):
     )
     parser.add_argument(
         "--lsm-weight", default=0.0, type=float, help="Label smoothing weight"
+    )
+    # augmentation related
+    parser.add_argument(
+        "--augment",
+        type=strtobool,
+        default=False,
+        help="Do Augmentation or Not",
     )
     # recognition options to compute CER/WER
     parser.add_argument(
@@ -604,7 +617,12 @@ def main(cmd_args):
         args.char_list = None
 
     # train
-    from moneynet.asr.pytorch_backend.asr import train
+    if args.train_mono_json is not None:
+        from moneynet.asr.pytorch_backend.asr_multi_target import train
+    elif args.augment:
+        from moneynet.asr.pytorch_backend.asr_augment import train
+    else:
+        from moneynet.asr.pytorch_backend.asr import train
 
     train(args)
 
