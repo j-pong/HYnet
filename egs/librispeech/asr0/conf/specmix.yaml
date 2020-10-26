@@ -1,6 +1,6 @@
 # use data augmentation
 augment: true
-data-augmentation: mixup
+data-augmentation: separate
 
 # mixup related
 mixup-alpha: 0.5
