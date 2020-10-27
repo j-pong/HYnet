@@ -35,15 +35,15 @@ class BrewModel(nn.Module):
             m = mlist.__getitem__(idx)
             if isinstance(m, lienar_layer):
                 a = mlist.aug_hat["a_hat"][idx]
-                c = mlist.aug_hat["c_hat"][idx]
+                # c = mlist.aug_hat["c_hat"][idx]
                 if isinstance(m, nn.Conv2d):
                     x = linear_conv2d(x, m, a)
-                    if c is not None:
-                        x += linear_conv2d(c, m)
+                    # if c is not None:
+                    #     x += linear_conv2d(c, m)
                 elif isinstance(m, nn.Linear):
                     x = linear_linear(x, m, a)
-                    if c is not None:
-                        x += linear_linear(c, m)
+                    # if c is not None:
+                    #     x += linear_linear(c, m)
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
@@ -63,7 +63,7 @@ class BrewModel(nn.Module):
         for idx in range(max_len):
             m = mlist.__getitem__(idx)
             if isinstance(m, lienar_layer):
-                x = m(x)
+                x = m(x.float())
                 a = mlist.aug_hat["a_hat"][idx]
                 c = mlist.aug_hat["c_hat"][idx]
                 if a is not None:
@@ -138,13 +138,14 @@ class BrewModel(nn.Module):
         return x
 
     def backward_linear(self, x, y):
-        # backward
-        attn = self.backward_linear_impl(y, self.decoder)
-        attn = self.backward_linear_impl(attn, self.encoder)
+        with torch.no_grad():
+            # backward
+            attn = self.backward_linear_impl(y, self.decoder)
+            attn = self.backward_linear_impl(attn, self.encoder)
 
-        # sign-field
-        sign = torch.sign(x)
-        attn = attn * sign
+            # sign-field
+            sign = torch.sign(x)
+            attn = attn * sign
         
         return attn
 
@@ -167,13 +168,14 @@ class BrewModel(nn.Module):
             self.attn_size = x_non_linear.size()
             x_non_linear = self.forward_impl(x_non_linear, self.decoder)
 
-            # linearization
-            x_linear = self.forward_linear_impl(x, self.encoder)
-            x_linear = self.forward_linear_impl(x_linear, self.decoder)
+            with torch.no_grad():
+                # linearization
+                x_linear = self.forward_linear_impl(x, self.encoder)
+                x_linear = self.forward_linear_impl(x_linear, self.decoder)
 
-            # linearization error check
-            self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
-            if self.loss_brew.float() > 1e-18:
-                raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
+                # linearization error check
+                self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
+                if self.loss_brew.float() > 1e-18:
+                    raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
 
         return x_non_linear

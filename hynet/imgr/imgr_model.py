@@ -18,10 +18,12 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
 
-from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
+from captum.attr import LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
+
+from hynet.layers.ig import IntegratedGradients, BrewGradient
 
 
 def attribute_image_features(net, target, algorithm, input, **kwargs):
@@ -32,17 +34,6 @@ def attribute_image_features(net, target, algorithm, input, **kwargs):
                                              )
     
     return tensor_attributions
-
-def minimaxn(x, dim, b=1.0, a=0.0):
-    max_x = torch.max(x, dim=dim, keepdim=True)[0]
-    min_x = torch.min(x, dim=dim, keepdim=True)[0]
-
-    norm = (max_x - min_x)
-    norm[norm == 0.0] = 1.0
-
-    x = (x - min_x) * (b - a)/ norm + a
-    
-    return x
 
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
@@ -77,33 +68,32 @@ class HynetImgrModel(AbsESPnetModel):
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
 
-    def attn_pn_decomp(self, attn):
-        attn_pos = torch.relu(attn)
-        attn_neg = torch.relu(-1.0 * attn)
+    def feat_minmax_norm(self, x, max_y=1.0, min_y=0.0):
+        # save original shape of feature
+        b_sz, ch, in_h, in_w = x.size()
+        # flatten for whole space dimension
+        x = x.flatten(start_dim=2)
+        # get min-max value 
+        max_x = torch.max(x, dim=2, keepdim=True)[0]
+        min_x = torch.min(x, dim=2, keepdim=True)[0]
+        # normalization
+        norm = (max_x - min_x)
+        denorm = (max_y - min_y)
+        norm[norm == 0.0] = 1.0
 
-        return attn_pos, attn_neg
-
-    def attn_norm(self, attn, b=1.0, a=0.0):
-        # attention normalization
-        b_sz, ch, in_h, in_w = attn.size()
-        # attn normalization
-        attn = attn.flatten(start_dim=2) 
-        if isinstance(b, torch.Tensor):
-            b = b.flatten(start_dim=2)
-            a = a.flatten(start_dim=2)
-        attn = minimaxn(attn, -1, b, a)
-        attn = attn.view(b_sz, ch, in_h, in_w).float()
+        x = (x - min_x) / norm * denorm + min_y
+        x = x.view(b_sz, ch, in_h, in_w)
         
-        return attn
+        return x
 
     def attn_apply(self, x, attn):
-        attn = self.attn_norm(attn).detach()
+        # max_y = torch.max(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
+        # min_y = torch.min(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
 
-        # max_x = torch.max(x, dim=1, keepdim=True)[0]
-        # min_x = torch.min(x, dim=1, keepdim=True)[0]
-        # x = self.attn_norm(x * attn, max_x, min_x)
+        attn = self.feat_minmax_norm(attn, 1.0, 0.0)
+        x = x * attn
 
-        x = attn * x
+        # x = self.feat_minmax_norm(x, max_y, min_y)
 
         return x
 
@@ -168,9 +158,8 @@ class HynetImgrModel(AbsESPnetModel):
                         attn = grads.squeeze()
                     elif self.xai_mode == 'ig':
                         ig = IntegratedGradients(self.model)
-                        attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
-                                                                  baselines=image * 0, 
-                                                                  return_convergence_delta=True)
+                        attr_ig = attribute_image_features(self.model, label, ig, image, 
+                                                           baselines=image * 0)
                         attn = attr_ig.squeeze()
                         attn_cent = attn
                         attn_other = attn
@@ -193,15 +182,30 @@ class HynetImgrModel(AbsESPnetModel):
                                                             baselines=image * 0, 
                                                             return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
+                    elif self.xai_mode == 'bg':
+                        bg = BrewGradient(self.model)
+                        attr_bg = bg.attribute(image, 
+                                               target=label,
+                                               baselines=image * 0)
+                        attn = attr_bg.squeeze()
+                        attn_cent = attn
+                        attn_other = attn
+                    # recasting to float type
+                    attn = attn.detach().float()
                         
                     # 5. for logging
                     if not self.training:
-                        image_ = image.permute(0, 2, 3, 1)
-                        logger['imgs'].append(image_.sum(-1))
-                        attn1 = attn_cent.permute(0, 2, 3, 1)
-                        logger['attns'][0].append(attn1.sum(-1))
-                        attn2 = attn_other.permute(0, 2, 3, 1)
-                        logger['attns'][1].append(attn2.sum(-1))
+                        # image_ = image.permute(0, 2, 3, 1)
+                        # logger['imgs'].append(image_.sum(-1))
+                        # attn1 = attn_cent.permute(0, 2, 3, 1)
+                        # logger['attns'][0].append(attn1.sum(-1))
+                        # attn2 = attn_other.permute(0, 2, 3, 1)
+                        # logger['attns'][1].append(attn2.sum(-1))
+
+                        attn_ = attn_cent.permute(0, 2, 3, 1)
+                        logger['imgs'].append(attn_[...,0])
+                        logger['attns'][0].append(attn_[...,1])
+                        logger['attns'][1].append(attn_[...,2])
 
             else: 
                 if not self.training:
