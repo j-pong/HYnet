@@ -38,5 +38,9 @@ cuda10.2, cudnn, apt-transport-https, ca-certificates, curl, gnupg-agent, softwa
   edit Makefile (If kaldi is not installed : edit line 8, KALDI :=)
   sudo make 
 
+### INSTALL GUI Demo Depencencies
+  cd ${PWD}/tools
+  . ./install_demo_dependencies.sh
+
 ### INSTALL srilm
   cd /home/Workspace/moneynet/tools/kaldi/tools/install_srilm.sh
