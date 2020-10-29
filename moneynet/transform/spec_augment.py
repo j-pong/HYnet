@@ -120,7 +120,8 @@ def freq_mask(x, F=30, n_mask=2, replace_with="mean", inplace=False):
                 lamb = numpy.random.uniform(0.5, 1)
                 cloned[:, f_zero:mask_end] = lamb * cloned[:, f_zero:mask_end] + (1 - lamb) * x_mix[:, f_zero:mask_end]
             elif replace_with == "rmix":
-                cloned[:, f_zero:mask_end] = cloned[:, f_zero:mask_end] + 0.4 * numpy.flip(x_mix[:, f_zero:mask_end], 0)
+                cloned = cloned + 0.4 * numpy.flip(x_mix, 0)
+                cloned[:, f_zero:mask_end] = cloned.mean()
             elif replace_with == "insertion":
                 cloned[:, f_zero:mask_end] = x_mix[:, f_zero:mask_end]
     return cloned
@@ -176,7 +177,7 @@ def time_mask(spec, T=40, n_mask=2, replace_with="mean", inplace=False):
                 lamb = numpy.random.uniform(0.5, 1)
                 cloned[t_zero:mask_end] = lamb * cloned[t_zero:mask_end] + (1 - lamb) * x_mix[t_zero:mask_end]
             elif replace_with == "rmix":
-                cloned[t_zero:mask_end] = cloned[t_zero:mask_end] + 0.4 * numpy.flip(x_mix[t_zero:mask_end], 0)
+                cloned[t_zero:mask_end] = cloned.mean()
             elif replace_with == "insertion":
                 cloned[t_zero:mask_end] = x_mix[t_zero:mask_end]
 
