@@ -1,0 +1,482 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>KT</class>
+ <widget class="QMainWindow" name="KT">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>783</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
+  </property>
+  <property name="windowTitle">
+   <string>KT End-to-End Project</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">background-color: rgb(47,48,51)</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <property name="styleSheet">
+    <string notr="true">background-color: rgb(47,48,51);
+font: 10pt &quot;Malgun Gothic&quot;;s</string>
+   </property>
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QWidget" name="Top_Widget" native="true">
+      <property name="styleSheet">
+       <string notr="true">background-color: rgb(191,191,191);
+font: 10pt &quot;Malgun Gothic&quot;;</string>
+      </property>
+      <layout class="QHBoxLayout" name="horizontalLayout_9">
+       <item>
+        <widget class="QWidget" name="TopLeft_Widget" native="true">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>590</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true"/>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_2">
+          <item>
+           <widget class="QLabel" name="Original_Script">
+            <property name="minimumSize">
+             <size>
+              <width>572</width>
+              <height>74</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+            </property>
+            <property name="text">
+             <string>Original Script</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="Kaldi_Script">
+            <property name="minimumSize">
+             <size>
+              <width>572</width>
+              <height>74</height>
+             </size>
+            </property>
+            <property name="toolTipDuration">
+             <number>-1</number>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+            </property>
+            <property name="text">
+             <string>Kaldi Script</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="E2E_Script">
+            <property name="minimumSize">
+             <size>
+              <width>572</width>
+              <height>74</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+            </property>
+            <property name="text">
+             <string>End-to-End Script</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="TopRight_Widget" native="true">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>16777215</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="styleSheet">
+          <string notr="true"/>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_3">
+          <item>
+           <widget class="QWidget" name="widget_4" native="true">
+            <property name="minimumSize">
+             <size>
+              <width>50</width>
+              <height>0</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true"/>
+            </property>
+            <layout class="QHBoxLayout" name="horizontalLayout_3">
+             <item>
+              <widget class="QLabel" name="WER_Label">
+               <property name="minimumSize">
+                <size>
+                 <width>55</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+               </property>
+               <property name="text">
+                <string>WER(%)</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="CER_Label">
+               <property name="minimumSize">
+                <size>
+                 <width>55</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+               </property>
+               <property name="text">
+                <string>CER(%)</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="widget_6" native="true">
+            <property name="styleSheet">
+             <string notr="true"/>
+            </property>
+            <layout class="QHBoxLayout" name="horizontalLayout_4">
+             <item>
+              <widget class="QLabel" name="Kaldi_WER">
+               <property name="minimumSize">
+                <size>
+                 <width>55</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+               </property>
+               <property name="text">
+                <string>-</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="Kaldi_CER">
+               <property name="minimumSize">
+                <size>
+                 <width>55</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+               </property>
+               <property name="text">
+                <string>-</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="widget_7" native="true">
+            <property name="styleSheet">
+             <string notr="true"/>
+            </property>
+            <layout class="QHBoxLayout" name="horizontalLayout_5">
+             <item>
+              <widget class="QLabel" name="E2E_WER">
+               <property name="minimumSize">
+                <size>
+                 <width>55</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+               </property>
+               <property name="text">
+                <string>-</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="E2E_CER">
+               <property name="minimumSize">
+                <size>
+                 <width>55</width>
+                 <height>56</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+               </property>
+               <property name="text">
+                <string>-</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout">
+      <item>
+       <widget class="QWidget" name="bottom_Widget" native="true">
+        <property name="layoutDirection">
+         <enum>Qt::LeftToRight</enum>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">background-color: rgb(191,191,191);
+font: 10pt &quot;Malgun Gothic&quot;;</string>
+        </property>
+        <layout class="QHBoxLayout" name="horizontalLayout_6">
+         <item>
+          <widget class="QWidget" name="widget_9" native="true">
+           <layout class="QVBoxLayout" name="verticalLayout_6">
+            <item>
+             <widget class="QLabel" name="FileName_label">
+              <property name="styleSheet">
+               <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+              </property>
+              <property name="text">
+               <string>Filename</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QWidget" name="Wav_Widget" native="true">
+              <property name="minimumSize">
+               <size>
+                <width>500</width>
+                <height>200</height>
+               </size>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">border-left: 1px solid rgb(77, 77, 77);border-right: 1px solid rgb(77, 77, 77);border-top: 1px solid rgb(77, 77, 77);border-bottom: 1px solid rgb(77, 77, 77);</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QWidget" name="widget_2" native="true">
+           <layout class="QVBoxLayout" name="verticalLayout_4">
+            <item>
+             <widget class="QWidget" name="widget_3" native="true">
+              <layout class="QHBoxLayout" name="horizontalLayout_7">
+               <item>
+                <widget class="QWidget" name="widget_8" native="true">
+                 <property name="maximumSize">
+                  <size>
+                   <width>50</width>
+                   <height>70</height>
+                  </size>
+                 </property>
+                 <layout class="QVBoxLayout" name="verticalLayout_5">
+                  <item>
+                   <widget class="QPushButton" name="play_button">
+                    <property name="styleSheet">
+                     <string notr="true">image: url(./Pictures/play.png);
+border: 0px;</string>
+                    </property>
+                    <property name="text">
+                     <string/>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="stop_button">
+                    <property name="styleSheet">
+                     <string notr="true">image: url(./Pictures/stop.png);
+border: 0px;</string>
+                    </property>
+                    <property name="text">
+                     <string/>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="openWav_button">
+                 <property name="minimumSize">
+                  <size>
+                   <width>50</width>
+                   <height>50</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>50</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">image: url(./Pictures/wav.png);
+border: 0px;</string>
+                 </property>
+                 <property name="text">
+                  <string/>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QWidget" name="widget" native="true">
+              <layout class="QVBoxLayout" name="verticalLayout_7">
+               <item>
+                <widget class="QWidget" name="widget_11" native="true">
+                 <layout class="QHBoxLayout" name="horizontalLayout_2">
+                  <item>
+                   <widget class="QLabel" name="ASML_logo">
+                    <property name="minimumSize">
+                     <size>
+                      <width>50</width>
+                      <height>50</height>
+                     </size>
+                    </property>
+                    <property name="styleSheet">
+                     <string notr="true">image: url(./Pictures/asml.png);
+border: 0px;</string>
+                    </property>
+                    <property name="text">
+                     <string/>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="KT_logo">
+                    <property name="minimumSize">
+                     <size>
+                      <width>50</width>
+                      <height>50</height>
+                     </size>
+                    </property>
+                    <property name="styleSheet">
+                     <string notr="true">image: url(./Pictures/kt.png);
+border: 0px;</string>
+                    </property>
+                    <property name="text">
+                     <string/>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QWidget" name="widget_10" native="true">
+                 <layout class="QHBoxLayout" name="horizontalLayout_8">
+                  <item>
+                   <widget class="QLabel" name="HY_logo">
+                    <property name="minimumSize">
+                     <size>
+                      <width>0</width>
+                      <height>70</height>
+                     </size>
+                    </property>
+                    <property name="styleSheet">
+                     <string notr="true">image: url(./Pictures/hy.png);
+border: 0px;</string>
+                    </property>
+                    <property name="text">
+                     <string/>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

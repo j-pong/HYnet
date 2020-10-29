@@ -1,7 +1,6 @@
 PYTHON_VERSION := 3.7.3
 CUDA_VERSION := 10.2
 
-# Pytorch version for fairseq
 TH_VERSION := 1.5.0
 
 # Use a prebuild Kaldi to omit the installation
@@ -19,7 +18,7 @@ CONDA_PYTORCH := pytorch=$(TH_VERSION) torchvision cudatoolkit=$(CUDA_VERSION)
 
 all: kaldi.done python
 
-python: venv espnet.done fairseq.done moneynet.done
+python: venv espnet.done moneynet.done
 
 ifneq ($(strip $(KALDI)),)
 kaldi.done:
@@ -63,12 +62,6 @@ espnet.done: venv
 	# import moneynet to espnet venv
 	cd espnet/tools && . venv/bin/activate && pip install -e ../../..
 	touch espnet.done
-
-fairseq.done: espnet.done
-	rm -rf fairseq
-	git clone https://github.com/pytorch/fairseq
-	cd fairseq && . ../venv/bin/activate && pip uninstall -y typing && pip install -e .
-	touch fairseq.done
 
 moneynet.done: espnet.done
 	. venv/bin/activate && pip install -e ..

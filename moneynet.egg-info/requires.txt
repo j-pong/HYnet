@@ -1,0 +1,2 @@
+kaldi_io
+soundfile

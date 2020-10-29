@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="KT">
+    <file>hy.png</file>
+    <file>kt.jpg</file>
+  </qresource>
+</RCC>
