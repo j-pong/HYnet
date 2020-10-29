@@ -18,16 +18,16 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
 
-from captum.attr import LayerIntegratedGradients, NeuronIntegratedGradients
+from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
-from hynet.layers.ig import IntegratedGradients, BrewGradient
+from hynet.layers.ig import BrewGradient
 
 
 def attribute_image_features(net, target, algorithm, input, **kwargs):
-    net.zero_grad()
+    # net.zero_grad()
     tensor_attributions = algorithm.attribute(input,
                                               target=target,
                                               **kwargs
@@ -116,20 +116,7 @@ class HynetImgrModel(AbsESPnetModel):
                 # 1. preprocessing with each iteration
                 if i > 0:
                     image = self.attn_apply(image, attn)
-                # 2. forward pass for training network
-                if self.xai_mode == 'brew':
-                    if self.bias:
-                        if i > 0:
-                            bm = True
-                        else:
-                            bm = False
-                    else:
-                        bm = False
-                    logit = self.model.forward(image, mode='brew')
-                else:
-                    logit = self.model.forward(image)
-            else:
-                logit = self.model.forward(image)
+            logit = self.model.forward(image)
             
             # 3. caculate measurment 
             if i == 0: #< self.max_iter - 1: 
@@ -142,14 +129,16 @@ class HynetImgrModel(AbsESPnetModel):
                 with torch.no_grad():
                     if self.xai_mode == 'brew':
                         # label generation
+                        logit = self.model.forward(image, mode='brew')
+
                         logit_softmax = torch.softmax(logit, dim=-1)
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
                         
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
                         attn_cent = self.model.backward_linear(image, logit_softmax_cent)
 
-                        logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        attn_other = self.model.backward_linear(image, logit_softmax_other)
+                        # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                        # attn_other = self.model.backward_linear(image, logit_softmax_other)
                         
                         attn = attn_cent
                     elif self.xai_mode == 'saliency':

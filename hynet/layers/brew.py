@@ -6,8 +6,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from hynet.layers.brew_layer import linear_conv2d, linear_linear, linear_maxpool2d, grad_activation
-
 lienar_layer = (nn.Conv2d, nn.Linear)
 piece_wise_activation = (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)
 piece_shrink_activation = (nn.MaxPool1d, nn.MaxPool2d)
@@ -18,9 +16,107 @@ class BrewModuleList(nn.ModuleList):
 
         self.aug_hat = {"a_hat":{}, "c_hat":{}}
 
-class BrewModel(nn.Module):
+class BrewModule(nn.Module):
     def __init__(self):
         super().__init__()
+
+    def grad_activation(self, x, module, training=True, shrink=False):
+        # checkout inplace option for accuratly gradient
+        if isinstance(module, nn.ReLU):
+            assert module.inplace is False
+
+        with torch.autograd.set_grad_enabled(True):
+            x_base = x.requires_grad_()
+            # if training:
+            #     x_base = x
+            # else:
+            #     # validation mode has no backward graph for autograd 
+            #     # Thus, we force variable to make graph locally 
+            #     x_base = torch.autograd.Variable(x.data)
+            #     x_base.requires_grad = True
+
+            if shrink:
+                x = module(x_base)[0]
+            else:
+                x = module(x_base)
+            # caculate grad via auto grad respect to x_base
+            dfdx = torch.autograd.grad(x.sum(), x_base, retain_graph=True)
+            dfdx = dfdx[0].data#.double
+
+            # # approximate grad of activation f(x) / x = f'(0)
+            # dfdx = x / x_base
+            # # prevent inf or nan case
+            # mask = (x_base == 0)
+            # dfdx[mask] = 0.0
+
+        if shrink:
+            epsil = 0.0
+        else:
+            x_hat = (dfdx * x_base)
+            epsil = x - x_hat
+            x_hat = x_hat + epsil
+            # delta = F.mse_loss(x, x_hat).detach()
+            # if  delta.float() > 1e-20:
+            #     raise ValueError("{} layer wise loss of brew {} bigger than 1e-20".format(module, delta.float()))
+            epsil = epsil.detach()
+        dfdx = dfdx.detach()
+
+        return x, dfdx, epsil
+
+    def linear_linear(self, x, m, a=None, gamma=1.0):
+        if isinstance(m, nn.Linear):
+            w = m.weight
+            if gamma < 1.0:
+                w = F.leaky_relu(w, gamma)
+            b = m.bias
+            # if r is not None:
+            #     w_ = r.unsqueeze(2) * w.unsqueeze(0)
+            # else:
+            #     w_ = w
+            # x_hat = torch.matmul(x.unsqueeze(1), w_).squeeze(1)
+            if a is not None:
+                x = x * a
+            x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
+            # Todo(j-pong): check this line for equal to original
+            # print(F.mse_loss(x, x_hat))
+        else:                
+            raise AttributeError("This module is not approprate to this function.")
+        
+        return x
+
+    def linear_conv2d(self, x, m, a=None, gamma=1.0):
+        if isinstance(m, nn.Conv2d):
+            w = m.weight
+            if gamma < 1.0:
+                w = F.leaky_relu(w, gamma)
+            b = m.bias 
+            
+            if a is not None:
+                x = x * a
+            x = F.conv_transpose2d(x, w, stride=m.stride)
+            pads = m.padding
+            pad_h, pad_w = pads 
+            if pad_h > 0:
+                x = x[:, :, pad_h:-pad_h, :]
+            if pad_w > 0:
+                x = x[:, :, :, pad_w:-pad_w]
+        else:
+            raise AttributeError("This module is not approprate to this function.")
+        
+        return x
+
+    def linear_maxpool2d(self, x, m, ind=None):
+        if isinstance(m, nn.MaxPool2d):
+            x = F.max_unpool2d(x, ind, m.kernel_size, m.stride)
+        else:
+            raise AttributeError("This module is not approprate to this function.")
+        
+        return x
+
+class BrewModel(BrewModule):
+    def __init__(self):
+        super(BrewModel, self).__init__()
+
         self.attn_size = None
 
         self.encoder = BrewModuleList([])
@@ -37,19 +133,19 @@ class BrewModel(nn.Module):
                 a = mlist.aug_hat["a_hat"][idx]
                 # c = mlist.aug_hat["c_hat"][idx]
                 if isinstance(m, nn.Conv2d):
-                    x = linear_conv2d(x, m, a)
+                    x = self.linear_conv2d(x, m, a)
                     # if c is not None:
-                    #     x += linear_conv2d(c, m)
+                    #     x += self.linear_conv2d(c, m)
                 elif isinstance(m, nn.Linear):
-                    x = linear_linear(x, m, a)
+                    x = self.linear_linear(x, m, a)
                     # if c is not None:
-                    #     x += linear_linear(c, m)
+                    #     x += self.linear_linear(c, m)
             elif isinstance(m, piece_wise_activation):
                 pass
             elif isinstance(m, piece_shrink_activation):
                 a = mlist.aug_hat["a_hat"][idx]
                 _, ind = m(a)
-                x = linear_maxpool2d(x, m, ind)
+                x = self.linear_maxpool2d(x, m, ind)
             elif isinstance(m, nn.Flatten):
                 x = x.view(self.attn_size[0], self.attn_size[1],
                            self.attn_size[2], self.attn_size[3])
@@ -113,7 +209,7 @@ class BrewModel(nn.Module):
                 x = m(x)
                 idx_lin = idx
             elif isinstance(m, piece_wise_activation):
-                x, a_hat, c_hat = grad_activation(x, m, training=self.training)
+                x, a_hat, c_hat = self.grad_activation(x, m, training=self.training)
                 if a_hat_cum is not None:
                     a_hat_cum = a_hat * a_hat_cum
                     c_hat_cum = a_hat * c_hat_cum + c_hat
@@ -121,7 +217,7 @@ class BrewModel(nn.Module):
                     a_hat_cum = a_hat
                     c_hat_cum = c_hat
             elif isinstance(m, piece_shrink_activation):
-                x, a_hat, _ = grad_activation(x, m, training=self.training, shrink=True)
+                x, a_hat, _ = self.grad_activation(x, m, training=self.training, shrink=True)
                 mlist.aug_hat["a_hat"][idx] = a_hat
             elif isinstance(m, nn.Flatten):
                 x = m(x)
