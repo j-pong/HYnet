@@ -18,7 +18,7 @@ cfgs = {
 
 activation = nn.ReLU
 
-def make_layers(in_channels , cfg, batch_norm=False, bias=False):
+def make_layers(in_channels , cfg, batch_norm=True, bias=False):
     layers = []
     
     for v in cfg:

@@ -76,11 +76,11 @@ class HynetImgrModel(AbsESPnetModel):
         # get min-max value 
         max_x = torch.max(x, dim=2, keepdim=True)[0]
         min_x = torch.min(x, dim=2, keepdim=True)[0]
-        # normalization
+        # normalization element
         norm = (max_x - min_x)
         denorm = (max_y - min_y)
         norm[norm == 0.0] = 1.0
-
+        # normalization
         x = (x - min_x) / norm * denorm + min_y
         x = x.view(b_sz, ch, in_h, in_w)
         
@@ -111,15 +111,20 @@ class HynetImgrModel(AbsESPnetModel):
         assert self.in_ch == in_ch
 
         for i in range(self.max_iter):
-            # select forward mode
+            # 1. preprocessing with each iteration
             if self.xai_excute:
-                # 1. preprocessing with each iteration
                 if i > 0:
                     image = self.attn_apply(image, attn)
+            # 2. feedforward
             logit = self.model.forward(image)
             
             # 3. caculate measurment 
             if i == 0: #< self.max_iter - 1: 
+                # check parameter norm
+                parm_norm = 0.0
+                for name, param in self.model.named_parameters():
+                    if param.requires_grad:
+                        parm_norm += param.data.norm()  
                 losses.append(self.criterion(logit, label))
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
@@ -179,22 +184,18 @@ class HynetImgrModel(AbsESPnetModel):
                         attn = attr_bg.squeeze()
                         attn_cent = attn
                         attn_other = attn
+                    
                     # recasting to float type
                     attn = attn.detach().float()
                         
                     # 5. for logging
                     if not self.training:
-                        # image_ = image.permute(0, 2, 3, 1)
-                        # logger['imgs'].append(image_.sum(-1))
-                        # attn1 = attn_cent.permute(0, 2, 3, 1)
-                        # logger['attns'][0].append(attn1.sum(-1))
-                        # attn2 = attn_other.permute(0, 2, 3, 1)
-                        # logger['attns'][1].append(attn2.sum(-1))
-
-                        attn_ = attn_cent.permute(0, 2, 3, 1)
-                        logger['imgs'].append(attn_[...,0])
-                        logger['attns'][0].append(attn_[...,1])
-                        logger['attns'][1].append(attn_[...,2])
+                        image_ = image.permute(0, 2, 3, 1)
+                        logger['imgs'].append(image_.sum(-1))
+                        attn1 = attn_cent.permute(0, 2, 3, 1)
+                        logger['attns'][0].append(attn1.sum(-1))
+                        attn2 = attn_other.permute(0, 2, 3, 1)
+                        logger['attns'][1].append(attn2.sum(-1))
 
             else: 
                 if not self.training:
@@ -213,7 +214,8 @@ class HynetImgrModel(AbsESPnetModel):
                     loss_brew=self.model.loss_brew,
                     acc_start=logger['accs'][0],
                     acc_mid=logger['accs'][1],
-                    acc_end=logger['accs'][-1]
+                    acc_end=logger['accs'][-1],
+                    parm_norm=parm_norm.float()
                 )
         else:
             stats = dict(
