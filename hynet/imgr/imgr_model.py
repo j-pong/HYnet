@@ -142,10 +142,12 @@ class HynetImgrModel(AbsESPnetModel):
                         logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
                         attn_cent = self.model.backward_linear(image, logit_softmax_cent)
 
-                        # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        # attn_other = self.model.backward_linear(image, logit_softmax_other)
+                        logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                        attn_other = self.model.backward_linear(image, logit_softmax_other)
                         
                         attn = attn_cent
+
+                        loss_brew = self.model.loss_brew
                     elif self.xai_mode == 'saliency':
                         saliency = Saliency(self.model)
                         grads = saliency.attribute(image, target=label)
@@ -157,6 +159,8 @@ class HynetImgrModel(AbsESPnetModel):
                         attn = attr_ig.squeeze()
                         attn_cent = attn
                         attn_other = attn
+
+                        loss_brew = 0.0
                     elif self.xai_mode == 'ig_nt':
                         ig = IntegratedGradients(self.model)
                         nt = NoiseTunnel(ig)
@@ -170,21 +174,27 @@ class HynetImgrModel(AbsESPnetModel):
                         attr_dl = attribute_image_features(self.model, label, dl, image, 
                                                             baselines=image * 0)
                         attn = attr_dl.squeeze(0)
+                        attn_cent = attn
+                        attn_other = attn
                     elif self.xai_mode == 'dls':
                         dl = DeepLiftShap(self.model)
                         attr_dl, delta = attribute_image_features(self.model, label, dl, image, 
                                                             baselines=image * 0, 
                                                             return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
+                        attn_cent = attn
+                        attn_other = attn
                     elif self.xai_mode == 'bg':
                         bg = BrewGradient(self.model)
                         attr_bg = bg.attribute(image, 
                                                target=label,
                                                baselines=image * 0)
                         attn = attr_bg.squeeze()
+
                         attn_cent = attn
                         attn_other = attn
-                    
+
+                        loss_brew = bg.loss_brew
                     # recasting to float type
                     attn = attn.detach().float()
                         
@@ -211,7 +221,7 @@ class HynetImgrModel(AbsESPnetModel):
         if self.max_iter > 1:
             stats = dict(
                     loss=loss.detach(),
-                    loss_brew=self.model.loss_brew,
+                    loss_brew=loss_brew,
                     acc_start=logger['accs'][0],
                     acc_mid=logger['accs'][1],
                     acc_end=logger['accs'][-1],
