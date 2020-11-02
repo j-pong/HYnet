@@ -20,7 +20,8 @@ dumpdir=dump   # directory to dump full features
 # feature configuration
 do_delta=false
 
-preprocess_config=  #conf/randspec.yaml
+#preprocess_config=
+preprocess_config=conf/randspec.yaml
 train_config=conf/train_KT.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/tuning/lm_KT.yaml
@@ -51,6 +52,8 @@ train_set=KsponSpeech_tr
 test=e2e_test
 
 feat_recog_dir=${dumpdir}/${test}/delta${do_delta}
+n_split=
+recog_name=
 
 . utils/parse_options.sh || exit 1;
 
@@ -121,42 +124,71 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         fi
     fi
 
+    cat ${feat_recog_dir}/split${nj}utt/${recog_name}.json > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
+
     echo "Decoding Starts"
     pids=() # initialize pids
     for rtask in ${test}; do
     (
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})_${lmtag}
 
-        # split data
         splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
         #### use CPU for decoding
         ngpu=0
 
         # set batchsize 0 to disable batch decoding
-        if [ $use_lm == "true" ]; then
-            ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog.py \
-                --config ${decode_config} \
-                --ngpu ${ngpu} \
-                --backend ${backend} \
-                --batchsize 0 \
-                --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-                --result-label ${expdir}/${decode_dir}/data.JOB.json \
-                --model ${expdir}/results/${recog_model}  \
-                --rnnlm ${lmexpdir}/${lang_model} \
-                --api v2
+        if [[ $preprocess_config == *"randspec.yaml"* ]]; then
+            if [ $use_lm == "true" ]; then
+                ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                    asr_recog_specmix.py \
+                    --config ${decode_config} \
+                    --ngpu ${ngpu} \
+                    --backend ${backend} \
+                    --batchsize 0 \
+                    --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+                    --result-label ${expdir}/${decode_dir}/data.JOB.json \
+                    --model ${expdir}/results/${recog_model}  \
+                    --rnnlm ${lmexpdir}/${lang_model} \
+                    --api v2
+            else
+                ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                    asr_recog_specmix.py \
+                    --config ${decode_config} \
+                    --ngpu ${ngpu} \
+                    --backend ${backend} \
+                    --batchsize 0 \
+                    --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+                    --result-label ${expdir}/${decode_dir}/data.JOB.json \
+                    --model ${expdir}/results/${recog_model}  \
+                    --api v2
+            fi
+
         else
-            ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog.py \
-                --config ${decode_config} \
-                --ngpu ${ngpu} \
-                --backend ${backend} \
-                --batchsize 0 \
-                --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
-                --result-label ${expdir}/${decode_dir}/data.JOB.json \
-                --model ${expdir}/results/${recog_model}  \
-                --api v2
+            if [ $use_lm == "true" ]; then
+                ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                    asr_recog.py \
+                    --config ${decode_config} \
+                    --ngpu ${ngpu} \
+                    --backend ${backend} \
+                    --batchsize 0 \
+                    --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+                    --result-label ${expdir}/${decode_dir}/data.JOB.json \
+                    --model ${expdir}/results/${recog_model}  \
+                    --rnnlm ${lmexpdir}/${lang_model} \
+                    --api v2
+            else
+                ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                    asr_recog.py \
+                    --config ${decode_config} \
+                    --ngpu ${ngpu} \
+                    --backend ${backend} \
+                    --batchsize 0 \
+                    --recog-json ${feat_recog_dir}/split${nj}utt/data_${bpemode}${nbpe}.JOB.json \
+                    --result-label ${expdir}/${decode_dir}/data.JOB.json \
+                    --model ${expdir}/results/${recog_model}  \
+                    --api v2
+            fi
         fi
 
         score_sclite.sh --bpe ${nbpe} --bpemodel ${bpemodel}.model --wer true ${expdir}/${decode_dir} ${dict}

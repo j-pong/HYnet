@@ -36,4 +36,4 @@ with open('hyp.txt', 'r', encoding="utf-8") as f:
         wer = float(sum(word_eds))*100 / sum(word_ref_lens)
 
 with open('CER_WER.txt', 'w') as f:
-    f.write(format(cer, '.2f') + "/" + format(wer, '.2f'))
+    f.write(format(wer, '.2f') + "/" + format(cer, '.2f'))

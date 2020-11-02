@@ -21,25 +21,24 @@ import numpy as np
 from tensorboardX import SummaryWriter
 import torch
 from torch.nn.parallel import data_parallel
-from kaldi_io import write_mat
 
-from moneynet.asr.asr_utils import adadelta_eps_decay, rmsprop_lr_decay
-from moneynet.asr.asr_utils import add_results_to_json
-from moneynet.asr.asr_utils import CompareValueTrigger
-from moneynet.asr.asr_utils import format_mulenc_args
-from moneynet.asr.asr_utils import get_model_conf
-from moneynet.asr.asr_utils import plot_spectrogram
-from moneynet.asr.asr_utils import restore_snapshot
-from moneynet.asr.asr_utils import snapshot_object
-from moneynet.asr.asr_utils import torch_load
-from moneynet.asr.asr_utils import torch_resume
-from moneynet.asr.asr_utils import torch_snapshot
-from moneynet.utils.io_utils import LoadInputsAndTargets
-
+from espnet.asr.asr_utils import adadelta_eps_decay
+from espnet.asr.asr_utils import add_results_to_json
+from espnet.asr.asr_utils import CompareValueTrigger
+from espnet.asr.asr_utils import format_mulenc_args
+from espnet.asr.asr_utils import get_model_conf
+from espnet.asr.asr_utils import plot_spectrogram
+from espnet.asr.asr_utils import restore_snapshot
+from espnet.asr.asr_utils import snapshot_object
+from espnet.asr.asr_utils import torch_load
+from espnet.asr.asr_utils import torch_resume
+from espnet.asr.asr_utils import torch_snapshot
+from espnet.asr.pytorch_backend.asr_init import freeze_modules
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 import espnet.lm.pytorch_backend.extlm as extlm_pytorch
 from espnet.nets.asr_interface import ASRInterface
+from espnet.nets.beam_search_transducer import BeamSearchTransducer
 from espnet.nets.pytorch_backend.e2e_asr import pad_list
 import espnet.nets.pytorch_backend.lm.default as lm_pytorch
 from espnet.nets.pytorch_backend.streaming.segment import SegmentStreamingE2E
@@ -51,12 +50,16 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
+from espnet.utils.io_utils import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler
 from espnet.utils.training.tensorboard_logger import TensorboardLogger
 from espnet.utils.training.train_utils import check_early_stop
 from espnet.utils.training.train_utils import set_early_stop
+
+from moneynet.asr.asr_utils import rmsprop_lr_decay
+from moneynet.utils.io_utils import LoadInputsAndTargets
 
 import matplotlib
 
@@ -869,7 +872,6 @@ def train(args):
     trainer.run()
     check_early_stop(trainer, args.epochs)
 
-# TODO: In which way are we going to show decoded results?
 def recog(args):
     """Decode with the given args.
 
@@ -890,13 +892,60 @@ def recog(args):
     )
 
     # read rnnlm
-    rnnlm = None
+    if args.rnnlm:
+        rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
+        if getattr(rnnlm_args, "model_module", "default") != "default":
+            raise ValueError(
+                "use '--api v2' option to decode with non-default language model"
+            )
+        rnnlm = lm_pytorch.ClassifierWithState(
+            lm_pytorch.RNNLM(
+                len(train_args.char_list),
+                rnnlm_args.layer,
+                rnnlm_args.unit,
+                getattr(rnnlm_args, "embed_unit", None),  # for backward compatibility
+            )
+        )
+        torch_load(args.rnnlm, rnnlm)
+        rnnlm.eval()
+    else:
+        rnnlm = None
+
+    if args.word_rnnlm:
+        rnnlm_args = get_model_conf(args.word_rnnlm, args.word_rnnlm_conf)
+        word_dict = rnnlm_args.char_list_dict
+        char_dict = {x: i for i, x in enumerate(train_args.char_list)}
+        word_rnnlm = lm_pytorch.ClassifierWithState(
+            lm_pytorch.RNNLM(
+                len(word_dict),
+                rnnlm_args.layer,
+                rnnlm_args.unit,
+                getattr(rnnlm_args, "embed_unit", None),  # for backward compatibility
+            )
+        )
+        torch_load(args.word_rnnlm, word_rnnlm)
+        word_rnnlm.eval()
+
+        if rnnlm is not None:
+            rnnlm = lm_pytorch.ClassifierWithState(
+                extlm_pytorch.MultiLevelLM(
+                    word_rnnlm.predictor, rnnlm.predictor, word_dict, char_dict
+                )
+            )
+        else:
+            rnnlm = lm_pytorch.ClassifierWithState(
+                extlm_pytorch.LookAheadWordLM(
+                    word_rnnlm.predictor, word_dict, char_dict
+                )
+            )
 
     # gpu
     if args.ngpu == 1:
         gpu_id = list(range(args.ngpu))
         logging.info("gpu id: " + str(gpu_id))
         model.cuda()
+        if rnnlm:
+            rnnlm.cuda()
 
     # read json data
     with open(args.recog_json, "rb") as f:
@@ -913,7 +962,26 @@ def recog(args):
         preprocess_args={"train": False},
     )
 
-    ark_file = open(args.result_ark,'wb')
+    # load transducer beam search
+    if hasattr(model, "rnnt_mode"):
+        if hasattr(model, "dec"):
+            trans_decoder = model.dec
+        else:
+            trans_decoder = model.decoder
+
+        beam_search_transducer = BeamSearchTransducer(
+            decoder=trans_decoder,
+            beam_size=args.beam_size,
+            lm=rnnlm,
+            lm_weight=args.lm_weight,
+            search_type=args.search_type,
+            max_sym_exp=args.max_sym_exp,
+            u_max=args.u_max,
+            nstep=args.nstep,
+            prefix_alpha=args.prefix_alpha,
+            score_norm=args.score_norm,
+        )
+
     if args.batchsize == 0:
         with torch.no_grad():
             for idx, name in enumerate(js.keys(), 1):
@@ -925,19 +993,71 @@ def recog(args):
                     if args.num_encs == 1
                     else [feat[idx][0] for idx in range(model.num_encs)]
                 )
-                hyps = model.recognize(
-                    feat, args, train_args.char_list, rnnlm
+                if args.streaming_mode == "window" and args.num_encs == 1:
+                    logging.info(
+                        "Using streaming recognizer with window size %d frames",
+                        args.streaming_window,
+                    )
+                    se2e = WindowStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
+                    for i in range(0, feat.shape[0], args.streaming_window):
+                        logging.info(
+                            "Feeding frames %d - %d", i, i + args.streaming_window
+                        )
+                        se2e.accept_input(feat[i : i + args.streaming_window])
+                    logging.info("Running offline attention decoder")
+                    se2e.decode_with_attention_offline()
+                    logging.info("Offline attention decoder finished")
+                    nbest_hyps = se2e.retrieve_recognition()
+                elif args.streaming_mode == "segment" and args.num_encs == 1:
+                    logging.info(
+                        "Using streaming recognizer with threshold value %d",
+                        args.streaming_min_blank_dur,
+                    )
+                    nbest_hyps = []
+                    for n in range(args.nbest):
+                        nbest_hyps.append({"yseq": [], "score": 0.0})
+                    se2e = SegmentStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
+                    r = np.prod(model.subsample)
+                    for i in range(0, feat.shape[0], r):
+                        hyps = se2e.accept_input(feat[i : i + r])
+                        if hyps is not None:
+                            text = "".join(
+                                [
+                                    train_args.char_list[int(x)]
+                                    for x in hyps[0]["yseq"][1:-1]
+                                    if int(x) != -1
+                                ]
+                            )
+                            text = text.replace(
+                                "\u2581", " "
+                            ).strip()  # for SentencePiece
+                            text = text.replace(model.space, " ")
+                            text = text.replace(model.blank, "")
+                            logging.info(text)
+                            for n in range(args.nbest):
+                                nbest_hyps[n]["yseq"].extend(hyps[n]["yseq"])
+                                nbest_hyps[n]["score"] += hyps[n]["score"]
+                elif hasattr(model, "decoder_mode") and model.decoder_mode == "maskctc":
+                    nbest_hyps = model.recognize_maskctc(
+                        feat, args, train_args.char_list
+                    )
+                elif hasattr(model, "rnnt_mode"):
+                    nbest_hyps = model.recognize(feat, beam_search_transducer)
+                else:
+                    nbest_hyps = model.recognize(
+                        feat, args, train_args.char_list, rnnlm
+                    )
+                new_js[name] = add_results_to_json(
+                    js[name], nbest_hyps, train_args.char_list
                 )
-                # TODO: is there any way to overwrite decoding results into new js?
-                hyps = hyps.squeeze(1)
-                hyps = hyps.data.numpy()
-                write_mat(ark_file, hyps, key=name)
 
     else:
+
         def grouper(n, iterable, fillvalue=None):
             kargs = [iter(iterable)] * n
             return zip_longest(*kargs, fillvalue=fillvalue)
 
+        # sort data if batchsize > 1
         keys = list(js.keys())
         if args.batchsize > 1:
             feat_lens = [js[key]["input"][0]["shape"][0] for key in keys]
@@ -945,10 +1065,7 @@ def recog(args):
             keys = [keys[i] for i in sorted_index]
 
         with torch.no_grad():
-            iteration = 1
             for names in grouper(args.batchsize, keys, None):
-                dec_idx = iteration * len(names)
-                logging.info("(%d/%d) decoding ", dec_idx, len(keys))
                 names = [name for name in names if name]
                 batch = [(name, js[name]) for name in names]
                 feats = (
@@ -956,14 +1073,355 @@ def recog(args):
                     if args.num_encs == 1
                     else load_inputs_and_targets(batch)
                 )
+                if args.streaming_mode == "window" and args.num_encs == 1:
+                    raise NotImplementedError
+                elif args.streaming_mode == "segment" and args.num_encs == 1:
+                    if args.batchsize > 1:
+                        raise NotImplementedError
+                    feat = feats[0]
+                    nbest_hyps = []
+                    for n in range(args.nbest):
+                        nbest_hyps.append({"yseq": [], "score": 0.0})
+                    se2e = SegmentStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
+                    r = np.prod(model.subsample)
+                    for i in range(0, feat.shape[0], r):
+                        hyps = se2e.accept_input(feat[i : i + r])
+                        if hyps is not None:
+                            text = "".join(
+                                [
+                                    train_args.char_list[int(x)]
+                                    for x in hyps[0]["yseq"][1:-1]
+                                    if int(x) != -1
+                                ]
+                            )
+                            text = text.replace(
+                                "\u2581", " "
+                            ).strip()  # for SentencePiece
+                            text = text.replace(model.space, " ")
+                            text = text.replace(model.blank, "")
+                            logging.info(text)
+                            for n in range(args.nbest):
+                                nbest_hyps[n]["yseq"].extend(hyps[n]["yseq"])
+                                nbest_hyps[n]["score"] += hyps[n]["score"]
+                    nbest_hyps = [nbest_hyps]
+                else:
+                    nbest_hyps = model.recognize_batch(
+                        feats, args, train_args.char_list, rnnlm=rnnlm
+                    )
 
-                hyps = model.recognize_batch(
-                    feats, args, train_args.char_list, rnnlm=rnnlm
+                for i, nbest_hyp in enumerate(nbest_hyps):
+                    name = names[i]
+                    new_js[name] = add_results_to_json(
+                        js[name], nbest_hyp, train_args.char_list
+                    )
+
+    with open(args.result_label, "wb") as f:
+        f.write(
+            json.dumps(
+                {"utts": new_js}, indent=4, ensure_ascii=False, sort_keys=True
+            ).encode("utf_8")
+        )
+
+
+def enhance(args):
+    """Dumping enhanced speech and mask.
+
+    Args:
+        args (namespace): The program arguments.
+    """
+    set_deterministic_pytorch(args)
+    # read training config
+    idim, odim, train_args = get_model_conf(args.model, args.model_conf)
+
+    # TODO(ruizhili): implement enhance for multi-encoder model
+    assert args.num_encs == 1, "number of encoder should be 1 ({} is given)".format(
+        args.num_encs
+    )
+
+    # load trained model parameters
+    logging.info("reading model parameters from " + args.model)
+    model_class = dynamic_import(train_args.model_module)
+    model = model_class(idim, odim, train_args)
+    assert isinstance(model, ASRInterface)
+    torch_load(args.model, model)
+    model.recog_args = args
+
+    # gpu
+    if args.ngpu == 1:
+        gpu_id = list(range(args.ngpu))
+        logging.info("gpu id: " + str(gpu_id))
+        model.cuda()
+
+    # read json data
+    with open(args.recog_json, "rb") as f:
+        js = json.load(f)["utts"]
+
+    load_inputs_and_targets = LoadInputsAndTargets(
+        mode="asr",
+        load_output=False,
+        sort_in_input_length=False,
+        preprocess_conf=None,  # Apply pre_process in outer func
+    )
+    if args.batchsize == 0:
+        args.batchsize = 1
+
+    # Creates writers for outputs from the network
+    if args.enh_wspecifier is not None:
+        enh_writer = file_writer_helper(args.enh_wspecifier, filetype=args.enh_filetype)
+    else:
+        enh_writer = None
+
+    # Creates a Transformation instance
+    preprocess_conf = (
+        train_args.preprocess_conf
+        if args.preprocess_conf is None
+        else args.preprocess_conf
+    )
+    if preprocess_conf is not None:
+        logging.info(f"Use preprocessing: {preprocess_conf}")
+        transform = Transformation(preprocess_conf)
+    else:
+        transform = None
+
+    # Creates a IStft instance
+    istft = None
+    frame_shift = args.istft_n_shift  # Used for plot the spectrogram
+    if args.apply_istft:
+        if preprocess_conf is not None:
+            # Read the conffile and find stft setting
+            with open(preprocess_conf) as f:
+                # Json format: e.g.
+                #    {"process": [{"type": "stft",
+                #                  "win_length": 400,
+                #                  "n_fft": 512, "n_shift": 160,
+                #                  "window": "han"},
+                #                 {"type": "foo", ...}, ...]}
+                conf = json.load(f)
+                assert "process" in conf, conf
+                # Find stft setting
+                for p in conf["process"]:
+                    if p["type"] == "stft":
+                        istft = IStft(
+                            win_length=p["win_length"],
+                            n_shift=p["n_shift"],
+                            window=p.get("window", "hann"),
+                        )
+                        logging.info(
+                            "stft is found in {}. "
+                            "Setting istft config from it\n{}".format(
+                                preprocess_conf, istft
+                            )
+                        )
+                        frame_shift = p["n_shift"]
+                        break
+        if istft is None:
+            # Set from command line arguments
+            istft = IStft(
+                win_length=args.istft_win_length,
+                n_shift=args.istft_n_shift,
+                window=args.istft_window,
+            )
+            logging.info(
+                "Setting istft config from the command line args\n{}".format(istft)
+            )
+
+    # sort data
+    keys = list(js.keys())
+    feat_lens = [js[key]["input"][0]["shape"][0] for key in keys]
+    sorted_index = sorted(range(len(feat_lens)), key=lambda i: -feat_lens[i])
+    keys = [keys[i] for i in sorted_index]
+
+    def grouper(n, iterable, fillvalue=None):
+        kargs = [iter(iterable)] * n
+        return zip_longest(*kargs, fillvalue=fillvalue)
+
+    num_images = 0
+    if not os.path.exists(args.image_dir):
+        os.makedirs(args.image_dir)
+
+    for names in grouper(args.batchsize, keys, None):
+        batch = [(name, js[name]) for name in names]
+
+        # May be in time region: (Batch, [Time, Channel])
+        org_feats = load_inputs_and_targets(batch)[0]
+        if transform is not None:
+            # May be in time-freq region: : (Batch, [Time, Channel, Freq])
+            feats = transform(org_feats, train=False)
+        else:
+            feats = org_feats
+
+        with torch.no_grad():
+            enhanced, mask, ilens = model.enhance(feats)
+
+        for idx, name in enumerate(names):
+            # Assuming mask, feats : [Batch, Time, Channel. Freq]
+            #          enhanced    : [Batch, Time, Freq]
+            enh = enhanced[idx][: ilens[idx]]
+            mas = mask[idx][: ilens[idx]]
+            feat = feats[idx]
+
+            # Plot spectrogram
+            if args.image_dir is not None and num_images < args.num_images:
+                import matplotlib.pyplot as plt
+
+                num_images += 1
+                ref_ch = 0
+
+                plt.figure(figsize=(20, 10))
+                plt.subplot(4, 1, 1)
+                plt.title("Mask [ref={}ch]".format(ref_ch))
+                plot_spectrogram(
+                    plt,
+                    mas[:, ref_ch].T,
+                    fs=args.fs,
+                    mode="linear",
+                    frame_shift=frame_shift,
+                    bottom=False,
+                    labelbottom=False,
                 )
 
-                # TODO: is there any way to overwrite decoding results into new js?
-                hyps = hyps.data.cpu().numpy()
-                for idx, hyp in enumerate(hyps):
-                    write_mat(ark_file, hyp, key=names[idx])
+                plt.subplot(4, 1, 2)
+                plt.title("Noisy speech [ref={}ch]".format(ref_ch))
+                plot_spectrogram(
+                    plt,
+                    feat[:, ref_ch].T,
+                    fs=args.fs,
+                    mode="db",
+                    frame_shift=frame_shift,
+                    bottom=False,
+                    labelbottom=False,
+                )
 
-                iteration+=1
+                plt.subplot(4, 1, 3)
+                plt.title("Masked speech [ref={}ch]".format(ref_ch))
+                plot_spectrogram(
+                    plt,
+                    (feat[:, ref_ch] * mas[:, ref_ch]).T,
+                    frame_shift=frame_shift,
+                    fs=args.fs,
+                    mode="db",
+                    bottom=False,
+                    labelbottom=False,
+                )
+
+                plt.subplot(4, 1, 4)
+                plt.title("Enhanced speech")
+                plot_spectrogram(
+                    plt, enh.T, fs=args.fs, mode="db", frame_shift=frame_shift
+                )
+
+                plt.savefig(os.path.join(args.image_dir, name + ".png"))
+                plt.clf()
+
+            # Write enhanced wave files
+            if enh_writer is not None:
+                if istft is not None:
+                    enh = istft(enh)
+                else:
+                    enh = enh
+
+                if args.keep_length:
+                    if len(org_feats[idx]) < len(enh):
+                        # Truncate the frames added by stft padding
+                        enh = enh[: len(org_feats[idx])]
+                    elif len(org_feats) > len(enh):
+                        padwidth = [(0, (len(org_feats[idx]) - len(enh)))] + [
+                            (0, 0)
+                        ] * (enh.ndim - 1)
+                        enh = np.pad(enh, padwidth, mode="constant")
+
+                if args.enh_filetype in ("sound", "sound.hdf5"):
+                    enh_writer[name] = (args.fs, enh)
+                else:
+                    # Hint: To dump stft_signal, mask or etc,
+                    # enh_filetype='hdf5' might be convenient.
+                    enh_writer[name] = enh
+
+            if num_images >= args.num_images and enh_writer is None:
+                logging.info("Breaking the process.")
+                break
+
+
+def ctc_align(args):
+    """CTC forced alignments with the given args.
+
+    Args:
+        args (namespace): The program arguments.
+    """
+
+    def add_alignment_to_json(js, alignment, char_list):
+        """Add N-best results to json.
+
+        Args:
+            js (dict[str, Any]): Groundtruth utterance dict.
+            alignment (list[int]): List of alignment.
+            char_list (list[str]): List of characters.
+
+        Returns:
+            dict[str, Any]: N-best results added utterance dict.
+
+        """
+        # copy old json info
+        new_js = dict()
+        new_js["ctc_alignment"] = []
+
+        alignment_tokens = []
+        for idx, a in enumerate(alignment):
+            alignment_tokens.append(char_list[a])
+        alignment_tokens = " ".join(alignment_tokens)
+
+        new_js["ctc_alignment"] = alignment_tokens
+
+        return new_js
+
+    set_deterministic_pytorch(args)
+    model, train_args = load_trained_model(args.model)
+    assert isinstance(model, ASRInterface)
+    model.eval()
+
+    load_inputs_and_targets = LoadInputsAndTargets(
+        mode="asr",
+        load_output=True,
+        sort_in_input_length=False,
+        preprocess_conf=train_args.preprocess_conf
+        if args.preprocess_conf is None
+        else args.preprocess_conf,
+        preprocess_args={"train": False},
+    )
+
+    if args.ngpu > 1:
+        raise NotImplementedError("only single GPU decoding is supported")
+    if args.ngpu == 1:
+        device = "cuda"
+    else:
+        device = "cpu"
+    dtype = getattr(torch, args.dtype)
+    logging.info(f"Decoding device={device}, dtype={dtype}")
+    model.to(device=device, dtype=dtype).eval()
+
+    # read json data
+    with open(args.align_json, "rb") as f:
+        js = json.load(f)["utts"]
+    new_js = {}
+    if args.batchsize == 0:
+        with torch.no_grad():
+            for idx, name in enumerate(js.keys(), 1):
+                logging.info("(%d/%d) aligning " + name, idx, len(js.keys()))
+                batch = [(name, js[name])]
+                feat, label = load_inputs_and_targets(batch)
+                feat = feat[0]
+                label = label[0]
+                enc = model.encode(torch.as_tensor(feat).to(device)).unsqueeze(0)
+                alignment = model.ctc.forced_align(enc, label)
+                new_js[name] = add_alignment_to_json(
+                    js[name], alignment, train_args.char_list
+                )
+    else:
+        raise NotImplementedError("Align_batch is not implemented.")
+
+    with open(args.result_label, "wb") as f:
+        f.write(
+            json.dumps(
+                {"utts": new_js}, indent=4, ensure_ascii=False, sort_keys=True
+            ).encode("utf_8")
+        )

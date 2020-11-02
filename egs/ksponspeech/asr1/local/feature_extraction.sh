@@ -20,7 +20,7 @@ dumpdir=dump   # directory to dump full features
 # feature configuration
 do_delta=false
 
-preprocess_config=  #conf/randspec.yaml
+preprocess_config=conf/randspec.yaml
 train_config=conf/train_KT.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/tuning/lm_KT.yaml
@@ -46,9 +46,10 @@ nbpe=5000
 bpemode=unigram
 
 # exp tag
-tag="train_rnn_specaug" # tag for managing experiments.
+tag="spec_rmix" # tag for managing experiments.
 train_set=KsponSpeech_tr
 test=test
+is_kspon=true
 
 feat_recog_dir=${dumpdir}/${test}/delta${do_delta}
 
@@ -62,29 +63,42 @@ set -o pipefail
 
 if [ ${stage} -le 0 ]; then
     echo "stage 0: data preparation"
-    sudo rm -rf data/e2e_test data/kaldi_test fbank mfcc
+    sudo rm -rf dump/e2e_test data/e2e_test data/kaldi_test fbank mfcc
 
     find data/${test}/wave -name '*.wav' | awk -F '/' '{print $NF}' | sed 's/.wav//g' > data/${test}/uttid.scp
     find data/${test}/wave -name '*.wav' > data/${test}/wpath.scp
     cat data/${test}/uttid.scp | awk -F '_' '{print $1}' > data/${test}/spkid.scp
     paste data/${test}/uttid.scp data/${test}/spkid.scp | sed 's/\t/ /g' | sort -u > data/${test}/utt2spk
-    rm -rf data/${test}/spkid.scp
     echo "created utt2spk"
     utils/utt2spk_to_spk2utt.pl <data/${test}/utt2spk >data/${test}/spk2utt || exit 1
     echo "created spk2utt"
     paste data/${test}/uttid.scp data/${test}/wpath.scp | sed 's/\t/ /g' | sort -u > data/${test}/wav.scp
-    rm -rf data/${test}/uttid.scp data/${test}/wpath.scp
     echo "created wav.scp"
 
-    rm -rf data/${test}/text.txt
-    find data/${test}/texts -name '*.txt' | awk -F '/' '{print $NF}' | sed 's/.txt//g' > data/${test}/uttid.scp
-    find data/${test}/texts -name '*.txt' > data/${test}/tpath.scp
-    python3 local/inference.py ${test}
-    paste data/${test}/uttid.scp data/${test}/text.txt | sort -u > data/${test}/text_tmp
-    cat data/${test}/text_tmp | sed 's/\t/ /g' > data/${test}/text
-    cat data/${test}/text_tmp | awk -F '\t' '{print $2}' > data/${test}/text.txt
-    rm -rf data/${test}/uttid.scp data/${test}/tpath.scp data/${test}/text_tmp
-    echo "created text"
+    rm -rf data/${test}/text data/${test}/text.txt
+    if [[ $is_kspon == true ]]; then
+        while read line; do
+            cat data/KsponSpeech_tt/text | grep $line >> data/${test}/text_tmp.txt
+        done < data/${test}/uttid.scp
+        cat data/${test}/text_tmp.txt | awk -F '_' '{print $3"_"$4}' | sort -u > data/${test}/text
+        cat data/${test}/text | awk -F ' ' '{$1=""; print $0}' | sed 's/^ //g' >> data/${test}/text.txt
+        rm -rf data/${test}/texts; mkdir -p data/${test}/texts; sudo chmod -R +777 data/${test}/texts
+        while read line; do
+            tname=`echo $line | awk -F ' ' '{print $1}'  | sed 's/^ //g'`
+            tcontent=`echo $line | awk -F ' ' '{$1=""; print $0}'  | sed 's/^ //g'`
+            echo ${tcontent} > data/${test}/texts/${tname}.txt
+        done < data/${test}/text
+        echo "created text"
+    else
+        find data/${test}/texts -name '*.txt' | awk -F '/' '{print $NF}' | sed 's/.txt//g' > data/${test}/uttid.scp
+        find data/${test}/texts -name '*.txt' > data/${test}/tpath.scp
+        python3 local/inference.py ${test}
+        paste data/${test}/uttid.scp data/${test}/text.txt | sort -u > data/${test}/text_tmp
+        cat data/${test}/text_tmp | sed 's/\t/ /g' > data/${test}/text
+        cat data/${test}/text_tmp | awk -F '\t' '{print $2}' > data/${test}/text.txt
+        echo "created text"
+    fi
+    rm -rf data/${test}/uttid.scp data/${test}/tpath.scp data/${test}/text_tmp data/${test}/spkid.scp data/${test}/uttid.scp data/${test}/wpath.scp
 
     mkdir -p data/e2e_test data/kaldi_test
     cp -r data/${test}/* data/e2e_test/
@@ -130,4 +144,6 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
         data2json.sh --feat ${feat_recog_dir}/feats.scp --bpecode ${bpemodel}.model \
             data/${rtask} ${dict} > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
     done
+
+    local/splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 fi
