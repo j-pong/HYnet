@@ -124,8 +124,15 @@ class HynetImgrModel(AbsESPnetModel):
                 parm_norm = 0.0
                 for name, param in self.model.named_parameters():
                     if param.requires_grad:
-                        parm_norm += param.data.norm()  
+                        parm_abs = param.data.abs()
+                        m = parm_abs.mean()
+                        var = parm_abs.var()
+                        parm_norm += var
+                        # print(name, m, var)
+
+                # classification ce-loss
                 losses.append(self.criterion(logit, label))
+            # accuracy for classification
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
 
@@ -139,8 +146,10 @@ class HynetImgrModel(AbsESPnetModel):
                         logit_softmax = torch.softmax(logit, dim=-1)
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
                         
-                        logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        attn_cent = self.model.backward_linear(image, logit_softmax_cent)
+                        # logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                        logit_softmax_cent = mask.float()
+                        outputs = logit.masked_select(mask).unsqueeze(-1)
+                        attn_cent = self.model.backward_linear(image, logit_softmax_cent, outputs)
 
                         logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
                         attn_other = self.model.backward_linear(image, logit_softmax_other)
@@ -154,20 +163,21 @@ class HynetImgrModel(AbsESPnetModel):
                         attn = grads.squeeze()
                     elif self.xai_mode == 'ig':
                         ig = IntegratedGradients(self.model)
-                        attr_ig = attribute_image_features(self.model, label, ig, image, 
-                                                           baselines=image * 0)
+                        attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
+                                                                  baselines=image * 0, 
+                                                                  return_convergence_delta=True)
                         attn = attr_ig.squeeze()
                         attn_cent = attn
                         attn_other = attn
 
-                        loss_brew = 0.0
+                        loss_brew = delta
                     elif self.xai_mode == 'ig_nt':
                         ig = IntegratedGradients(self.model)
                         nt = NoiseTunnel(ig)
                         attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
-                                                                baselines=image * 0, 
-                                                                nt_type='smoothgrad',
-                                                                n_samples=4, stdevs=0.02)
+                                                              baselines=image * 0, 
+                                                              nt_type='smoothgrad',
+                                                              n_samples=4, stdevs=0.02)
                         attn = attr_ig_nt.squeeze(0)
                     elif self.xai_mode == 'dl':
                         dl = DeepLift(self.model)
@@ -187,10 +197,8 @@ class HynetImgrModel(AbsESPnetModel):
                     elif self.xai_mode == 'bg':
                         bg = BrewGradient(self.model)
                         attr_bg = bg.attribute(image, 
-                                               target=label,
-                                               baselines=image * 0)
+                                               target=label)
                         attn = attr_bg.squeeze()
-
                         attn_cent = attn
                         attn_other = attn
 

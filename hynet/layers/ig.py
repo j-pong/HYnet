@@ -6,7 +6,8 @@ import torch
 from torch import Tensor
 import torch.nn.functional as F
 
-from captum.attr._utils.common import _run_forward, _format_input
+from captum.attr._utils.common import _run_forward, _format_input, _select_targets
+from captum.attr._utils.gradient import apply_gradient_requirements, undo_gradient_requirements
 
 from captum.attr._utils.approximation_methods import approximation_parameters
 from captum.attr._utils.attribution import GradientAttribution
@@ -38,28 +39,60 @@ class BrewGradient(GradientAttribution):
         """
         GradientAttribution.__init__(self, forward_func)
         self.loss_brew = 0.0
+
     def attribute(  # type: ignore
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        baselines: BaselineType = None,
         target: TargetType = None,
         return_convergence_delta: bool = False,
+        precision: str = 'float32'
     ) -> Union[
         TensorOrTupleOfTensorsGeneric, Tuple[TensorOrTupleOfTensorsGeneric, Tensor]
     ]:  
+        if precision == 'float32':
+            inputs = inputs.float()
+            self.forward_func.float()
+        elif precision == 'float64':
+            inputs = inputs.double()
+            self.forward_func.double()
+        else:
+            raise AttributeError()
+        inputs = _format_input(inputs)
+        gradient_mask = apply_gradient_requirements(inputs)
+
         with torch.autograd.set_grad_enabled(True):
-            inputs = inputs.requires_grad_()
             # runs forward pass
             outputs = _run_forward(self.forward_func, inputs, target)
             assert outputs[0].numel() == 1, (
                 "Target not provided when necessary, cannot"
                 " take gradient with respect to multiple outputs."
             )
-            grads = torch.autograd.grad(torch.unbind(outputs), inputs)
-        grads = grads[0].detach()
-        outputs_hat = (inputs * grads).flatten(start_dim=1).sum(-1, keepdim=True)
-        self.loss_brew = F.mse_loss(outputs_hat, outputs).detach()
+            
+            # calculate gradient
+            grads = torch.autograd.grad(torch.unbind(outputs), inputs)[0]
 
+        # clear gradient and detach from graph
+        undo_gradient_requirements(inputs, gradient_mask)
+
+        # back to the original precision
+        if precision == 'float32':
+            pass
+        elif precision == 'float64':
+            self.forward_func.float()
+        else:
+            raise AttributeError()
+        
+        # output type check
+        if isinstance(inputs, tuple):
+            inputs = inputs[0]
+
+        # check numerical error (why this error is not zero?)
+        # suspect shattered gradient or precision error
+        outputs_hat = (inputs * grads).flatten(start_dim=1).sum(-1, keepdim=True)
+        loss_brew = F.mse_loss(outputs, outputs_hat)
+        self.loss_brew = loss_brew
+
+        # importance of feature has sign field 
         sign = torch.sign(inputs)
         grads = grads * sign
 

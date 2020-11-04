@@ -233,11 +233,18 @@ class BrewModel(BrewModule):
                 c_hat_cum = None
         return x
 
-    def backward_linear(self, x, y):
+    def backward_linear(self, x, y, outputs=None):
         with torch.no_grad():
             # backward
             attn = self.backward_linear_impl(y, self.decoder)
             attn = self.backward_linear_impl(attn, self.encoder)
+
+            if outputs is not None:
+                outputs_hat = (x * attn).flatten(start_dim=1).sum(-1, keepdim=True)
+                loss_brew = F.mse_loss(outputs, outputs_hat)
+                self.loss_brew = loss_brew
+            else:
+                pass
 
             # sign-field
             sign = torch.sign(x)
@@ -264,14 +271,14 @@ class BrewModel(BrewModule):
             self.attn_size = x_non_linear.size()
             x_non_linear = self.forward_impl(x_non_linear, self.decoder)
 
-            with torch.no_grad():
-                # linearization
-                x_linear = self.forward_linear_impl(x, self.encoder)
-                x_linear = self.forward_linear_impl(x_linear, self.decoder)
+            # with torch.no_grad():
+            #     # linearization
+            #     x_linear = self.forward_linear_impl(x, self.encoder)
+            #     x_linear = self.forward_linear_impl(x_linear, self.decoder)
 
-                # linearization error check
-                self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
-                if self.loss_brew.float() > 1e-18:
-                    raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
+            #     # linearization error check
+            #     self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
+            #     if self.loss_brew.float() > 1e-18:
+            #         raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
 
         return x_non_linear
