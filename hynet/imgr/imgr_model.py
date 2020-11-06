@@ -4,6 +4,8 @@ from typing import Optional
 from typing import Tuple
 from typing import Union
 
+from collections import OrderedDict
+
 import math
 import copy
 
@@ -86,16 +88,16 @@ class HynetImgrModel(AbsESPnetModel):
         
         return x
 
-    def attn_apply(self, x, attn):
-        # max_y = torch.max(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
-        # min_y = torch.min(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
+    # def attn_apply(self, x, attn):
+    #     # max_y = torch.max(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
+    #     # min_y = torch.min(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
 
-        attn = self.feat_minmax_norm(attn, 1.0, 0.0)
-        x = x * attn
+    #     attn = self.feat_minmax_norm(attn, 1.0, 0.0)
+    #     x = x * attn
 
-        # x = self.feat_minmax_norm(x, max_y, min_y)
+    #     # x = self.feat_minmax_norm(x, max_y, min_y)
 
-        return x
+    #     return x
 
     def forward(
         self,
@@ -110,16 +112,26 @@ class HynetImgrModel(AbsESPnetModel):
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
+        focused_layer = self.model.encoder[0]
+
         for i in range(self.max_iter):
             # 1. preprocessing with each iteration
             if self.xai_excute:
                 if i > 0:
-                    image = self.attn_apply(image, attn)
+                    # image = self.attn_apply(image, attn)
+                    attn = self.feat_minmax_norm(attn, 1.0, 0.0)
+                    if i == 1:
+                        attns = attn
+                    else:
+                        attns *= attn
+                    def attn_apply(self, x):
+                        return x[0] * attns
+                    focused_layer.register_forward_pre_hook(attn_apply)
             # 2. feedforward
-            logit = self.model.forward(image)
+            logit = self.model(image)
             
             # 3. caculate measurment 
-            if i == 0: #< self.max_iter - 1: 
+            if i == 0: # < self.max_iter - 1: 
                 # check parameter norm
                 parm_norm = 0.0
                 for name, param in self.model.named_parameters():
@@ -128,7 +140,6 @@ class HynetImgrModel(AbsESPnetModel):
                         m = parm_abs.mean()
                         var = parm_abs.var()
                         parm_norm += var
-                        # print(name, m, var)
 
                 # classification ce-loss
                 losses.append(self.criterion(logit, label))
@@ -141,7 +152,7 @@ class HynetImgrModel(AbsESPnetModel):
                 with torch.no_grad():
                     if self.xai_mode == 'brew':
                         # label generation
-                        logit = self.model.forward(image, mode='brew')
+                        logit = self.model(image, save_grad=True)
 
                         logit_softmax = torch.softmax(logit, dim=-1)
                         mask = F.one_hot(label, num_classes=self.out_ch).bool()
@@ -196,7 +207,8 @@ class HynetImgrModel(AbsESPnetModel):
                         attn_other = attn
                     elif self.xai_mode == 'bg':
                         bg = BrewGradient(self.model)
-                        attr_bg = bg.attribute(image, 
+                        attr_bg = bg.attribute(image,
+                                               layer=focused_layer,
                                                target=label)
                         attn = attr_bg.squeeze()
                         attn_cent = attn
@@ -205,23 +217,24 @@ class HynetImgrModel(AbsESPnetModel):
                         loss_brew = bg.loss_brew
                     # recasting to float type
                     attn = attn.detach().float()
-                        
-                    # 5. for logging
-                    if not self.training:
-                        image_ = image.permute(0, 2, 3, 1)
-                        logger['imgs'].append(image_.sum(-1))
-                        attn1 = attn_cent.permute(0, 2, 3, 1)
-                        logger['attns'][0].append(attn1.sum(-1))
-                        attn2 = attn_other.permute(0, 2, 3, 1)
-                        logger['attns'][1].append(attn2.sum(-1))
+                
+                # flush hook
+                focused_layer._forward_pre_hooks = OrderedDict()
 
+                # 5. for logging
+                if not self.training:
+                    image_ = image.permute(0, 2, 3, 1)
+                    logger['imgs'].append(image_.sum(-1))
+                    attn1 = attn_cent.permute(0, 2, 3, 1)
+                    logger['attns'][0].append(attn1.sum(-1))
+                    attn2 = attn_other.permute(0, 2, 3, 1)
+                    logger['attns'][1].append(attn2.sum(-1))
             else: 
                 if not self.training:
                     image_ = image.permute(0, 2, 3, 1)
                     logger['imgs'].append(image_)
                     logger['attns'][0].append(image_[:,:,:,0])
                     logger['attns'][1].append(image_[:,:,:,1])
-
         loss = 0.0
         for los in losses:
             loss += los

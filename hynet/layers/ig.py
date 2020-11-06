@@ -2,6 +2,8 @@
 import typing
 from typing import Any, Callable, Tuple, Union
 
+from collections import OrderedDict
+
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -43,12 +45,14 @@ class BrewGradient(GradientAttribution):
     def attribute(  # type: ignore
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
+        layer, 
         target: TargetType = None,
-        return_convergence_delta: bool = False,
+        return_convergence_delta: bool = True,
         precision: str = 'float32'
     ) -> Union[
         TensorOrTupleOfTensorsGeneric, Tuple[TensorOrTupleOfTensorsGeneric, Tensor]
     ]:  
+        # precision casting for accurate calculation
         if precision == 'float32':
             inputs = inputs.float()
             self.forward_func.float()
@@ -57,9 +61,22 @@ class BrewGradient(GradientAttribution):
             self.forward_func.double()
         else:
             raise AttributeError()
+        
+        # gradient setting 
+        gv = {}
         inputs = _format_input(inputs)
         gradient_mask = apply_gradient_requirements(inputs)
 
+        # augmented gradient hooks
+        def save_val_hook(self, x, y):
+            gv['val'] = x[0]
+        def save_grad_hook(self, x, y):
+            gv['grad'] = x[0]
+
+        #save grad to specific layer
+        layer.register_forward_hook(save_val_hook)
+        layer.register_backward_hook(save_grad_hook)
+        
         with torch.autograd.set_grad_enabled(True):
             # runs forward pass
             outputs = _run_forward(self.forward_func, inputs, target)
@@ -67,9 +84,12 @@ class BrewGradient(GradientAttribution):
                 "Target not provided when necessary, cannot"
                 " take gradient with respect to multiple outputs."
             )
-            
             # calculate gradient
-            grads = torch.autograd.grad(torch.unbind(outputs), inputs)[0]
+            torch.autograd.grad(torch.unbind(outputs), inputs)
+
+        # initialization hooks
+        layer._forward_hooks = OrderedDict()
+        layer._backward_hooks = OrderedDict()
 
         # clear gradient and detach from graph
         undo_gradient_requirements(inputs, gradient_mask)
@@ -82,19 +102,22 @@ class BrewGradient(GradientAttribution):
         else:
             raise AttributeError()
         
-        # output type check
-        if isinstance(inputs, tuple):
-            inputs = inputs[0]
-
+        # # output type check
+        # if isinstance(inputs, tuple):
+        #     inputs = inputs[0]
+        
         # check numerical error (why this error is not zero?)
         # suspect shattered gradient or precision error
-        outputs_hat = (inputs * grads).flatten(start_dim=1).sum(-1, keepdim=True)
-        loss_brew = F.mse_loss(outputs, outputs_hat)
-        self.loss_brew = loss_brew
+        if return_convergence_delta:
+            outputs_hat = (gv['val'] * gv['grad']).flatten(start_dim=1).sum(-1, keepdim=True)
+            loss_brew = F.mse_loss(outputs, outputs_hat)
+            self.loss_brew = loss_brew
 
         # importance of feature has sign field 
-        sign = torch.sign(inputs)
-        grads = grads * sign
+        sign = torch.sign(gv['val'])
+        attn = gv['grad'] * sign
 
-        return grads
+        # flush dictionary
+        gv = {}
+        return attn
 

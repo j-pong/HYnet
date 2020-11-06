@@ -180,7 +180,7 @@ class BrewModel(BrewModule):
 
         return x
 
-    def forward_impl(self, x, mlist):
+    def forward_impl(self, x, mlist, save_grad=False):
         a_hat_cum = None
         c_hat_cum = None
 
@@ -209,28 +209,37 @@ class BrewModel(BrewModule):
                 x = m(x)
                 idx_lin = idx
             elif isinstance(m, piece_wise_activation):
-                x, a_hat, c_hat = self.grad_activation(x, m, training=self.training)
-                if a_hat_cum is not None:
-                    a_hat_cum = a_hat * a_hat_cum
-                    c_hat_cum = a_hat * c_hat_cum + c_hat
+                if save_grad:
+                    x, a_hat, c_hat = self.grad_activation(x, m, training=self.training)
+                    if a_hat_cum is not None:
+                        a_hat_cum = a_hat * a_hat_cum
+                        c_hat_cum = a_hat * c_hat_cum + c_hat
+                    else:
+                        a_hat_cum = a_hat
+                        c_hat_cum = c_hat
                 else:
-                    a_hat_cum = a_hat
-                    c_hat_cum = c_hat
+                    x = m(x)
             elif isinstance(m, piece_shrink_activation):
-                x, a_hat, _ = self.grad_activation(x, m, training=self.training, shrink=True)
-                mlist.aug_hat["a_hat"][idx] = a_hat
+                if save_grad:
+                    x, a_hat, _ = self.grad_activation(x, m, training=self.training, shrink=True)
+                    mlist.aug_hat["a_hat"][idx] = a_hat
+                else:
+                    x, _ = m(x)
             elif isinstance(m, nn.Flatten):
                 x = m(x)
             else:
-                raise NotImplementedError
+                if save_grad:
+                    raise NotImplementedError
 
             if save_aug:
                 # assert a_hat_cum is not Nones
-                assert idx_lin is not None
-                mlist.aug_hat["a_hat"][idx_lin] = a_hat_cum
-                mlist.aug_hat["c_hat"][idx_lin] = c_hat_cum
-                a_hat_cum = None
-                c_hat_cum = None
+                if save_grad:
+                    assert idx_lin is not None
+                    mlist.aug_hat["a_hat"][idx_lin] = a_hat_cum
+                    mlist.aug_hat["c_hat"][idx_lin] = c_hat_cum
+                    a_hat_cum = None
+                    c_hat_cum = None
+                
         return x
 
     def backward_linear(self, x, y, outputs=None):
@@ -252,33 +261,20 @@ class BrewModel(BrewModule):
         
         return attn
 
-    def forward(self, x, mode='none'):
-        if mode == 'none':
-            for m in self.encoder:
-                if isinstance(m, piece_shrink_activation):
-                    x, _ = m(x)
-                else:
-                    x = m(x)
-            for m in self.decoder:
-                if isinstance(m, piece_shrink_activation):
-                    x, _ = m(x)
-                else:
-                    x = m(x)
-            x_non_linear = x
-        elif mode == 'brew':
-            # regular forward pass
-            x_non_linear = self.forward_impl(x, self.encoder)
-            self.attn_size = x_non_linear.size()
-            x_non_linear = self.forward_impl(x_non_linear, self.decoder)
+    def forward(self, x, save_grad=False):
+        # regular forward pass
+        x_non_linear = self.forward_impl(x, self.encoder, save_grad=save_grad)
+        self.attn_size = x_non_linear.size()
+        x_non_linear = self.forward_impl(x_non_linear, self.decoder, save_grad=save_grad)
 
-            # with torch.no_grad():
-            #     # linearization
-            #     x_linear = self.forward_linear_impl(x, self.encoder)
-            #     x_linear = self.forward_linear_impl(x_linear, self.decoder)
+        # with torch.no_grad():
+        #     # linearization
+        #     x_linear = self.forward_linear_impl(x, self.encoder)
+        #     x_linear = self.forward_linear_impl(x_linear, self.decoder)
 
-            #     # linearization error check
-            #     self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
-            #     if self.loss_brew.float() > 1e-18:
-            #         raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
+        #     # linearization error check
+        #     self.loss_brew = F.mse_loss(x_non_linear, x_linear).detach()
+        #     if self.loss_brew.float() > 1e-18:
+        #         raise ValueError("loss of brew {} bigger than 1e-18".format(self.loss_brew))
 
         return x_non_linear
