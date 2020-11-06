@@ -42,6 +42,7 @@ if [ $stage -le 2 ]; then
       --nj ${nj} --cmd "$decode_cmd" --skip-scoring true \
       $graph_dir data/${test_set} $dir/decode11_kaldi_test || exit 1;
     done
+    echo `date`
 fi
 
 if [ $stage -le 3 ]; then
@@ -64,5 +65,4 @@ if [ $stage -le 3 ]; then
 
     echo $hyp/$wer/$cer | sed 's/\n//g'
     echo $hyp/$wer/$cer | sed 's/\n//g' > KALDI_RESULT
-    echo `date`
 fi

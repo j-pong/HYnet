@@ -20,6 +20,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.gridspec as gridspec
 
+import difflib
+
 import numpy as np
 import wave
 
@@ -29,6 +31,113 @@ import KT_main
 CHUNK = 1024             # samples per frame
 WAVDIR = "data/test/wave"
 TEXTDIR= "data/test/texts"
+INF = 123456789
+
+from difflib import SequenceMatcher
+
+def show_diff(A, B):
+    seqm = SequenceMatcher(None, A, B)
+
+    """Unify operations between two compared strings
+seqm is a difflib.SequenceMatcher instance whose a & b are strings"""
+    output = []
+    for opcode, a0, a1, b0, b1 in seqm.get_opcodes():
+        if opcode == 'equal':
+            output.append(seqm.a[a0:a1])
+        elif opcode == 'insert':
+            continue
+        elif opcode == 'delete':
+            output.append("<font color=blue>" + seqm.a[a0:a1] + "</font>")
+        elif opcode == 'replace':
+            output.append("<font color=red>" + seqm.a[a0:a1] + "</font>")
+        else:
+            raise RuntimeError("unexpected opcode")
+    return ''.join(output)
+
+def levenshtein(s1, s2, debug=False):
+    if len(s1) < len(s2):
+        s1, s2 = s2, s1
+
+    cost = {}
+
+    def substitution_cost(c1, c2):
+        if c1 == c2:
+            return 0
+        return cost.get((c1, c2), 0.1)
+
+    output = []
+    cost_map = []
+    cost_map = np.zeros((len(s1),len(s2)))
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + substitution_cost(c1, c2)
+            min_result = min(insertions, deletions, substitutions)
+            current_row.append(min_result)
+
+        cost_map[i] = np.array(current_row[1:])
+
+            
+        previous_row = current_row
+    
+    def ok1(p, q):
+        return p > 0 and q > 0 and p < len(s1) and q < len(s2)
+    def ok2(p):
+        return p < len(s1)
+    def ok3(q):
+        return q < len(s2)
+    x = [1, 1, 0] # substitution, insertion, deletion
+    y = [1, 0, 1]
+    
+    i = 0
+    j = 0
+    if cost_map[i][j] != 0:
+        output.append("<font color=red>" + s1[i] + "</font>")
+    while True:
+        sub, inst, dele = INF, INF, INF
+
+        if ok1((i+x[0]), (j+y[0])):
+            sub = min(sub, cost_map[i + x[0]][j + y[0]])
+        if ok2(i+x[1]):
+            inst = min(inst, cost_map[i + x[1]][j + y[1]])
+        if ok3(j+y[2]):
+            dele = min(dele, cost_map[i +x[2]][j + y[2]])
+
+        cost_min = min(sub, inst, dele)
+        if cost_min == sub:
+            old_i = i
+            old_j = j
+            i = i + x[0]
+            j = j + y[0]
+            if cost_map[i][j] == cost_map[old_i][old_j]:
+                output.append(s1[i])
+            else:   
+                output.append("<font color=red>" + s1[i] + "</font>")
+        elif cost_min == inst:
+            i = i + x[1]
+            j = j + y[1]
+            if cost_map[i][j] == cost_map[old_i][old_j]:
+                output.append(s1[i])
+            else:
+                output.append("<font color=blue>" + s1[i] + "</font>")
+        elif cost_min == dele:
+            i = i + x[2]
+            j = j + y[2]
+            if cost_map[i][j] == cost_map[old_i][old_j]:
+                output.append(s1[i])
+            else:
+                output.append("<font color=green>" + s1[i] + "</font>")
+        
+        if i == len(s1)-1:
+            break
+    
+    return "".join(output)
+
+
+
 def cutoffaxes(ax):  # facecolor='#000000'
     #ax.patch.set_facecolor(facecolor)
 
@@ -176,8 +285,9 @@ class KTDialog(QMainWindow, KT_main.Ui_KT):
     def Display_OriginScript(self, textFileName):
         origin_file = open(textFileName, 'r')
         line = origin_file.readline()
+        self.original_line=line.rstrip('\n')
 
-        self.Original_Script.setText(line.rstrip('\n'))
+        self.Original_Script.setText(self.original_line)
 
 
     def Display_KaldiScript(self):
@@ -185,7 +295,8 @@ class KTDialog(QMainWindow, KT_main.Ui_KT):
         line = kaldi_file.readline()
         results = line.split('/')
 
-        self.Kaldi_Script.setText(results[0])
+        self.Kaldi_Script.setText(show_diff(results[0], self.original_line))
+        # self.Kaldi_Script.setText(levenshtein(self.original_line, results[0]))
         self.Kaldi_WER.setText(results[1])
         self.Kaldi_CER.setText(results[2].rstrip('\n'))
 
@@ -194,16 +305,19 @@ class KTDialog(QMainWindow, KT_main.Ui_KT):
         line = e2e_file.readline()
         results = line.split('/')
 
-        self.E2E_Script.setText(results[0])
+        self.E2E_Script.setText(show_diff(results[0], self.original_line))
+        # self.E2E_Script.setText(levenshtein(self.original_line, results[0]))
         self.E2E_WER.setText(results[1])
         self.E2E_CER.setText(results[2].rstrip('\n'))
 
     # Button Press Event
     def btnPlayKaldiPressed(self):
+        self.Kaldi_Decoding_label.setText("디코딩 진행중....")
         self.Kaldi_play_button.setStyleSheet("image: url(./Pictures/play_clicked.png);\nborder: 0px;")
     def btnStopKaldiPressed(self):
         self.Kaldi_stop_button.setStyleSheet("image: url(./Pictures/stop_clicked.png);\nborder: 0px;")
     def btnPlayE2EPressed(self):
+        self.E2E_Decoding_label.setText("디코딩 진행중....")
         self.E2E_play_button.setStyleSheet("image: url(./Pictures/play_clicked.png);\nborder: 0px;")
     def btnStopE2EPressed(self):
         self.E2E_stop_button.setStyleSheet("image: url(./Pictures/stop_clicked.png);\nborder: 0px;")
@@ -221,20 +335,20 @@ class KTDialog(QMainWindow, KT_main.Ui_KT):
     
     # Button Click Event
     def btnPlayKaldiClicked(self):           # Play 버튼 클릭 시 
-
         # Play wavFile
         self.play_wavFile.recoding_wav(self.wavFilePath)
 
         # Start Decoding
         self.kaldi.kaldi_decoding(self.wavFileName.rstrip('.wav'))
+        self.Kaldi_Decoding_label.setText("디코딩 완료")
 
     def btnPlayE2EClicked(self):           # Play 버튼 클릭 시 
-
         # Play wavFile
         self.play_wavFile.recoding_wav(self.wavFilePath)
 
         # Start Decoding
         self.e2e.e2e_decoding(self.wavFileName.rstrip('.wav'))
+        self.E2E_Decoding_label.setText("디코딩 완료")
 
     def btnStopKaldiClicked(self):           # Stop 버튼 클릭 시
         sd.stop()
@@ -272,6 +386,9 @@ class KTDialog(QMainWindow, KT_main.Ui_KT):
         self.sample_rate, self.data = sio.wavfile.read(self.wavFilePath)
 
         self.canvas.update_(self.data)
+        
+        self.Kaldi_Decoding_label.setText("")
+        self.E2E_Decoding_label.setText("")
         
 
 app = QApplication(sys.argv)
