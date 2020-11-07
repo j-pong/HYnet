@@ -87,13 +87,6 @@ class BrewGradient(GradientAttribution):
             # calculate gradient
             torch.autograd.grad(torch.unbind(outputs), inputs)
 
-        # initialization hooks
-        layer._forward_hooks = OrderedDict()
-        layer._backward_hooks = OrderedDict()
-
-        # clear gradient and detach from graph
-        undo_gradient_requirements(inputs, gradient_mask)
-
         # back to the original precision
         if precision == 'float32':
             pass
@@ -101,13 +94,15 @@ class BrewGradient(GradientAttribution):
             self.forward_func.float()
         else:
             raise AttributeError()
-        
-        # # output type check
-        # if isinstance(inputs, tuple):
-        #     inputs = inputs[0]
-        
-        # check numerical error (why this error is not zero?)
-        # suspect shattered gradient or precision error
+
+        # initialization hooks
+        layer._forward_hooks = OrderedDict()
+        layer._backward_hooks = OrderedDict()
+
+        # clear gradient and detach from graph
+        undo_gradient_requirements(inputs, gradient_mask)
+
+        # Efficiency propertiy check
         if return_convergence_delta:
             outputs_hat = (gv['val'] * gv['grad']).flatten(start_dim=1).sum(-1, keepdim=True)
             loss_brew = F.mse_loss(outputs, outputs_hat)

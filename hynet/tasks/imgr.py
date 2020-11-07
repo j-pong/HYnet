@@ -180,7 +180,7 @@ class ImgrTask(AbsTask):
         return ImgrIterFactory(
             dataset=dataset,
             batch_size=args.batch_size,
-            seed=args.seed,
+            seed=args.seed+torch.cuda.current_device(),
             num_iters_per_epoch=iter_options.num_iters_per_epoch,
             shuffle=iter_options.train,
             num_workers=args.num_workers,

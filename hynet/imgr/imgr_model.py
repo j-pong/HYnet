@@ -211,6 +211,7 @@ class HynetImgrModel(AbsESPnetModel):
                                                layer=focused_layer,
                                                target=label)
                         attn = attr_bg.squeeze()
+
                         attn_cent = attn
                         attn_other = attn
 

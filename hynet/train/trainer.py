@@ -114,17 +114,17 @@ class ImgrTrainer(Trainer):
 
             reporter.set_epoch(iepoch)
             # 1. Train and validation for one-epoch
-            # with reporter.observe("train") as sub_reporter:
-            #     all_steps_are_invalid = cls.train_one_epoch(
-            #         model=dp_model,
-            #         optimizers=optimizers,
-            #         schedulers=schedulers,
-            #         iterator=train_iter_factory.build_iter(iepoch),
-            #         reporter=sub_reporter,
-            #         scaler=scaler,
-            #         summary_writer=summary_writer,
-            #         options=trainer_options,
-            #     )
+            with reporter.observe("train") as sub_reporter:
+                all_steps_are_invalid = cls.train_one_epoch(
+                    model=dp_model,
+                    optimizers=optimizers,
+                    schedulers=schedulers,
+                    iterator=train_iter_factory.build_iter(iepoch),
+                    reporter=sub_reporter,
+                    scaler=scaler,
+                    summary_writer=summary_writer,
+                    options=trainer_options,
+                )
 
             with reporter.observe("valid") as sub_reporter:
                 cls.validate_one_epoch(
@@ -134,8 +134,8 @@ class ImgrTrainer(Trainer):
                     reporter=sub_reporter,
                     options=trainer_options
                 )
-            logging.info(reporter.log_message())
-            exit()
+            # logging.info(reporter.log_message())
+            # exit()
 
             # 2. LR Scheduler step
             for scheduler in schedulers:
@@ -246,8 +246,9 @@ class ImgrTrainer(Trainer):
 
         # [For distributed] Because iteration counts are not always equals between
         # processes, send stop-flag to the other processes if iterator is finished
+        plot_flag = True
         iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
-        for (_, batch) in iterator:
+        for (ids, batch) in iterator:
             assert isinstance(batch, dict), type(batch)
             if distributed:
                 torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)
@@ -259,7 +260,29 @@ class ImgrTrainer(Trainer):
                 continue
 
             _, stats, weight = model(**batch)
+
+            # plot with stats
+            # Todo(j-pong): image id check and report attention with image
+            if plot_flag:
+                import matplotlib.pyplot as plt
+                img_list = stats['aux']
+                col_max = len(img_list)
+                row_max = len(img_list[0])
+                for idx in range(3):
+                    plt.clf()
+                    for i in range(col_max):
+                        for j, img in enumerate(img_list[i]):
+                            plt.subplot(col_max, row_max, i * row_max + (j + 1))
+                            plt.imshow(img[idx].detach().cpu().numpy(), cmap='seismic')
+                            plt.colorbar()
+
+                    if output_dir is not None:
+                        p = output_dir / f"valid_{ids[idx]}" / f"{ids[idx]}_{reporter.get_epoch()}ep.png"
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        plt.savefig(p)
+                plot_flag=False
             del stats['aux']
+
             if ngpu > 1 or distributed:
                 # Apply weighted averaging for stats.
                 # if distributed, this method can also apply all_reduce()
@@ -272,28 +295,3 @@ class ImgrTrainer(Trainer):
             if distributed:
                 iterator_stop.fill_(1)
                 torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)
-        
-        # validation image result report
-        import matplotlib.pyplot as plt
-
-        ind_plot = 0
-        for ids, batch in iterator:
-            _, stats, _ = model(**batch)
-            img_list = stats['aux']
-
-            col_max = len(img_list)
-            row_max = len(img_list[0])
-            for idx in range(3):
-                plt.clf()
-                for i in range(col_max):
-                    for j, img in enumerate(img_list[i]):
-                        plt.subplot(col_max, row_max, i * row_max + (j + 1))
-                        plt.imshow(img[idx].detach().cpu().numpy(), cmap='seismic')
-                        plt.colorbar()
-
-                if output_dir is not None:
-                    p = output_dir / f"valid_{ids[idx]}" / f"{ind_plot}.{reporter.get_epoch()}ep.png"
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    plt.savefig(p)
-
-            break

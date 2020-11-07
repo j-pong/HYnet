@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from typeguard import check_argument_types
 
 from espnet2.iterators.abs_iter_factory import AbsIterFactory
+from espnet2.torch_utils.set_all_random_seed import set_all_random_seed
 
 
 class ImgrIterFactory(AbsIterFactory):
@@ -39,6 +40,8 @@ class ImgrIterFactory(AbsIterFactory):
             kwargs = dict(collate_fn=self.collate_fn)
         else:
             kwargs = {}
+
+        set_all_random_seed(self.seed)
 
         return DataLoader(
             dataset=self.dataset,
