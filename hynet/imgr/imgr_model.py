@@ -112,6 +112,9 @@ class HynetImgrModel(AbsESPnetModel):
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
+        # currently, focused layer for gradient is applied to bg method
+        # Todo(j-pong): the method will be applied to ig
+        # if self.xai_mode == 'bg':
         focused_layer = self.model.encoder[0]
 
         for i in range(self.max_iter):
@@ -124,14 +127,18 @@ class HynetImgrModel(AbsESPnetModel):
                         attns = attn
                     else:
                         attns *= attn
-                    def attn_apply(self, x):
-                        return x[0] * attns
-                    focused_layer.register_forward_pre_hook(attn_apply)
+                    # for solving additive feature problem
+                    if self.xai_mode == 'bg':
+                        def attn_apply(self, x):
+                            return x[0] * attns
+                        focused_layer.register_forward_pre_hook(attn_apply)
+                    else:
+                        image = image * attns
             # 2. feedforward
             logit = self.model(image)
             
             # 3. caculate measurment 
-            if i == 0: # < self.max_iter - 1: 
+            if i == 0:
                 # check parameter norm
                 parm_norm = 0.0
                 for name, param in self.model.named_parameters():
@@ -174,14 +181,16 @@ class HynetImgrModel(AbsESPnetModel):
                         attn = grads.squeeze()
                     elif self.xai_mode == 'ig':
                         ig = IntegratedGradients(self.model)
-                        attr_ig, delta = attribute_image_features(self.model, label, ig, image, 
-                                                                  baselines=image * 0, 
-                                                                  return_convergence_delta=True)
+                        attr_ig, delta = ig.attribute(image,
+                                                      baselines=image * 0, 
+                                                      target=label,
+                                                      return_convergence_delta=True)
                         attn = attr_ig.squeeze()
+
                         attn_cent = attn
                         attn_other = attn
 
-                        loss_brew = delta
+                        loss_brew = 0.0
                     elif self.xai_mode == 'ig_nt':
                         ig = IntegratedGradients(self.model)
                         nt = NoiseTunnel(ig)
