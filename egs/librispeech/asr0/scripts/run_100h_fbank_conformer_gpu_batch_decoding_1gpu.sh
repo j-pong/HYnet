@@ -340,7 +340,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             --config ${decode_config} \
             --ngpu ${ngpu} \
             --backend pytorch \
-            --batchsize 15 \
+            --batchsize 10 \
             --recog-json ${feat_recog_dir}/data_${bpemode}${nbpe}.json \
             --result-ark ${expdir}/${decode_dir}/data.ark \
             --model ${expdir}/results/${recog_model}  \

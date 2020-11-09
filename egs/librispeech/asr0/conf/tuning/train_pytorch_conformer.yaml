@@ -15,7 +15,8 @@ mtlalpha: 0.0
 opt: noam
 patience: 0
 sortagrad: 0
-transformer-encoder-selfattn-layer-type: selfattn
+transformer-encoder-pos-enc-layer-type: rel_pos
+transformer-encoder-selfattn-layer-type: rel_selfattn
 transformer-attn-dropout-rate: 0.0
 transformer-init: pytorch
 transformer-input-layer: conv2d
@@ -26,3 +27,4 @@ oversampling: 4
 outer : 1
 residual: 0
 use-cnn-module: True
+universal: True

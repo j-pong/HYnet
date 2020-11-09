@@ -12,7 +12,7 @@ Refer to: https://arxiv.org/abs/2005.08100
 
 from distutils.util import strtobool
 
-from espnet.nets.pytorch_backend.conformer.encoder import Encoder
+from moneynet.nets.pytorch_backend.conformer.encoder import Encoder
 from moneynet.nets.pytorch_backend.e2e_asr_transformer import E2E as E2ETransformer
 
 
@@ -77,6 +77,12 @@ class E2E(E2ETransformer):
             ],
             help="transformer encoder self-attention layer type",
         )
+        group.add_argument(
+            "--universal",
+            type=strtobool,
+            default=False,
+            help="use universal conformer or not",
+        )
         return parser
 
     def __init__(self, idim, odim, args, ignore_id=-1):
@@ -104,5 +110,6 @@ class E2E(E2ETransformer):
             macaron_style=args.macaron_style,
             use_cnn_module=args.use_cnn_module,
             cnn_module_kernel=args.cnn_module_kernel,
+            is_universal=args.universal
         )
         self.reset_parameters(args)
