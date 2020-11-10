@@ -161,7 +161,7 @@ class E2E(ASRInterface, torch.nn.Module):
         if args.transformer_attn_dropout_rate is None:
             args.transformer_attn_dropout_rate = args.dropout_rate
         self.encoder = Encoder(
-            idim=idim,
+            idim=256,
             attention_dim=args.adim,
             attention_heads=args.aheads,
             linear_units=args.eunits,
@@ -220,6 +220,8 @@ class E2E(ASRInterface, torch.nn.Module):
             self.error_calculator = None
         self.rnnlm = None
 
+        self.SincNet = SincNet()
+
     def reset_parameters(self, args):
         """Initialize parameters."""
         # initialize parameters
@@ -250,6 +252,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 ys_pad = ys_pad[:, :xs_pad.size(1)].contiguous()
             else:
                 raise ValueError("target size {} is smaller than input size {}".format(ys_pad.size(1), xs_pad.size(1)))
+
         src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
 

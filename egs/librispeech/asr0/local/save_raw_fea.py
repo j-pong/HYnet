@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 ##########################################################
 # pytorch-kaldi v.0.1
 # Mirco Ravanelli, Titouan Parcollet
@@ -27,7 +29,7 @@ def get_parser():
     parser.add_argument('--data_dir', type=str,
                         help='data directory where recipes are saved')
     parser.add_argument('--ali_dir', type=str,
-                        help='data directory where recipes are saved')
+                        help='data directory where alignment is saved')
     return parser
 
 args = get_parser().parse_args()
@@ -58,9 +60,6 @@ except:
 
 # Creare the scp file
 scp_file = open(scp_file_out,"w")
-
-# reading the labels
-lab= { k:v for k,v in read_vec_int_ark('gunzip -c '+lab_folder+'/ali*.gz | '+lab_opts+' '+lab_folder+'/final.mdl ark:- ark:-|', out_folder)}
 
 # reading the list file
 with open(wav_lst) as f:

@@ -63,12 +63,6 @@ class SincNet(torch.nn.Module):
         xs_pad = F.relu(F.max_pool1d(self.conv3(xs_pad), 3))
         xs_pad = F.relu(F.max_pool1d(self.conv4(xs_pad), 3))
 
-        if torch.is_tensor(ilens):
-            ilens = ilens.cpu().numpy()
-        else:
-            ilens = np.array(ilens, dtype=np.float32)
-        ilens = ilens.tolist()
-
         # Revert to original shape
         xs_pad = xs_pad.view(xs_pad.size(0),-1).view(batch,seq,-1)
 

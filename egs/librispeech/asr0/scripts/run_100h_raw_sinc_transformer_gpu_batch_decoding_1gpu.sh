@@ -18,7 +18,7 @@ unsup_resume=
 
 # feature configuration
 do_delta=false
-preprocess_config=#conf/specaug.yaml
+preprocess_config=
 train_config=conf/tuning/train_pytorch_sinc_transformer.yaml
 decode_config=conf/decode.yaml
 
@@ -222,15 +222,15 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     done
 fi
 
-if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
+if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     echo "stage 10: Convert Flac to Wav"
     python local/flac_to_raw.py \
-        --train-dir train_clean_100 \
-        --dev1-dir dev_clean \
-        --dev2-dir dev_other \
-        --test1-dir test_clean \
-        --test2-dir test_other \
-        --output-prefix raw
+        --train_dir data/train_clean_100 \
+        --dev1_dir data/dev_clean \
+        --dev2_dir data/dev_other \
+        --test1_dir data/test_clean \
+        --test2_dir data/test_other \
+        --out_prefix raw
 fi
 
 train_set=train_clean_100_raw
@@ -246,9 +246,12 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
     echo "stage 11: Feature Processing For Network Training"
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
     for x in train_clean_100 dev_clean dev_other test_clean test_other; do
+        mv data/${x}_raw data/${x}_raw_temp; mkdir -p data/${x}_raw
+        cp -r data/${x}/* data/${x}_raw
+        rm -rf data/${x}_raw/wav.scp; cp -r data/${x}_raw_temp/wav.scp data/${x}_raw; rm -rf data/${x}_raw_temp
         python local/save_raw_fea.py \
-            --data-dir ${x}_raw \
-            --ali-dir exp/tri4b_ali_${x}
+            --data_dir data/${x}_raw \
+            --ali_dir exp/tri4b_ali_${x}
     done
 
     utils/combine_data.sh --extra_files 'utt2num_frames tokenid.scp' data/${train_set}_org data/train_clean_100_raw
@@ -269,14 +272,14 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
         dump.sh --cmd "$train_cmd" --nj ${nj} --do_delta ${do_delta} \
-            data/${rtask}_fbank/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
+            data/${rtask}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
 fi
 
 # get alignment sequence index
-if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
-    echo "stage 11: Json"
+if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
+    echo "stage 12: Json"
     # make tokenid.scp, json file and filter recipes
     for part in ${train_set} ${train_dev}; do
         local/data2json.sh --feat ${dumpdir}/${part}/delta${do_delta}/feats.scp \
@@ -303,8 +306,8 @@ fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
 
-if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
-    echo "stage 12: Network Training"
+if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
+    echo "stage 13: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_hyb_train.py \
         --config ${train_config} \
@@ -322,8 +325,8 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
         --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
 fi
 
-if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
-    echo "stage 13: Decoding"
+if [ ${stage} -le 14 ] && [ ${stop_stage} -ge 14 ]; then
+    echo "stage 14: Decoding"
     # Average ASR models
     if ${use_valbest_average}; then
         recog_model=model.val${n_average}.avg.best
