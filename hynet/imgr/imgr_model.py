@@ -4,6 +4,8 @@ from typing import Optional
 from typing import Tuple
 from typing import Union
 
+import warnings
+
 from collections import OrderedDict
 
 import math
@@ -88,17 +90,6 @@ class HynetImgrModel(AbsESPnetModel):
         
         return x
 
-    # def attn_apply(self, x, attn):
-    #     # max_y = torch.max(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
-    #     # min_y = torch.min(x.flatten(start_dim=2), dim=2, keepdim=True)[0]
-
-    #     attn = self.feat_minmax_norm(attn, 1.0, 0.0)
-    #     x = x * attn
-
-    #     # x = self.feat_minmax_norm(x, max_y, min_y)
-
-    #     return x
-
     def forward(
         self,
         image: torch.Tensor,
@@ -116,6 +107,7 @@ class HynetImgrModel(AbsESPnetModel):
         # Todo(j-pong): the method will be applied to ig
         # if self.xai_mode == 'bg':
         focused_layer = self.model.encoder[0]
+        attn_hook_handle = None
 
         for i in range(self.max_iter):
             # 1. preprocessing with each iteration
@@ -131,7 +123,7 @@ class HynetImgrModel(AbsESPnetModel):
                     if self.xai_mode == 'bg':
                         def attn_apply(self, x):
                             return x[0] * attns
-                        focused_layer.register_forward_pre_hook(attn_apply)
+                        attn_hook_handle = focused_layer.register_forward_pre_hook(attn_apply)
                     else:
                         image = image * attns
             # 2. feedforward
@@ -139,14 +131,14 @@ class HynetImgrModel(AbsESPnetModel):
             
             # 3. caculate measurment 
             if i == 0:
-                # check parameter norm
-                parm_norm = 0.0
-                for name, param in self.model.named_parameters():
-                    if param.requires_grad:
-                        parm_abs = param.data.abs()
-                        m = parm_abs.mean()
-                        var = parm_abs.var()
-                        parm_norm += var
+                # # check parameter norm
+                # parm_norm = 0.0
+                # for name, param in self.model.named_parameters():
+                #     if param.requires_grad:
+                #         parm_abs = param.data.abs()
+                #         m = parm_abs.mean()
+                #         var = parm_abs.var()
+                #         parm_norm += var
 
                 # classification ce-loss
                 losses.append(self.criterion(logit, label))
@@ -228,8 +220,9 @@ class HynetImgrModel(AbsESPnetModel):
                     # recasting to float type
                     attn = attn.detach().float()
                 
-                # flush hook
-                focused_layer._forward_pre_hooks = OrderedDict()
+                # flush hook handle
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
 
                 # 5. for logging
                 if not self.training:
@@ -255,8 +248,7 @@ class HynetImgrModel(AbsESPnetModel):
                     loss_brew=loss_brew,
                     acc_start=logger['accs'][0],
                     acc_mid=logger['accs'][1],
-                    acc_end=logger['accs'][-1],
-                    parm_norm=parm_norm.float()
+                    acc_end=logger['accs'][-1]
                 )
         else:
             stats = dict(

@@ -74,8 +74,8 @@ class BrewGradient(GradientAttribution):
             gv['grad'] = x[0]
 
         #save grad to specific layer
-        layer.register_forward_hook(save_val_hook)
-        layer.register_backward_hook(save_grad_hook)
+        val_hook_handle = layer.register_forward_hook(save_val_hook)
+        grad_hook_handle = layer.register_backward_hook(save_grad_hook)
         
         with torch.autograd.set_grad_enabled(True):
             # runs forward pass
@@ -95,14 +95,13 @@ class BrewGradient(GradientAttribution):
         else:
             raise AttributeError()
 
-        # initialization hooks
-        layer._forward_hooks = OrderedDict()
-        layer._backward_hooks = OrderedDict()
-
         # clear gradient and detach from graph
         undo_gradient_requirements(inputs, gradient_mask)
 
-        # Efficiency propertiy check
+        val_hook_handle.remove()
+        grad_hook_handle.remove()
+
+        # Efficiency property check
         if return_convergence_delta:
             outputs_hat = (gv['val'] * gv['grad']).flatten(start_dim=1).sum(-1, keepdim=True)
             loss_brew = F.mse_loss(outputs, outputs_hat)

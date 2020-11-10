@@ -114,17 +114,17 @@ class ImgrTrainer(Trainer):
 
             reporter.set_epoch(iepoch)
             # 1. Train and validation for one-epoch
-            # with reporter.observe("train") as sub_reporter:
-            #     all_steps_are_invalid = cls.train_one_epoch(
-            #         model=dp_model,
-            #         optimizers=optimizers,
-            #         schedulers=schedulers,
-            #         iterator=train_iter_factory.build_iter(iepoch),
-            #         reporter=sub_reporter,
-            #         scaler=scaler,
-            #         summary_writer=summary_writer,
-            #         options=trainer_options,
-            #     )
+            with reporter.observe("train") as sub_reporter:
+                all_steps_are_invalid = cls.train_one_epoch(
+                    model=dp_model,
+                    optimizers=optimizers,
+                    schedulers=schedulers,
+                    iterator=train_iter_factory.build_iter(iepoch),
+                    reporter=sub_reporter,
+                    scaler=scaler,
+                    summary_writer=summary_writer,
+                    options=trainer_options,
+                )
 
             with reporter.observe("valid") as sub_reporter:
                 cls.validate_one_epoch(
@@ -134,8 +134,8 @@ class ImgrTrainer(Trainer):
                     reporter=sub_reporter,
                     options=trainer_options
                 )
-            logging.info(reporter.log_message())
-            exit()
+            # logging.info(reporter.log_message())
+            # exit()
 
             # 2. LR Scheduler step
             for scheduler in schedulers:
@@ -275,6 +275,9 @@ class ImgrTrainer(Trainer):
                             plt.subplot(col_max, row_max, i * row_max + (j + 1))
                             plt.imshow(img[idx].detach().cpu().numpy(), cmap='seismic')
                             plt.colorbar()
+                            # if idx == 1 and i == 2 and j == 2:
+                            #     # print(img[idx].detach().cpu().numpy())
+                            #     exit()
 
                     if output_dir is not None:
                         p = output_dir / f"valid_{ids[idx]}" / f"{ids[idx]}_{reporter.get_epoch()}ep.png"
