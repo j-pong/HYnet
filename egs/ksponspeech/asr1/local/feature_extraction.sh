@@ -75,7 +75,7 @@ if [ ${stage} -le 0 ]; then
     paste data/${test}/uttid.scp data/${test}/wpath.scp | sed 's/\t/ /g' | sort -u > data/${test}/wav.scp
     echo "created wav.scp"
 
-    rm -rf data/${test}/text data/${test}/text.txt
+    rm -rf data/${test}/text data/${test}/text.txt data/${test}/text_tmp.txt
     if [[ $is_kspon == true ]]; then
         while read line; do
             cat data/KsponSpeech_tt/text | grep $line >> data/${test}/text_tmp.txt
