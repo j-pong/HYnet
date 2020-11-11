@@ -88,42 +88,6 @@ dict=data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
 bpemodel=data/lang_char/${train_set}_${bpemode}${nbpe}
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Decoding"
-    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
-        # Average ASR models
-        if ${use_valbest_average}; then
-            recog_model=model.val${n_average}.avg.best
-            opt="--log ${expdir}/results/log"
-        else
-            recog_model=model.last${n_average}.avg.best
-            opt="--log"
-        fi
-        average_checkpoints.py \
-            ${opt} \
-            --backend ${backend} \
-            --snapshots ${expdir}/results/snapshot.ep.* \
-            --out ${expdir}/results/${recog_model} \
-            --num ${n_average}
-
-        # Average LM models
-        if [ ${lm_n_average} -eq 0 ]; then
-            lang_model=rnnlm.model.best
-        else
-            if ${use_lm_valbest_average}; then
-                lang_model=rnnlm.val${lm_n_average}.avg.best
-                opt="--log ${lmexpdir}/log"
-            else
-                lang_model=rnnlm.last${lm_n_average}.avg.best
-                opt="--log"
-            fi
-            average_checkpoints.py \
-                ${opt} \
-                --backend ${backend} \
-                --snapshots ${lmexpdir}/snapshot.ep.* \
-                --out ${lmexpdir}/${lang_model} \
-                --num ${lm_n_average}
-        fi
-    fi
-
     cat ${feat_recog_dir}/split${nj}utt/${recog_name}.json > ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
     echo "Decoding Starts"
