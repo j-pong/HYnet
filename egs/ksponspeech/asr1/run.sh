@@ -21,8 +21,8 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/randspec.yaml
-train_config=conf/train_KT.yaml # current default recipe requires 4 gpus.
+preprocess_config=conf/specaug.yaml
+train_config=conf/train_rnn.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/tuning/lm_KT.yaml
 decode_config=conf/decode_KT.yaml
@@ -222,7 +222,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
     else
         ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-            asr_train_specmix.py \
+            asr_train.py \
             --config ${train_config} \
             --preprocess-conf ${preprocess_config} \
             --ngpu ${ngpu} \
