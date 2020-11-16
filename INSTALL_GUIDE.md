@@ -23,10 +23,6 @@ cuda10.2, cudnn, apt-transport-https, ca-certificates, curl, gnupg-agent, softwa
   sudo apt-get install nvidia-docker2
   sudo pkill -SIGHUP dockerd
 
-### INSTALL DEMO DEPENDENCIES
-  cd path/to/HYnet/tools
-  . ./install_demo_dependencies.sh
-
 ### Build docker
   check installation file (moneynet/docker/Dockerfile : you can change your docker password & user name here)
   cd moneynet/docker
