@@ -19,7 +19,7 @@ unsup_resume=
 # feature configuration
 do_delta=false
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_conformer.yaml
+train_config=conf/tuning/train_pytorch_conformer_self.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
 
@@ -59,7 +59,7 @@ set -o pipefail
 
 train_set=train_100 #train_960
 train_dev=dev
-recog_set="test_clean test_other dev_clean dev_other"
+recog_set="test_clean test_other"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
