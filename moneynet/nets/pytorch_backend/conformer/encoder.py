@@ -218,6 +218,7 @@ class Encoder(torch.nn.Module):
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
 
+        self.dynamic_halt = dynamic_halt
         if self.dynamic_halt:
             from moneynet.nets.pytorch_backend.conformer.dynamic_halt import ACT_basic
             self.ACT = ACT_basic(attention_dim)

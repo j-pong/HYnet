@@ -5,7 +5,7 @@ aheads: 8
 backend: pytorch
 batch-bins: 36000000
 dropout-rate: 0.1
-elayers: 12
+elayers: 17
 epochs: 120
 eunits: 512
 grad-clip: 5
@@ -28,3 +28,4 @@ outer : 1
 residual: 0
 use-cnn-module: True
 universal: True
+dynamic-halt: True  # can only be applied with universal models

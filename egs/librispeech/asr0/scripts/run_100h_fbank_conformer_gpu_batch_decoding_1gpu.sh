@@ -19,7 +19,7 @@ unsup_resume=
 # feature configuration
 do_delta=false
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_conformer_self.yaml
+train_config=conf/tuning/train_pytorch_conformer_rel_pos.yaml
 train_unsup_config=conf/train_unsup.yaml
 decode_config=conf/decode.yaml
 

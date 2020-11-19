@@ -9,23 +9,28 @@ class ACT_basic(nn.Module):
         self.p.bias.data.fill_(1)
         self.threshold = 1 - 0.1
 
-    def forward(self, inputs, fn, max_hop, masks=None, encoder_output=None):
+    def forward(self, xs, fn, max_hop, masks=None, encoder_output=None):
+        if isinstance(xs, tuple):
+            inputs, pos_emb = xs[0], xs[1]
+        else:
+            inputs, pos_emb = xs, None
+
         # init_hdd
         ## [B, T]
-        halting_probability = torch.zeros(inputs.shape[0],inputs.shape[1]).to(inputs.device)
+        halting_probability = torch.zeros(xs[0].shape[0],inputs.shape[1]).to(xs[0].device)
         ## [B, T]
-        remainders = torch.zeros(inputs.shape[0],inputs.shape[1]).to(inputs.device)
+        remainders = torch.zeros(xs[0].shape[0],xs[0].shape[1]).to(xs[0].device)
         ## [B, T]
-        n_updates = torch.zeros(inputs.shape[0],inputs.shape[1]).to(inputs.device)
+        n_updates = torch.zeros(xs[0].shape[0],xs[0].shape[1]).to(xs[0].device)
         ## [B, T, HDD]
-        previous_state = torch.zeros_like(inputs).to(inputs.device)
+        previous_state = torch.zeros_like(xs[0]).to(xs[0].device)
         step = 0
         # for l in range(self.num_layers):
         while( ((halting_probability<self.threshold) & (n_updates < max_hop)).byte().any()):
             # Add timing signal
             # state = state + time_enc[:, :inputs.shape[1], :].type_as(inputs.data)
             # state = state + pos_enc[:, step, :].unsqueeze(1).repeat(1,inputs.shape[1],1).type_as(inputs.data)
-            state = inputs
+            state = xs[0]
 
             p = self.sigma(self.p(state)).squeeze(-1)
             # Mask for inputs which have not halted yet
@@ -56,7 +61,10 @@ class ACT_basic(nn.Module):
             # the remainders when it halted this step
             update_weights = p * still_running + new_halted * remainders
 
-            state = fn(state, masks)
+            state, masks = fn(xs, masks)
+            if isinstance(xs, tuple):
+                state = state[0]
+                xs = (state, pos_emb)
 
             # update running part in the weighted state and keep the rest
             previous_state = ((state * update_weights.unsqueeze(-1)) + (previous_state * (1 - update_weights.unsqueeze(-1))))
