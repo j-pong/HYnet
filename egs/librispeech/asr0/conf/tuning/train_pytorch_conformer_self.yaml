@@ -28,3 +28,4 @@ outer : 1
 residual: 0
 use-cnn-module: True
 universal: True
+dynamic-halt: True  # can only be applied with universal models

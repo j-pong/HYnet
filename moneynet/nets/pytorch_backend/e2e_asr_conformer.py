@@ -83,6 +83,12 @@ class E2E(E2ETransformer):
             default=False,
             help="use universal conformer or not",
         )
+        group.add_argument(
+            "--dynamic-halt",
+            type=strtobool,
+            default=False,
+            help="use dynamic halting or not",
+        )
         return parser
 
     def __init__(self, idim, odim, args, ignore_id=-1):
@@ -110,6 +116,7 @@ class E2E(E2ETransformer):
             macaron_style=args.macaron_style,
             use_cnn_module=args.use_cnn_module,
             cnn_module_kernel=args.cnn_module_kernel,
-            is_universal=args.universal
+            is_universal=args.universal,
+            dynamic_halt=args.dynamic_halt
         )
         self.reset_parameters(args)

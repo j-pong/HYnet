@@ -85,7 +85,8 @@ class Encoder(torch.nn.Module):
         use_cnn_module=False,
         cnn_module_kernel=31,
         padding_idx=-1,
-        is_universal=False
+        is_universal=False,
+        dynamic_halt=False
     ):
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
@@ -217,6 +218,10 @@ class Encoder(torch.nn.Module):
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
 
+        if self.dynamic_halt:
+            from moneynet.nets.pytorch_backend.conformer.dynamic_halt import ACT_basic
+            self.ACT = ACT_basic(attention_dim)
+
     def forward(self, xs, masks):
         """Encode input sequence.
 
@@ -235,8 +240,11 @@ class Encoder(torch.nn.Module):
             xs = self.embed(xs)
 
         if self.is_universal:
-            for i in range(self.num_blocks):
-                xs, masks = self.encoders(xs, masks)
+            if self.dynamic_halt:
+                xs, masks = self.ACT(xs, self.encoders, self.num_blocks, masks)
+            else:
+                for i in range(self.num_blocks):
+                    xs, masks = self.encoders(xs, masks)
         else:
             xs, masks = self.encoders(xs, masks)
         if isinstance(xs, tuple):
