@@ -113,7 +113,6 @@ class HynetImgrModel(AbsESPnetModel):
             # 1. preprocessing with each iteration
             if self.xai_excute:
                 if i > 0:
-                    # image = self.attn_apply(image, attn)
                     attn = self.feat_minmax_norm(attn, 1.0, 0.0)
                     if i == 1:
                         attns = attn
@@ -122,6 +121,8 @@ class HynetImgrModel(AbsESPnetModel):
                     # for solving additive feature problem
                     if self.xai_mode == 'bg':
                         def attn_apply(self, x):
+                            # x_flat = x[0].flatten(start_dim=2)
+                            # mean = torch.mean(x_flat, dim=-1, keepdim=True).unsqueeze(-1)
                             return x[0] * attns
                         attn_hook_handle = focused_layer.register_forward_pre_hook(attn_apply)
                     else:
@@ -129,7 +130,7 @@ class HynetImgrModel(AbsESPnetModel):
             # 2. feedforward
             logit = self.model(image)
             
-            # 3. caculate measurment 
+            # 3. caculate measurment
             if i == 0:
                 # # check parameter norm
                 # parm_norm = 0.0
@@ -200,12 +201,16 @@ class HynetImgrModel(AbsESPnetModel):
                         attn_other = attn
                     elif self.xai_mode == 'dls':
                         dl = DeepLiftShap(self.model)
-                        attr_dl, delta = attribute_image_features(self.model, label, dl, image, 
-                                                            baselines=image * 0, 
-                                                            return_convergence_delta=True)
+                        attr_dl, delta = dl.attribute(image,
+                                                      baselines=image * 0, 
+                                                      target=label,
+                                                      return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
+
                         attn_cent = attn
                         attn_other = attn
+
+                        loss_brew = 0.0
                     elif self.xai_mode == 'bg':
                         bg = BrewGradient(self.model)
                         attr_bg = bg.attribute(image,
