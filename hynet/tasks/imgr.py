@@ -79,6 +79,12 @@ class ImgrTask(AbsTask):
             help=""   
         )
         group.add_argument(
+            "--st_excute",
+            type=int,
+            default=0,
+            help=""   
+        )
+        group.add_argument(
             "--cfg_type",
             type=str,
             default="B0",
@@ -125,6 +131,7 @@ class ImgrTask(AbsTask):
             args.xai_mode,
             args.cfg_type,
             args.bias,
+            args.st_excute,
             **args.model_conf   
         )
 
