@@ -27,5 +27,6 @@ oversampling: 4
 outer : 1
 residual: 0
 use-cnn-module: True
-universal: True
-dynamic-halt: True  # can only be applied with universal models
+macaron-style: True
+universal: False
+dynamic-halt: False  # can only be applied with universal models

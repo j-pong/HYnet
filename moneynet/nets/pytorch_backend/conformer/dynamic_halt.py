@@ -17,13 +17,13 @@ class ACT_basic(nn.Module):
 
         # init_hdd
         ## [B, T]
-        halting_probability = torch.zeros(xs[0].shape[0],inputs.shape[1]).to(xs[0].device)
+        halting_probability = torch.zeros(inputs.shape[0],inputs.shape[1]).to(inputs.device)
         ## [B, T]
-        remainders = torch.zeros(xs[0].shape[0],xs[0].shape[1]).to(xs[0].device)
+        remainders = torch.zeros(inputs.shape[0],inputs.shape[1]).to(inputs.device)
         ## [B, T]
-        n_updates = torch.zeros(xs[0].shape[0],xs[0].shape[1]).to(xs[0].device)
+        n_updates = torch.zeros(inputs.shape[0],inputs.shape[1]).to(inputs.device)
         ## [B, T, HDD]
-        previous_state = torch.zeros_like(xs[0]).to(xs[0].device)
+        previous_state = torch.zeros_like(inputs).to(inputs.device)
         step = 0
         # for l in range(self.num_layers):
         while( ((halting_probability<self.threshold) & (n_updates < max_hop)).byte().any()):
