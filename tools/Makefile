@@ -56,7 +56,8 @@ espnet.done: venv
 	rm -rf espnet
 	git clone https://github.com/espnet/espnet
 	sudo cp -r /usr/lib/x86_64-linux-gnu/libcublas.so* /usr/local/cuda/lib64/
-	cd espnet/tools && ln -s ../../${KALDI} . && chmod +x setup_cuda_env.sh && ./setup_cuda_env.sh /usr/local/cuda && ./setup_anaconda.sh venv
+	export PATH=/usr/local/cuda/bin:/${PATH}
+	cd espnet/tools && ln -s ../../kaldi . && chmod +x setup_cuda_env.sh && ./setup_cuda_env.sh /usr/local/cuda && ./setup_anaconda.sh venv
 	cd espnet/tools && make TH_VERSION=1.6.0 warp-ctc.done espnet.done pytorch.done chainer.done
 	# import the python package to current venv
 	cd espnet/tools && . ../../venv/bin/activate && pip install -e ..
