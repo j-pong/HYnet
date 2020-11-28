@@ -74,11 +74,15 @@ class HynetImgrModel(AbsESPnetModel):
         self.model_st = EnDecoder(in_channels=self.in_ch,
                                   num_classes=self.out_ch,
                                   bias=self.bias,
-                                  model_type='B3')
+                                  model_type='B0')
 
         if not st_excute:
             for param in self.model_st.parameters():
                 param.requires_grad = False
+        else:
+            for param in self.model.parameters():
+                param.requires_grad = False
+
                                
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
@@ -161,9 +165,7 @@ class HynetImgrModel(AbsESPnetModel):
             if self.xai_excute and self.st_excute:
                 if i == (self.max_iter - 1):                    
                     losses.append(self.criterion(logit_st, label))
-                    acc_st = self._calc_acc(logit_st, label)
-            else:
-                acc_st = -1.0        
+            acc_st = self._calc_acc(logit_st, label)
 
             # 4. attribution with gradient-based methods
             if self.xai_excute:
