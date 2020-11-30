@@ -71,17 +71,17 @@ class HynetImgrModel(AbsESPnetModel):
                                bias=self.bias,
                                model_type=self.cfg_type)
 
-        self.model_st = EnDecoder(in_channels=self.in_ch,
-                                  num_classes=self.out_ch,
-                                  bias=self.bias,
-                                  model_type='B0')
+        # self.model_st = EnDecoder(in_channels=self.in_ch,
+        #                           num_classes=self.out_ch,
+        #                           bias=self.bias,
+        #                           model_type='B0')
 
-        if not st_excute:
-            for param in self.model_st.parameters():
-                param.requires_grad = False
-        else:
-            for param in self.model.parameters():
-                param.requires_grad = False
+        # if not st_excute:
+        #     for param in self.model_st.parameters():
+        #         param.requires_grad = False
+        # else:
+        #     for param in self.model.parameters():
+        #         param.requires_grad = False
 
                                
         # cirterion fo task
@@ -118,33 +118,24 @@ class HynetImgrModel(AbsESPnetModel):
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
-        # currently, focused layer for gradient is applied to bg method
-        # Todo(j-pong): the method will be applied to ig
+        # Todo(j-pong): we should change index of layer to not 0 at not bg
         focused_layer = self.model.encoder[0]
-        focused_layer_st = self.model_st.encoder[0]
+        # focused_layer_st = self.model_st.encoder[0]
         attn_hook_handle = None
-        attn_hook_handle_st = None
+        # attn_hook_handle_st = None
 
         for i in range(self.max_iter):
             # 1. preprocessing with each iteration
             if self.xai_excute:
                 if i > 0:
-                    attn = self.feat_minmax_norm(attn, 1.0, 0.0)
-                    if i == 1:
-                        attns = attn
-                    else:
-                        attns *= attn
                     # for solving additive feature problem
-                    if self.xai_mode == 'bg':
-                        def attn_apply(self, x):
-                            return x[0] * attns
-                        attn_hook_handle = focused_layer.register_forward_pre_hook(attn_apply)
-                        attn_hook_handle_st = focused_layer_st.register_forward_pre_hook(attn_apply)
-                    else:
-                        image = image * attn
+                    def attn_apply(self, x):
+                        return x[0] * mask_prod
+                    attn_hook_handle = focused_layer.register_forward_pre_hook(attn_apply)
+                    # attn_hook_handle_st = focused_layer_st.register_forward_pre_hook(attn_apply)
             # 2. feedforward
             logit = self.model(image)
-            logit_st = self.model_st(image)
+            # logit_st = self.model_st(image)
             
             # 3. caculate measurment
             ## 3.0. check parameter norm
@@ -161,11 +152,11 @@ class HynetImgrModel(AbsESPnetModel):
                 losses.append(self.criterion(logit, label))
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
-            ## 3.2. Student model for traiing attributions
-            if self.xai_excute and self.st_excute:
-                if i == (self.max_iter - 1):                    
-                    losses.append(self.criterion(logit_st, label))
-            acc_st = self._calc_acc(logit_st, label)
+            # ## 3.2. Student model for traiing attributions
+            # if self.xai_excute and self.st_excute:
+            #     if i == (self.max_iter - 1):                    
+            #         losses.append(self.criterion(logit_st, label))
+            # acc_st = self._calc_acc(logit_st, label)
 
             # 4. attribution with gradient-based methods
             if self.xai_excute:
@@ -182,8 +173,8 @@ class HynetImgrModel(AbsESPnetModel):
                         outputs = logit.masked_select(mask).unsqueeze(-1)
                         attn_cent = self.model.backward_linear(image, logit_softmax_cent, outputs)
 
-                        logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        attn_other = self.model.backward_linear(image, logit_softmax_other)
+                        # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                        # attn_other = self.model.backward_linear(image, logit_softmax_other)
                         
                         attn = attn_cent
 
@@ -192,33 +183,53 @@ class HynetImgrModel(AbsESPnetModel):
                         saliency = Saliency(self.model)
                         grads = saliency.attribute(image, target=label)
                         attn = grads.squeeze()
+                        loss_brew = 0.0
                     elif self.xai_mode == 'ig':
+                        if attn_hook_handle is not None:
+                            attn_hook_handle.remove()
+                            attn_hook_handle = None
                         ig = IntegratedGradients(self.model)
-                        attr_ig, delta = ig.attribute(image,
-                                                      baselines=image * 0, 
-                                                      target=label,
-                                                      return_convergence_delta=True)
+                        if i > 0:    
+                            attr_ig, delta = ig.attribute(image * mask_prod,
+                                                        baselines=image * 0, 
+                                                        target=label,
+                                                        return_convergence_delta=True)
+                        else:
+                            attr_ig, delta = ig.attribute(image,
+                                                        baselines=image * 0, 
+                                                        target=label,
+                                                        return_convergence_delta=True)
                         attn = attr_ig.squeeze()
-
-                        attn_cent = attn
-                        attn_other = attn
 
                         loss_brew = 0.0
                     elif self.xai_mode == 'ig_nt':
+                        if attn_hook_handle is not None:
+                            attn_hook_handle.remove()
+                            attn_hook_handle = None
                         ig = IntegratedGradients(self.model)
+                        if i > 0:    
+                            attr_ig, delta = ig.attribute(image * mask_prod,
+                                                        baselines=image * 0, 
+                                                        target=label,
+                                                        return_convergence_delta=True)
+                        else:
+                            attr_ig, delta = ig.attribute(image,
+                                                        baselines=image * 0, 
+                                                        target=label,
+                                                        return_convergence_delta=True)
                         nt = NoiseTunnel(ig)
                         attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
                                                               baselines=image * 0, 
                                                               nt_type='smoothgrad',
                                                               n_samples=4, stdevs=0.02)
                         attn = attr_ig_nt.squeeze(0)
+                        loss_brew = 0.0
                     elif self.xai_mode == 'dl':
                         dl = DeepLift(self.model)
                         attr_dl = attribute_image_features(self.model, label, dl, image, 
                                                             baselines=image * 0)
                         attn = attr_dl.squeeze(0)
-                        attn_cent = attn
-                        attn_other = attn
+                        loss_brew = 0.0
                     elif self.xai_mode == 'dls':
                         dl = DeepLiftShap(self.model)
                         attr_dl, delta = dl.attribute(image,
@@ -226,9 +237,6 @@ class HynetImgrModel(AbsESPnetModel):
                                                       target=label,
                                                       return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
-
-                        attn_cent = attn
-                        attn_other = attn
 
                         loss_brew = 0.0
                     elif self.xai_mode == 'bg':
@@ -238,26 +246,29 @@ class HynetImgrModel(AbsESPnetModel):
                                                target=label)
                         attn = attr_bg.squeeze()
 
-                        attn_cent = attn
-                        attn_other = attn
-
                         loss_brew = bg.loss_brew
                     # recasting to float type
                     attn = attn.detach().float()
+
+                    mask = self.feat_minmax_norm(attn, 1.0, 0.0)
+                    if i == 0:
+                        mask_prod = mask
+                    else:
+                        mask_prod *= mask
                 
                 # flush hook handle
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
-                if attn_hook_handle_st is not None:
-                    attn_hook_handle_st.remove()
+                # if attn_hook_handle_st is not None:
+                #     attn_hook_handle_st.remove()
 
                 # 5. for logging
                 if not self.training:
-                    image_ = image.permute(0, 2, 3, 1)
+                    image_ = (image * mask_prod).permute(0, 2, 3, 1)
                     logger['imgs'].append(image_.sum(-1))
-                    attn1 = attn_cent.permute(0, 2, 3, 1)
+                    attn1 = attn.permute(0, 2, 3, 1)
                     logger['attns'][0].append(attn1.sum(-1))
-                    attn2 = attn_other.permute(0, 2, 3, 1)
+                    attn2 = mask.permute(0, 2, 3, 1)
                     logger['attns'][1].append(attn2.sum(-1))
             else: 
                 if not self.training:
@@ -276,7 +287,7 @@ class HynetImgrModel(AbsESPnetModel):
                     acc_iter0=logger['accs'][0],
                     acc_iter1=logger['accs'][1],
                     acc_iter_last=logger['accs'][-1],
-                    acc_st=acc_st
+                    # acc_st=acc_st
                 )
         else:
             stats = dict(
