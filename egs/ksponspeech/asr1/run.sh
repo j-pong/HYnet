@@ -65,7 +65,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=KsponSpeech_tr
+train_set=KsponSpeech_trt
 train_dev=KsponSpeech_dv
 recog_set=KsponSpeech_tt
 
@@ -222,7 +222,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --valid-json ${feat_dt_dir}/data_${bpemode}${nbpe}.json
     else
         ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-            asr_train.py \
+            asr_train_default.py \
             --config ${train_config} \
             --preprocess-conf ${preprocess_config} \
             --ngpu ${ngpu} \
@@ -279,8 +279,9 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     fi
 
     pids=() # initialize pids
-    for rtask in ${test}; do
+    for rtask in ${recog_set}; do
     (
+        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         decode_dir=decode_${rtask}_${recog_model}_$(basename ${decode_config%.*})_${lmtag}
 
         splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
