@@ -65,7 +65,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=KsponSpeech_trt
+train_set=KsponSpeech_tr
 train_dev=KsponSpeech_dv
 recog_set=KsponSpeech_tt
 
