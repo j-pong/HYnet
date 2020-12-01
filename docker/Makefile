@@ -15,8 +15,8 @@ ARG_CONTAINER_HOSTNAME?=$(ARG_CONTAINER_NAME)
 ARG_PUID?=$(shell id -u)
 ARG_PGID?=$(shell id -g)
 #-------------------------------------------------------------------------------
-ARG_PORT_SSH?=32768
-ARG_PORT_TENSORBOARD?=9205
+ARG_PORT_SSH?=32767
+ARG_PORT_TENSORBOARD?=9204
 #-------------------------------------------------------------------------------
 ARG_WORKSPACE_HOST?=$(shell pwd)/../../
 ARG_WORKSPACE_CONTAINER?=/home/Workspace

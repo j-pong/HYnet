@@ -58,9 +58,6 @@ from espnet.utils.training.tensorboard_logger import TensorboardLogger
 from espnet.utils.training.train_utils import check_early_stop
 from espnet.utils.training.train_utils import set_early_stop
 
-from moneynet.asr.asr_utils import rmsprop_lr_decay
-from moneynet.utils.io_utils import LoadInputsAndTargets
-
 import matplotlib
 
 matplotlib.use("Agg")
@@ -69,6 +66,7 @@ if sys.version_info[0] == 2:
     from itertools import izip_longest as zip_longest
 else:
     from itertools import zip_longest as zip_longest
+
 
 def _recursive_to(xs, device):
     if torch.is_tensor(xs):
@@ -159,16 +157,16 @@ class CustomUpdater(StandardUpdater):
     """
 
     def __init__(
-            self,
-            model,
-            grad_clip_threshold,
-            train_iter,
-            optimizer,
-            device,
-            ngpu,
-            grad_noise=False,
-            accum_grad=1,
-            use_apex=False,
+        self,
+        model,
+        grad_clip_threshold,
+        train_iter,
+        optimizer,
+        device,
+        ngpu,
+        grad_noise=False,
+        accum_grad=1,
+        use_apex=False,
     ):
         super(CustomUpdater, self).__init__(train_iter, optimizer)
         self.model = model
@@ -207,7 +205,7 @@ class CustomUpdater(StandardUpdater):
         else:
             # apex does not support torch.nn.DataParallel
             loss = (
-                    data_parallel(self.model, x, range(self.ngpu)).mean() / self.accum_grad
+                data_parallel(self.model, x, range(self.ngpu)).mean() / self.accum_grad
             )
         if self.use_apex:
             from apex import amp
@@ -417,7 +415,16 @@ def train(args):
     logging.info("#output dims: " + str(odim))
 
     # specify attention, CTC, hybrid mode
-    if args.mtlalpha == 1.0:
+    if "transducer" in args.model_module:
+        if (
+            getattr(args, "etype", False) == "transformer"
+            or getattr(args, "dtype", False) == "transformer"
+        ):
+            mtl_mode = "transformer_transducer"
+        else:
+            mtl_mode = "transducer"
+        logging.info("Pure transducer mode")
+    elif args.mtlalpha == 1.0:
         mtl_mode = "ctc"
         logging.info("Pure CTC mode")
     elif args.mtlalpha == 0.0:
@@ -490,21 +497,31 @@ def train(args):
         dtype = torch.float32
     model = model.to(device=device, dtype=dtype)
 
+    if args.freeze_mods:
+        model, model_params = freeze_modules(model, args.freeze_mods)
+    else:
+        model_params = model.parameters()
+
     # Setup an optimizer
     if args.opt == "adadelta":
         optimizer = torch.optim.Adadelta(
-            model.parameters(), rho=0.95, eps=args.eps, weight_decay=args.weight_decay
+            model_params, rho=0.95, eps=args.eps, weight_decay=args.weight_decay
         )
     elif args.opt == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay)
+        optimizer = torch.optim.Adam(model_params, weight_decay=args.weight_decay)
     elif args.opt == "noam":
         from espnet.nets.pytorch_backend.transformer.optimizer import get_std_opt
 
+        # For transformer-transducer, adim declaration is within the block definition.
+        # Thus, we need retrieve the most dominant value (d_hidden) for Noam scheduler.
+        if hasattr(args, "enc_block_arch") or hasattr(args, "dec_block_arch"):
+            adim = model.most_dom_dim
+        else:
+            adim = args.adim
+
         optimizer = get_std_opt(
-            model.parameters(), args.adim, args.transformer_warmup_steps, args.transformer_lr
+            model_params, adim, args.transformer_warmup_steps, args.transformer_lr
         )
-    elif args.opt == "rmsprop":
-        optimizer = torch.optim.RMSprop(model.parameters(), lr=0.0008, alpha=0.95)
     else:
         raise NotImplementedError("unknown optimizer: " + args.opt)
 
@@ -656,7 +673,19 @@ def train(args):
         )
 
     # Save attention weight each epoch
-    if args.num_save_attention > 0 and args.mtlalpha != 1.0 and "transformer" in args.model_module:
+    is_attn_plot = (
+        (
+            "transformer" in args.model_module
+            or "conformer" in args.model_module
+            or mtl_mode in ["att", "mtl"]
+        )
+        or (
+            mtl_mode == "transducer" and getattr(args, "rnnt_mode", False) == "rnnt-att"
+        )
+        or mtl_mode == "transformer_transducer"
+    )
+
+    if args.num_save_attention > 0 and is_attn_plot:
         data = sorted(
             list(valid_json.items())[: args.num_save_attention],
             key=lambda x: int(x[1]["input"][0]["shape"][1]),
@@ -680,14 +709,42 @@ def train(args):
     else:
         att_reporter = None
 
+    # Save CTC prob at each epoch
+    if mtl_mode in ["ctc", "mtl"] and args.num_save_ctc > 0:
+        # NOTE: sort it by output lengths
+        data = sorted(
+            list(valid_json.items())[: args.num_save_ctc],
+            key=lambda x: int(x[1]["output"][0]["shape"][0]),
+            reverse=True,
+        )
+        if hasattr(model, "module"):
+            ctc_vis_fn = model.module.calculate_all_ctc_probs
+            plot_class = model.module.ctc_plot_class
+        else:
+            ctc_vis_fn = model.calculate_all_ctc_probs
+            plot_class = model.ctc_plot_class
+        ctc_reporter = plot_class(
+            ctc_vis_fn,
+            data,
+            args.outdir + "/ctc_prob",
+            converter=converter,
+            transform=load_cv,
+            device=device,
+            ikey="output",
+            iaxis=1,
+        )
+        trainer.extend(ctc_reporter, trigger=(1, "epoch"))
+    else:
+        ctc_reporter = None
+
     # Make a plot for training and validation values
     if args.num_encs > 1:
         report_keys_loss_ctc = [
-                                   "main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)
-                               ] + ["validation/main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)]
+            "main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)
+        ] + ["validation/main/loss_ctc{}".format(i + 1) for i in range(model.num_encs)]
         report_keys_cer_ctc = [
-                                  "main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)
-                              ] + ["validation/main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)]
+            "main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)
+        ] + ["validation/main/cer_ctc{}".format(i + 1) for i in range(model.num_encs)]
     trainer.extend(
         extensions.PlotReport(
             [
@@ -722,7 +779,7 @@ def train(args):
         snapshot_object(model, "model.loss.best"),
         trigger=training.triggers.MinValueTrigger("validation/main/loss"),
     )
-    if mtl_mode != "ctc":
+    if mtl_mode not in ["ctc", "transducer", "transformer_transducer"]:
         trainer.extend(
             snapshot_object(model, "model.acc.best"),
             trigger=training.triggers.MaxValueTrigger("validation/main/acc"),
@@ -734,8 +791,9 @@ def train(args):
             torch_snapshot(filename="snapshot.iter.{.updater.iteration}"),
             trigger=(args.save_interval_iters, "iteration"),
         )
-    else:
-        trainer.extend(torch_snapshot(), trigger=(1, "epoch"))
+
+    # save snapshot at every epoch - for model averaging
+    trainer.extend(torch_snapshot(), trigger=(1, "epoch"))
 
     # epsilon decay in the optimizer
     if args.opt == "adadelta":
@@ -773,38 +831,13 @@ def train(args):
                     lambda best_value, current_value: best_value < current_value,
                 ),
             )
-
-    # lr decay in rmsprop
-    if args.opt == "rmsprop":
-        if args.criterion == "acc" and mtl_mode != "ctc":
+        # NOTE: In some cases, it may take more than one epoch for the model's loss
+        # to escape from a local minimum.
+        # Thus, restore_snapshot extension is not used here.
+        # see details in https://github.com/espnet/espnet/pull/2171
+        elif args.criterion == "loss_eps_decay_only":
             trainer.extend(
-                restore_snapshot(
-                    model, args.outdir + "/model.acc.best", load_fn=torch_load
-                ),
-                trigger=CompareValueTrigger(
-                    "validation/main/acc",
-                    lambda best_value, current_value: best_value > current_value,
-                ),
-            )
-            trainer.extend(
-                rmsprop_lr_decay(args.lr_decay),
-                trigger=CompareValueTrigger(
-                    "validation/main/acc",
-                    lambda best_value, current_value: best_value > current_value,
-                ),
-            )
-        elif args.criterion == "loss":
-            trainer.extend(
-                restore_snapshot(
-                    model, args.outdir + "/model.loss.best", load_fn=torch_load
-                ),
-                trigger=CompareValueTrigger(
-                    "validation/main/loss",
-                    lambda best_value, current_value: best_value < current_value,
-                ),
-            )
-            trainer.extend(
-                rmsprop_lr_decay(args.lr_decay),
+                adadelta_eps_decay(args.eps_decay),
                 trigger=CompareValueTrigger(
                     "validation/main/loss",
                     lambda best_value, current_value: best_value < current_value,
@@ -816,20 +849,20 @@ def train(args):
         extensions.LogReport(trigger=(args.report_interval_iters, "iteration"))
     )
     report_keys = [
-                      "epoch",
-                      "iteration",
-                      "main/loss",
-                      "main/loss_ctc",
-                      "main/loss_att",
-                      "validation/main/loss",
-                      "validation/main/loss_ctc",
-                      "validation/main/loss_att",
-                      "main/acc",
-                      "validation/main/acc",
-                      "main/cer_ctc",
-                      "validation/main/cer_ctc",
-                      "elapsed_time",
-                  ] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
+        "epoch",
+        "iteration",
+        "main/loss",
+        "main/loss_ctc",
+        "main/loss_att",
+        "validation/main/loss",
+        "validation/main/loss_ctc",
+        "validation/main/loss_att",
+        "main/acc",
+        "validation/main/acc",
+        "main/cer_ctc",
+        "validation/main/cer_ctc",
+        "elapsed_time",
+    ] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
     if args.opt == "adadelta":
         trainer.extend(
             extensions.observe_value(
@@ -841,17 +874,6 @@ def train(args):
             trigger=(args.report_interval_iters, "iteration"),
         )
         report_keys.append("eps")
-    if args.opt == "rmsprop":
-        trainer.extend(
-            extensions.observe_value(
-                "lr",
-                lambda trainer: trainer.updater.get_optimizer("main").param_groups[0][
-                    "lr"
-                ],
-            ),
-            trigger=(args.report_interval_iters, "iteration"),
-        )
-        report_keys.append("lr")
     if args.report_cer:
         report_keys.append("validation/main/cer")
     if args.report_wer:
@@ -866,12 +888,17 @@ def train(args):
 
     if args.tensorboard_dir is not None and args.tensorboard_dir != "":
         trainer.extend(
-            TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
+            TensorboardLogger(
+                SummaryWriter(args.tensorboard_dir),
+                att_reporter=att_reporter,
+                ctc_reporter=ctc_reporter,
+            ),
             trigger=(args.report_interval_iters, "iteration"),
         )
     # Run the training
     trainer.run()
     check_early_stop(trainer, args.epochs)
+
 
 def recog(args):
     """Decode with the given args.
@@ -1038,10 +1065,6 @@ def recog(args):
                             for n in range(args.nbest):
                                 nbest_hyps[n]["yseq"].extend(hyps[n]["yseq"])
                                 nbest_hyps[n]["score"] += hyps[n]["score"]
-                elif hasattr(model, "decoder_mode") and model.decoder_mode == "maskctc":
-                    nbest_hyps = model.recognize_maskctc(
-                        feat, args, train_args.char_list
-                    )
                 elif hasattr(model, "rnnt_mode"):
                     nbest_hyps = model.recognize(feat, beam_search_transducer)
                 else:

@@ -1,10 +1,10 @@
 PYTHON_VERSION := 3.7.3
 CUDA_VERSION := 10.2
 
-TH_VERSION := 1.5.0
+TH_VERSION := 1.4.0
 
 # Use a prebuild Kaldi to omit the installation
-KALDI := kaldi 
+KALDI := 
 WGET := wget --tries=3
 
 # Both Miniconda2/3 can install any Python versions
