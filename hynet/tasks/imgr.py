@@ -25,7 +25,7 @@ from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str_or_none
 
-from hynet.train.dataset import MNISTDataset, CIFAR10Dataset
+from hynet.train.dataset import MNISTDataset, CIFAR10Dataset, CIFAR100Dataset
 from hynet.train.trainer import ImgrTrainer
 from hynet.iterators.img_iter_factory import ImgrIterFactory
 from hynet.imgr.imgr_model import HynetImgrModel
@@ -168,17 +168,23 @@ class ImgrTask(AbsTask):
                 transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
             ])
 
+        # transform = transforms.Compose([
+        #         transforms.ToTensor(),
+        #         transforms.Normalize(mean=[0.507], std=[0.267])
+        #     ])
+        # dataset = MNISTDataset(
+        #     root='data',
+        #     train=train,
+        #     download=True,
+        #     transform=transform)
+
         dataset = CIFAR10Dataset(
             root='data',
             train=train,
             download=True,
             transform=transform)
 
-        # transform = transforms.Compose([
-        #         transforms.ToTensor(),
-        #         transforms.Normalize(mean=[0.507], std=[0.267])
-        #     ])
-        # dataset = MNISTDataset(
+        # dataset = CIFAR100Dataset(
         #     root='data',
         #     train=train,
         #     download=True,

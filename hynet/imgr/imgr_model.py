@@ -19,7 +19,7 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
-from hynet.imgr.encoders.cifar10_vgg_encoder import EnDecoder
+from hynet.imgr.encoders.cifar100_vgg_encoder import EnDecoder
 # from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
@@ -63,7 +63,7 @@ class HynetImgrModel(AbsESPnetModel):
 
         # data related
         self.in_ch = 3
-        self.out_ch = 10
+        self.out_ch = 100
 
         # network archictecture 
         self.model = EnDecoder(in_channels=self.in_ch,
@@ -191,14 +191,14 @@ class HynetImgrModel(AbsESPnetModel):
                         ig = IntegratedGradients(self.model)
                         if i > 0:    
                             attr_ig, delta = ig.attribute(image * mask_prod,
-                                                        baselines=image * 0, 
-                                                        target=label,
-                                                        return_convergence_delta=True)
+                                                          baselines=image * 0, 
+                                                          target=label,
+                                                          return_convergence_delta=True)
                         else:
                             attr_ig, delta = ig.attribute(image,
-                                                        baselines=image * 0, 
-                                                        target=label,
-                                                        return_convergence_delta=True)
+                                                          baselines=image * 0, 
+                                                          target=label,
+                                                          return_convergence_delta=True)
                         attn = attr_ig.squeeze()
 
                         loss_brew = 0.0
@@ -209,14 +209,14 @@ class HynetImgrModel(AbsESPnetModel):
                         ig = IntegratedGradients(self.model)
                         if i > 0:    
                             attr_ig, delta = ig.attribute(image * mask_prod,
-                                                        baselines=image * 0, 
-                                                        target=label,
-                                                        return_convergence_delta=True)
+                                                          baselines=image * 0, 
+                                                          target=label,
+                                                          return_convergence_delta=True)
                         else:
                             attr_ig, delta = ig.attribute(image,
-                                                        baselines=image * 0, 
-                                                        target=label,
-                                                        return_convergence_delta=True)
+                                                          baselines=image * 0, 
+                                                          target=label,
+                                                          return_convergence_delta=True)
                         nt = NoiseTunnel(ig)
                         attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
                                                               baselines=image * 0, 
@@ -225,18 +225,38 @@ class HynetImgrModel(AbsESPnetModel):
                         attn = attr_ig_nt.squeeze(0)
                         loss_brew = 0.0
                     elif self.xai_mode == 'dl':
+                        if attn_hook_handle is not None:
+                            attn_hook_handle.remove()
+                            attn_hook_handle = None
                         dl = DeepLift(self.model)
-                        attr_dl = attribute_image_features(self.model, label, dl, image, 
-                                                            baselines=image * 0)
+                        if i > 0:    
+                            attr_dl, delta = dl.attribute(image * mask_prod,
+                                                          baselines=image * 0,
+                                                          target=label,
+                                                          return_convergence_delta=True)
+                        else:
+                            attr_dl, delta = dl.attribute(image,
+                                                          baselines=image * 0,
+                                                          target=label,
+                                                          return_convergence_delta=True)
                         attn = attr_dl.squeeze(0)
                         loss_brew = 0.0
                     elif self.xai_mode == 'dls':
-                        dl = DeepLiftShap(self.model)
-                        attr_dl, delta = dl.attribute(image,
-                                                      baselines=image * 0, 
-                                                      target=label,
-                                                      return_convergence_delta=True)
-                        attn = attr_dl.squeeze(0)
+                        if attn_hook_handle is not None:
+                            attn_hook_handle.remove()
+                            attn_hook_handle = None
+                        dls = DeepLiftShap(self.model)
+                        if i > 0:    
+                            attr_dls, delta = dls.attribute(image * mask_prod,
+                                                          baselines=image * 0,
+                                                          target=label,
+                                                          return_convergence_delta=True)
+                        else:
+                            attr_dls, delta = dls.attribute(image,
+                                                          baselines=image * 0,
+                                                          target=label,
+                                                          return_convergence_delta=True)
+                        attn = attr_dls.squeeze(0)
 
                         loss_brew = 0.0
                     elif self.xai_mode == 'bg':
@@ -286,7 +306,7 @@ class HynetImgrModel(AbsESPnetModel):
                     loss_brew=loss_brew,
                     acc_iter0=logger['accs'][0],
                     acc_iter1=logger['accs'][1],
-                    acc_iter_last=logger['accs'][-1],
+                    acc_iter_last=logger['accs'][2],
                     # acc_st=acc_st
                 )
         else:

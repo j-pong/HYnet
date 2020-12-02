@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-lienar_layer = (nn.Conv2d, nn.Linear)
+lienar_layer = (nn.Conv2d, nn.Linear, nn.BatchNorm2d)
 piece_wise_activation = (nn.ReLU, nn.PReLU, nn.Tanh, nn.Dropout)
 piece_shrink_activation = (nn.MaxPool1d, nn.MaxPool2d)
 
@@ -58,7 +58,7 @@ class BrewModule(nn.Module):
 
         return x, dfdx, epsil
 
-    def linear_linear(self, x, m, a=None, gamma=1.0):
+    def linear_linear(self, x, m, a=None, gamma=1.0, q=1.0):
         if isinstance(m, nn.Linear):
             w = m.weight
             if gamma < 1.0:
@@ -69,8 +69,10 @@ class BrewModule(nn.Module):
             # else:
             #     w_ = w
             # x_hat = torch.matmul(x.unsqueeze(1), w_).squeeze(1)
+            x = F.leaky_relu(x, q)
             if a is not None:
                 x = x * a
+
             x = F.linear(x.unsqueeze(1), w.t()).squeeze(1)
             # Todo(j-pong): check this line for equal to original
             # print(F.mse_loss(x, x_hat))
@@ -79,15 +81,17 @@ class BrewModule(nn.Module):
         
         return x
 
-    def linear_conv2d(self, x, m, a=None, gamma=1.0):
+    def linear_conv2d(self, x, m, a=None, gamma=0.75, q=1.0):
         if isinstance(m, nn.Conv2d):
             w = m.weight
             if gamma < 1.0:
                 w = F.leaky_relu(w, gamma)
             b = m.bias 
             
+            x = F.leaky_relu(x, q)
             if a is not None:
                 x = x * a
+
             x = F.conv_transpose2d(x, w, stride=m.stride)
             pads = m.padding
             pad_h, pad_w = pads 
