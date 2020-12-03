@@ -41,60 +41,67 @@ class ImgrTask(AbsTask):
     @classmethod
     def add_task_arguments(cls, parser: argparse.ArgumentParser):
         group = parser.add_argument_group(description="Task related")
-
         parser.set_defaults(
             num_att_plot=0,
             iterator_type="task")
-
-        group.add_argument(
-            "--init",
-            type=lambda x: str_or_none(x.lower()),
-            default=None,
-            help="The initialization method",
-            choices=[
-                "chainer",
-                "xavier_uniform",
-                "xavier_normal",
-                "kaiming_uniform",
-                "kaiming_normal",
-                None,
-            ],
-        )
-        group.add_argument(
-            "--model_conf",
-            action=NestedDictAction,
-            default=get_default_kwargs(HynetImgrModel),
-            help="The keyword arguments for model class.",
-        )
+        
+        # Custom task
         group.add_argument(
             "--xai_excute",
             type=int,
-            default=0,
-            help=""   
+            default=0 
         )
         group.add_argument(
             "--xai_mode",
             type=str,
-            default="brew",
-            help=""   
+            default="bg"
+        )
+        group.add_argument(
+            "--xai_iter",
+            type=int,
+            default=3 
         )
         group.add_argument(
             "--st_excute",
             type=int,
-            default=0,
-            help=""   
+            default=0 
         )
+        group.add_argument(
+            "--dataset",
+            type=str,
+            default="cifar10",
+            choices=[
+                "mnist",
+                "cifar10",
+                "cifar100",
+                "imagenet"
+            ]   
+        )
+        # Model configuration
         group.add_argument(
             "--cfg_type",
             type=str,
-            default="B0",
-            help=""   
+            default="D" 
+        )
+        group.add_argument(
+            "--batch_norm",
+            type=int,
+            default=0 
         )
         group.add_argument(
             "--bias",
             type=int,
-            default=0,
-            help=""   
+            default=0 
+        )
+        group.add_argument(
+            "--in_ch",
+            type=int,
+            default=3
+        )
+        group.add_argument(
+            "--out_ch",
+            type=int,
+            default=10
         )
 
     @classmethod
@@ -129,15 +136,14 @@ class ImgrTask(AbsTask):
         model = HynetImgrModel(
             args.xai_excute,
             args.xai_mode,
-            args.cfg_type,
-            args.bias,
+            args.xai_iter,
             args.st_excute,
-            **args.model_conf   
+            args.cfg_type,
+            args.batch_norm,
+            args.bias,
+            args.in_ch,
+            args.out_ch
         )
-
-        # 2. Initialize
-        if args.init is not None:
-            initialize(model, args.init)
 
         assert check_return_type(model)
         return model
@@ -154,41 +160,52 @@ class ImgrTask(AbsTask):
             train = False
         else:
             ValueError("{} is not implemented!".format(mode))
+
         
-        if train:
+        if args.dataset == 'mnist':
             transform = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
-            ])
-        else:
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
-            ])
-
-        # transform = transforms.Compose([
-        #         transforms.ToTensor(),
-        #         transforms.Normalize(mean=[0.507], std=[0.267])
-        #     ])
-        # dataset = MNISTDataset(
-        #     root='data',
-        #     train=train,
-        #     download=True,
-        #     transform=transform)
-
-        dataset = CIFAR10Dataset(
-            root='data',
-            train=train,
-            download=True,
-            transform=transform)
-
-        # dataset = CIFAR100Dataset(
-        #     root='data',
-        #     train=train,
-        #     download=True,
-        #     transform=transform)
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.507], std=[0.267])
+                ])
+            dataset = MNISTDataset(
+                root='data',
+                train=train,
+                download=False,
+                transform=transform)
+        elif args.dataset == 'cifar10':
+            if train:
+                transform = transforms.Compose([
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+                ])
+            else:
+                transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+                ])
+            dataset = CIFAR10Dataset(root='data',
+                                     train=train,
+                                     download=False,
+                                     transform=transform)
+        elif args.dataset == 'cifar100':
+            if train:
+                transform = transforms.Compose([
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+                ])
+            else:
+                transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+                ])
+            dataset = CIFAR100Dataset(root='data',
+                                      train=train,
+                                      download=False,
+                                      transform=transform)
 
         return ImgrIterFactory(
             dataset=dataset,

@@ -19,8 +19,7 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
-from hynet.imgr.encoders.cifar100_vgg_encoder import EnDecoder
-# from hynet.imgr.encoders.mnist_vgg_encoder import EnDecoder
+from hynet.imgr.encoders.cifar_vgg_encoder import EnDecoder
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency
@@ -44,30 +43,37 @@ class HynetImgrModel(AbsESPnetModel):
 
     def __init__(self, 
                  xai_excute, 
-                 xai_mode, 
+                 xai_mode,
+                 xai_iter, 
+                 st_excute,
                  cfg_type, 
+                 batch_norm,
                  bias,
-                 st_excute):
+                 in_ch,
+                 out_ch):
         assert check_argument_types()
         super().__init__()
         # task related
         self.xai_excute = xai_excute
         if self.xai_excute:
-            self.max_iter = 3
+            self.max_iter = xai_iter
         else:
             self.max_iter = 1
         self.xai_mode = xai_mode
-        self.cfg_type = cfg_type
-        self.bias = bias
         self.st_excute = st_excute
+        self.cfg_type = cfg_type
+
+        self.batch_norm = batch_norm
+        self.bias = bias
 
         # data related
-        self.in_ch = 3
-        self.out_ch = 100
+        self.in_ch = in_ch
+        self.out_ch = out_ch
 
         # network archictecture 
         self.model = EnDecoder(in_channels=self.in_ch,
                                num_classes=self.out_ch,
+                               batch_norm=self.batch_norm,
                                bias=self.bias,
                                model_type=self.cfg_type)
 
