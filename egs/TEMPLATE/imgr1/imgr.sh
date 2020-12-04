@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2020 j-pong
+#  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 # Set bash to 'debug' mode, it will exit on :
 # -e 'error', -u 'undefined variable', -o ... 'error in pipeline', -x 'print commands',
@@ -26,7 +28,8 @@ SECONDS=0
 stage=1              # Processes starts from the specified stage.
 stop_stage=10000     # Processes is stopped at the specified stage.
 skip_train=false     # Skip training stages
-ngpu=1               # The number of gpus ("0" uses cpu, otherwise use gpu).
+ngpu=4               # The number of gpus ("0" uses cpu, otherwise use gpu).
+ngpu_id=0,1,2,3
 num_nodes=1          # The number of nodes
 nj=32                # The number of parallel jobs.
 expdir=exp           # Directory to save experiments.
@@ -39,8 +42,8 @@ local_data_opts= # The options given to local/data.sh.
 # Ingr model related
 imgr_tag=
 imgr_exp=
-imgr_config=
-imgr_args= 
+imgr_config=conf/train.yaml
+imgr_args=
 
 # Feature extraction related
 feats_type=img         # Feature type (raw or fbank_pitch).
@@ -111,10 +114,10 @@ if ! "${skip_train}"; then
             --num_nodes "${num_nodes}" \
             --init_file_prefix "${imgr_exp}"/.dist_init_ \
             --multiprocessing_distributed true -- \
-            ${python} -m hynet.bin.imgr_train \
-                --resume ${resume} \
-                --output_dir "${imgr_exp}" \
-                ${_opts} ${imgr_args}
+            CUDA_VISIBLE_DEVICES=${ngpu_id} ${python} -m hynet.bin.imgr_train \
+                                                      --resume ${resume} \
+                                                      --output_dir "${imgr_exp}" \
+                                                      ${_opts} ${imgr_args}
 
     fi
 else

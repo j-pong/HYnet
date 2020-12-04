@@ -3,8 +3,8 @@ in_ch: 3
 out_ch: 10
 
 accum_grad: 1
-max_epoch: 200
-batch_size: 50
+max_epoch: 100
+batch_size: 128
 
 best_model_criterion:
 -   - valid
@@ -14,7 +14,7 @@ keep_nbest_models: 10
 
 scheduler: steplr
 scheduler_conf:
-    step_size: 60
+    step_size: 20
     gamma: 0.2
 
 optim: sgd
@@ -23,7 +23,7 @@ optim_conf:
     weight_decay: 0.0005
     momentum: 0.9
 
-xai_excute: 0
+xai_excute: 1
 xai_mode: bg
 st_excute: 0
 

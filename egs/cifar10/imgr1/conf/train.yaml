@@ -1,10 +1,10 @@
-dataset: cifar10
+dataset: cifar100
 in_ch: 3
-out_ch: 10
+out_ch: 100
 
 accum_grad: 1
-max_epoch: 200
-batch_size: 50
+max_epoch: 100
+batch_size: 128
 
 best_model_criterion:
 -   - valid
@@ -27,7 +27,7 @@ xai_excute: 0
 xai_mode: bg
 st_excute: 0
 
-bias: 0
-batch_norm: 0
+bias: 1
+batch_norm: 1
 cfg_type: D
 

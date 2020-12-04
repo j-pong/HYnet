@@ -96,15 +96,19 @@ class HynetImgrModel(AbsESPnetModel):
     def feat_minmax_norm(self, x, max_y=1.0, min_y=0.0):
         # save original shape of feature
         b_sz, ch, in_h, in_w = x.size()
+
         # flatten for whole space dimension
         x = x.flatten(start_dim=2)
+
         # get min-max value 
         max_x = torch.max(x, dim=2, keepdim=True)[0]
         min_x = torch.min(x, dim=2, keepdim=True)[0]
+
         # normalization element
         norm = (max_x - min_x)
         denorm = (max_y - min_y)
         norm[norm == 0.0] = 1.0
+        
         # normalization
         x = (x - min_x) / norm * denorm + min_y
         x = x.view(b_sz, ch, in_h, in_w)
