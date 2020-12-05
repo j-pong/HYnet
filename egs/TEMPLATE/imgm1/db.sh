@@ -1,2 +1,0 @@
-MNIST=/DB/
-BARO=/DB/

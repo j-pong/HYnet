@@ -1,40 +1,42 @@
 .DEFAULT_GOAL := help
 
-# <GPU>
+# GPU configuration
 GPU?=0,1,2,3
 DOCKER=docker
-#-------------------------------------------------------------------------------
+
+# # Jupyter notebook option
 # JUPYTER=notebook
 # JUPYTER=lab
-#-------------------------------------------------------------------------------
-ARG_IMAGE_NAME?=moneynet/cuda:base
-ARG_CONTAINER_NAME?=moneynet-docker
+
+# Docker configuration
+ARG_IMAGE_NAME?=kt-docker:base
+ARG_CONTAINER_NAME?=liner
 # ARG_CONTAINER_HOSTNAME?=$(shell echo $(ARG_CONTAINER_NAME) | tr a-z A-Z)
 ARG_CONTAINER_HOSTNAME?=$(ARG_CONTAINER_NAME)
-#-------------------------------------------------------------------------------
+
+# Container user permission
 ARG_PUID?=$(shell id -u)
 ARG_PGID?=$(shell id -g)
-#-------------------------------------------------------------------------------
-ARG_PORT_SSH?=32769
-ARG_PORT_TENSORBOARD?=9206
-#-------------------------------------------------------------------------------
+
+# Container network preference
+ARG_PORT_SSH?=32770
+ARG_PORT_TENSORBOARD?=9207
+
+# Container mount point
 ARG_WORKSPACE_HOST?=$(realpath ../..)
 ARG_WORKSPACE_CONTAINER?=/home/Workspace
 
-#*******************************************************************************
-# $ make xxx
-#-------------------------------------------------------------------------------
-_build: ## 로컬에 도커 이미지를 만듭니다.
-	docker build -t $(ARG_IMAGE_NAME) \
+_build:
+	docker build --no-cache -t $(ARG_IMAGE_NAME) \
 		-f Dockerfile .
 
-_push: ## [관리자 전용] 이미지를 레지스트리에 push 합니다.
+_push:
 	docker push $(ARG_IMAGE_NAME)
 
-pull: ## 레지스트리에서 이미지를 받아옵니다.
+pull:
 	docker pull $(ARG_IMAGE_NAME)
 
-run: ## 도커 컨테이너를 실행합니다. (고정 포트 연결)
+run:
 	$(DOCKER) run -d --restart=unless-stopped \
 		--name $(ARG_CONTAINER_NAME) \
 		--ipc=host \
@@ -49,31 +51,31 @@ run: ## 도커 컨테이너를 실행합니다. (고정 포트 연결)
 		--runtime=nvidia \
 		$(ARG_IMAGE_NAME)
 
-start: ## 컨테이너를 시작합니다.
+start:
 	docker start $(ARG_CONTAINER_NAME)
 
-stop: ## 컨테이너를 중지합니다.
+stop:
 	docker stop $(ARG_CONTAINER_NAME)
 
-rm: stop ## 컨테이너를 중지하고 삭제합니다.
+rm: stop 
 	docker rm $(ARG_CONTAINER_NAME)
 
-copyauth: ## 호스트의 authrized_keys를 컨테이너에 복사 (as jpong)
+copyauth:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
 	$(eval SSH_PORT := $(shell docker port $(ARG_CONTAINER_NAME) | grep 22/ | sed 's/.*0.0.0.0://g' | sed 's/->.*//g'))
 	scp -P $(SSH_PORT) $(HOME)/.ssh/authorized_keys jpong@$(HOST_IP):/home/jpong/.ssh
 
-ssh: ## 컨테이너에 SSH 연결 (as jpong)
+ssh:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
 	$(eval SSH_PORT := $(shell docker port $(ARG_CONTAINER_NAME) | grep 22/ | sed 's/.*0.0.0.0://g' | sed 's/->.*//g'))
 	ssh jpong@$(HOST_IP) -p $(SSH_PORT)
 
-sshroot: ## 컨테이너에 SSH 연결 (as root)
+sshroot:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
 	$(eval SSH_PORT := $(shell docker port $(ARG_CONTAINER_NAME) | grep 22/ | sed 's/.*0.0.0.0://g' | sed 's/->.*//g'))
 	ssh root@$(HOST_IP) -p $(SSH_PORT)
 
-info: ## SSH로 컨테이너에 연결할 때 사용할 커맨드 등 출력
+info:
 	$(info ----------------------------------------)
 	$(info ARG_IMAGE_NAME          = $(ARG_IMAGE_NAME))
 	$(info ARG_CONTAINER_NAME      = $(ARG_CONTAINER_NAME))
@@ -91,25 +93,23 @@ info: ## SSH로 컨테이너에 연결할 때 사용할 커맨드 등 출력
 	$(info HINT: ssh-keygen -t rsa -b 4096 -C "$$(id -un)[$$(id -u)-$$(id -g)]@$$(hostname)")
 	$(info HINT: ssh-copy-id -i ~/.ssh/id_rsa.pub jpong@$(HOST_IP) -p $(SSH_PORT))
 	$(info ----------------------------------------)
-	$(info ==> ssh username@$(HOST_IP) -p $(SSH_PORT))
-	$(info ----------------------------------------)
 
-logs: ## 컨테이너 내부의 로그를 봅니다.
+logs:
 	docker logs $(ARG_CONTAINER_NAME)
 
-env: ## EXEC: 컨테이너 내부의 도커 환경을 봅니다. (as jpong)
+env:
 	docker exec -u $(ARG_PUID):$(ARG_PGID) $(ARG_CONTAINER_NAME) env
 
-bash: ## EXEC: 컨테이너 내부의 bash 실행 (as jpong)
+bash:
 	docker exec -it -u $(ARG_PUID):$(ARG_GUID) $(ARG_CONTAINER_NAME) bash
 
-bashroot: ## EXEC: 컨테이너 내부의 bash 실행 (as root)
+bashroot:
 	docker exec -it $(ARG_CONTAINER_NAME) bash
 
-piplist: ## EXEC: 컨테이너 내부의 pip list 실행 (as jpong)
+piplist:
 	docker exec -u $(ARG_PUID):$(ARG_PGID) $(ARG_CONTAINER_NAME) pip list
 
-cat: ## Makefile 출력
+cat:
 	@cat Makefile
 
 help:
