@@ -5,15 +5,15 @@ set -e
 set -u
 set -o pipefail
 
-train_set="train_960"
+train_set="train"
 valid_set="dev"
-test_sets="test_clean test_other dev_clean dev_other"
+test_sets="test"
 
 asr_config=conf/tuning/train_asr_transformer3.yaml
 lm_config=conf/tuning/train_lm_adam.yaml
 inference_config=conf/decode_asr.yaml
 
-./asr.sh \
+./ttt.sh \
     --lang en \
     --ngpu 4 \
     --nbpe 5000 \
