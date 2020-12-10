@@ -1,1 +1,1 @@
-../../../../../tools/espnet/utils/make_stft.sh
+../../../../../utils/make_stft.sh

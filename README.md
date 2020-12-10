@@ -40,6 +40,18 @@ cd tools
 ./meta_installers/install_espnet.sh
 ```
 
+### 4. Installaion of hynet for customizing egs
+```bash
+cd tools
+
+./meta_installers/install_hynet.sh
+```
+
+## Make custom example with task
+```bash
+cp -r tools/espnet/egs2/TEMPLATE/asr1/* egs/TEMPLATE/asr1/
+```
+
 ## Bugfix
 
 ```bash

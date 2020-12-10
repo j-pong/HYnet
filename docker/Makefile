@@ -9,8 +9,8 @@ DOCKER=docker
 # JUPYTER=lab
 
 # Docker configuration
-ARG_IMAGE_NAME?=kt-docker:base
-ARG_CONTAINER_NAME?=liner
+ARG_IMAGE_NAME?=hynet2/cuda:base
+ARG_CONTAINER_NAME?=jpong
 # ARG_CONTAINER_HOSTNAME?=$(shell echo $(ARG_CONTAINER_NAME) | tr a-z A-Z)
 ARG_CONTAINER_HOSTNAME?=$(ARG_CONTAINER_NAME)
 

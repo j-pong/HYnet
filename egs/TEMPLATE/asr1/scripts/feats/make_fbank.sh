@@ -1,1 +1,1 @@
-../../../../../tools/espnet/utils/make_fbank.sh
+../../../../../utils/make_fbank.sh

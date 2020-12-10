@@ -9,6 +9,12 @@ hynet.egg-info/top_level.txt
 hynet/bin/__init__.py
 hynet/bin/imgr_train.py
 hynet/imgr/__init__.py
-hynet/imgr/brew_layer.py
 hynet/imgr/imgr_model.py
 hynet/imgr/masked_loss.py
+hynet/layers/__init__.py
+hynet/layers/brew.py
+hynet/layers/ig.py
+hynet/schedulers/__init__.py
+hynet/schedulers/abs_scheduler.py
+hynet/schedulers/noam_lr.py
+hynet/schedulers/warmup_lr.py

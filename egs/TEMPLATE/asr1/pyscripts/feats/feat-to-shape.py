@@ -1,1 +1,1 @@
-../../../../../tools/espnet/utils/feat-to-shape.py
+../../../../../utils/feat-to-shape.py
