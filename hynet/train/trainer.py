@@ -52,6 +52,7 @@ class ImgrTrainer(Trainer):
         val_scheduler_criterion: Sequence[str],
         trainer_options,
         distributed_option: DistributedOption,
+        find_unused_parameters: bool = False,
     ) -> None:
         """Perform training. This method performs the main process of training."""
         assert check_argument_types()
