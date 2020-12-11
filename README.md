@@ -54,12 +54,13 @@ cp -r tools/espnet/egs2/TEMPLATE/asr1/* egs/TEMPLATE/asr1/
 
 ## Bugfix
 
-```bash
 ctc_segmentation/ctc_segmentation_dyn.pyx error
-```
-Remove ctc_segmentation at tools/espnet/setup.py that is included in requirements
+- Remove ctc_segmentation at tools/espnet/setup.py that is included in requirements
 
+ctc install error with pip version
 ```bash
-matplotlib version error
+pip install pip==19; pip install warpctc-pytorch==0.2.1+torch16.cuda102
 ```
-Remove matplotlib at tools/espnet/setup.py that is included in requirements
+
+matplotlib version error
+- Remove matplotlib at tools/espnet/setup.py that is included in requirements
