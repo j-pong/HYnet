@@ -5,7 +5,7 @@
 .\#*
 *DS_Store
 out.txt
-hynet.egg-info/
+hynet.egg-info
 doc/_build
 slurm-*.out
 tmp*
