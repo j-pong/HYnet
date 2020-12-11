@@ -6,7 +6,6 @@ from setuptools import setup
 requirements = {
     "install": [
         "kaldi_io",
-        "matplotlib",
         "opencv-python==3.4.*",
         "opencv-contrib-python==3.4.*"
     ],
