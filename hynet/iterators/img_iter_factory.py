@@ -33,6 +33,8 @@ class ImgrIterFactory(AbsIterFactory):
         self.pin_memory = pin_memory
 
     def build_iter(self, epoch: int, shuffle: bool = None) -> DataLoader:
+        set_all_random_seed(self.seed)
+
         if shuffle is None:
             shuffle = self.shuffle
 
@@ -40,8 +42,6 @@ class ImgrIterFactory(AbsIterFactory):
             kwargs = dict(collate_fn=self.collate_fn)
         else:
             kwargs = {}
-
-        set_all_random_seed(self.seed)
 
         return DataLoader(
             dataset=self.dataset,

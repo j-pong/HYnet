@@ -14,8 +14,8 @@ keep_nbest_models: 10
 
 scheduler: steplr
 scheduler_conf:
-    step_size: 60
-    gamma: 0.2
+    step_size: 150
+    gamma: 0.1
 
 optim: sgd
 optim_conf:

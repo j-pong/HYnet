@@ -161,7 +161,6 @@ class ImgrTask(AbsTask):
         else:
             ValueError("{} is not implemented!".format(mode))
 
-        
         if args.dataset == 'mnist':
             transform = transforms.Compose([
                     transforms.ToTensor(),
@@ -210,7 +209,7 @@ class ImgrTask(AbsTask):
         return ImgrIterFactory(
             dataset=dataset,
             batch_size=args.batch_size,
-            seed=args.seed+torch.cuda.current_device(),
+            seed= args.seed if args.dist_rank is None else args.seed + args.dist_rank,  # pseudo splited the data for distributed mode
             num_iters_per_epoch=iter_options.num_iters_per_epoch,
             shuffle=iter_options.train,
             num_workers=args.num_workers,

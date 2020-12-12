@@ -28,6 +28,7 @@ SECONDS=0
 stage=1              # Processes starts from the specified stage.
 stop_stage=10000     # Processes is stopped at the specified stage.
 skip_train=false     # Skip training stages
+skip_eval=false
 ngpu=4               # The number of gpus ("0" uses cpu, otherwise use gpu).
 ngpu_id=0,1,2,3
 num_nodes=1          # The number of nodes
@@ -90,15 +91,13 @@ if ! "${skip_train}"; then
 
         _opts=
         if [ -n "${imgr_config}" ]; then
-            # To generate the config file: e.g.
-            #   % python3 -m espnet2.bin.asr_train --print_config --optim adam
             _opts+="--config ${imgr_config} "
         fi
 
         mkdir -p "${imgr_exp}"
 
         # NOTE(kamo): --fold_length is used only if --batch_type=folded and it's ignored in the other case
-        log "ASR training started... log: '${imgr_exp}/train.log'"
+        log "IMGR training started... log: '${imgr_exp}/train.log'"
         if echo "${cuda_cmd}" | grep -e queue.pl -e queue-freegpu.pl &> /dev/null; then
             # SGE can't include "/" in a job name
             jobname="$(basename ${imgr_exp})"
@@ -118,6 +117,39 @@ if ! "${skip_train}"; then
                                                       --resume ${resume} \
                                                       --output_dir "${imgr_exp}" \
                                                       ${_opts} ${imgr_args}
+    fi
+
+    if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
+        log "Stage 2: IMGR Inference"
+
+        _opts=
+        if [ -n "${imgr_config}" ]; then
+            _opts+="--config ${imgr_config} "
+        fi
+
+        mkdir -p "${imgr_exp}"
+
+        # NOTE(kamo): --fold_length is used only if --batch_type=folded and it's ignored in the other case
+        log "IMGR inference started... log: '${imgr_exp}/decode.log'"
+        if echo "${cuda_cmd}" | grep -e queue.pl -e queue-freegpu.pl &> /dev/null; then
+            # SGE can't include "/" in a job name
+            jobname="$(basename ${imgr_exp})"
+        else
+            jobname="${imgr_exp}/decode.log"
+        fi
+
+        # shellcheck disable=SC2086
+        ${python} -m espnet2.bin.launch \
+            --cmd "${cuda_cmd} --name ${jobname}" \
+            --log "${imgr_exp}"/decode.log \
+            --ngpu 1 \
+            --num_nodes "${num_nodes}" \
+            --init_file_prefix "${imgr_exp}"/.dist_init_ \
+            --multiprocessing_distributed true -- \
+            ${python} -m hynet.bin.imgr_inference \
+                        --resume true \
+                        --output_dir "${imgr_exp}" \
+                        ${_opts} ${imgr_args}                                              
 
     fi
 else

@@ -80,17 +80,22 @@ class ImgrTrainer(Trainer):
                     if distributed_option.ngpu == 1
                     else None
                 ),
+                find_unused_parameters=find_unused_parameters,
             )
         elif distributed_option.ngpu > 1:
             dp_model = torch.nn.parallel.DataParallel(
-                model, device_ids=list(range(distributed_option.ngpu)),
+                model,
+                device_ids=list(range(distributed_option.ngpu)),
+                find_unused_parameters=find_unused_parameters,
             )
         else:
             # NOTE(kamo): DataParallel also should work with ngpu=1,
             # but for debuggability it's better to keep this block.
             dp_model = model
 
-        if not distributed_option.distributed or distributed_option.dist_rank == 0:
+        if trainer_options.use_tensorboard and (
+            not distributed_option.distributed or distributed_option.dist_rank == 0
+        ):
             summary_writer = SummaryWriter(str(output_dir / "tensorboard"))
         else:
             summary_writer = None
@@ -127,16 +132,14 @@ class ImgrTrainer(Trainer):
                     options=trainer_options,
                 )
 
-            with reporter.observe("valid") as sub_reporter:
-                cls.validate_one_epoch(
-                    model=dp_model,
-                    output_dir=output_dir / "brew_ws",
-                    iterator=valid_iter_factory.build_iter(iepoch),
-                    reporter=sub_reporter,
-                    options=trainer_options
-                )
-            # logging.info(reporter.log_message())
-            # exit()
+            if not distributed_option.distributed or distributed_option.dist_rank == 0:
+                with reporter.observe("valid") as sub_reporter:
+                    cls.validate_one_epoch(
+                        model=dp_model,
+                        iterator=valid_iter_factory.build_iter(iepoch),
+                        reporter=sub_reporter,
+                        options=trainer_options
+                    )
 
             # 2. LR Scheduler step
             for scheduler in schedulers:
@@ -149,7 +152,10 @@ class ImgrTrainer(Trainer):
                 # 3. Report the results
                 logging.info(reporter.log_message())
                 reporter.matplotlib_plot(output_dir / "images")
-                reporter.tensorboard_add_scalar(summary_writer)
+                if summary_writer is not None:
+                    reporter.tensorboard_add_scalar(summary_writer)
+                if trainer_options.use_wandb:
+                    reporter.wandb_log()
 
                 # 4. Save/Update the checkpoint
                 torch.save(
@@ -228,12 +234,12 @@ class ImgrTrainer(Trainer):
         else:
             logging.info(f"The training was finished at {max_epoch} epochs ")
 
+
     @classmethod
     @torch.no_grad()
     def validate_one_epoch(
         cls,
         model: torch.nn.Module,
-        output_dir: Optional[Path],
         iterator: Iterable[Dict[str, torch.Tensor]],
         reporter: SubReporter,
         options: TrainerOptions
@@ -241,61 +247,20 @@ class ImgrTrainer(Trainer):
         assert check_argument_types()
         ngpu = options.ngpu
         no_forward_run = options.no_forward_run
-        distributed = isinstance(model, torch.nn.parallel.DistributedDataParallel)
 
         model.eval()
-
         # [For distributed] Because iteration counts are not always equals between
         # processes, send stop-flag to the other processes if iterator is finished
-        plot_flag = True
         iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
-        for (ids, batch) in iterator:
+        for (_, batch) in iterator:
             assert isinstance(batch, dict), type(batch)
-            if distributed:
-                torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)
-                if iterator_stop > 0:
-                    break
 
             batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
             if no_forward_run:
                 continue
 
             _, stats, weight = model(**batch)
-
-            # plot with stats
-            # Todo(j-pong): image id check and report attention with image
-            if plot_flag:
-                import matplotlib.pyplot as plt
-                img_list = stats['aux']
-                col_max = len(img_list)
-                row_max = len(img_list[0])
-                for idx in range(3):
-                    plt.clf()
-                    for i in range(col_max):
-                        for j, img in enumerate(img_list[i]):
-                            plt.subplot(col_max, row_max, i * row_max + (j + 1))
-                            plt.imshow(img[idx].detach().cpu().numpy(), cmap='seismic')
-                            plt.colorbar()
-                            # if idx == 1 and i == 2 and j == 2:
-                            #     # print(img[idx].detach().cpu().numpy())
-                            #     exit()
-
-                    if output_dir is not None:
-                        p = output_dir / f"valid_{ids[idx]}" / f"{ids[idx]}_{reporter.get_epoch()}ep.png"
-                        p.parent.mkdir(parents=True, exist_ok=True)
-                        plt.savefig(p)
-                plot_flag=False
             del stats['aux']
-
-            if ngpu > 1 or distributed:
-                # Apply weighted averaging for stats.
-                # if distributed, this method can also apply all_reduce()
-                stats, weight = recursive_average(stats, weight, distributed)
 
             reporter.register(stats, weight)
             reporter.next()
-
-        else:
-            if distributed:
-                iterator_stop.fill_(1)
-                torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)

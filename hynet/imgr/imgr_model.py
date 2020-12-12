@@ -22,7 +22,7 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 from hynet.imgr.encoders.cifar_vgg_encoder import EnDecoder
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
-from captum.attr import Saliency
+from captum.attr import Saliency, GuidedBackprop
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
@@ -274,9 +274,15 @@ class HynetImgrModel(AbsESPnetModel):
                         attr_bg = bg.attribute(image,
                                                layer=focused_layer,
                                                target=label)
-                        attn = attr_bg.squeeze()
 
+                        attn = attr_bg.squeeze()
                         loss_brew = bg.loss_brew
+                    elif self.xai_mode == 'gbp':
+                        gbp = GuidedBackprop(self.model)
+                        attr_bg = gbp.attribute(image,
+                                                target=label)
+                        attn = attr_bg.squeeze()
+                        loss_brew = 0.0
                     # recasting to float type
                     attn = attn.detach().float()
 
