@@ -19,8 +19,8 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
-# from hynet.imgr.models.vgg import EnDecoder
-from hynet.imgr.models.resnet import EnDecoder
+from hynet.imgr.models.vgg import EnDecoder as Vgg
+from hynet.imgr.models.resnet import EnDecoder as Resnet
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency, GuidedBackprop
@@ -72,12 +72,19 @@ class HynetImgrModel(AbsESPnetModel):
         self.out_ch = out_ch
 
         # network archictecture 
-        self.model = EnDecoder(in_channels=self.in_ch,
-                               num_classes=self.out_ch,
-                               batch_norm=self.batch_norm,
-                               bias=self.bias,
-                               model_type=self.cfg_type)
-                               
+        if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn101_2':
+            self.model = Resnet(in_channels=self.in_ch,
+                                num_classes=self.out_ch,
+                                batch_norm=self.batch_norm,
+                                bias=self.bias,
+                                model_type=self.cfg_type)
+        else:
+            self.model = Vgg(in_channels=self.in_ch,
+                             num_classes=self.out_ch,
+                             batch_norm=self.batch_norm,
+                             bias=self.bias,
+                             model_type=self.cfg_type)
+                                
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
 

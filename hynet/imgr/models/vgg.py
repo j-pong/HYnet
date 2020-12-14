@@ -4,6 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from hynet.layers.batchnorm_wobias import BatchNorm2d
 from hynet.imgr.models.brew_module import BrewModel, BrewModuleList
 
 cfgs = {
@@ -29,7 +30,7 @@ def make_layers(in_channels , cfg, batch_norm=False, bias=False):
         else:
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, bias=bias)
             if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), activation()]
+                layers += [conv2d, BatchNorm2d(v), activation()]
             else:
                 layers += [conv2d, activation()]
             in_channels = v
@@ -96,9 +97,10 @@ class EnDecoder(BrewModel):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 if m.bias is not None:
