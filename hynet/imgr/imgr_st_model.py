@@ -19,8 +19,7 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
-# from hynet.imgr.models.vgg import EnDecoder
-from hynet.imgr.models.resnet import EnDecoder
+from hynet.imgr.models.cifar_vgg import EnDecoder
 
 from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
 from captum.attr import Saliency, GuidedBackprop
@@ -77,6 +76,19 @@ class HynetImgrModel(AbsESPnetModel):
                                batch_norm=self.batch_norm,
                                bias=self.bias,
                                model_type=self.cfg_type)
+
+        self.model_st = EnDecoder(in_channels=self.in_ch,
+                                  num_classes=self.out_ch,
+                                  bias=self.bias,
+                                  model_type='B0')
+
+        if not st_excute:
+            for param in self.model_st.parameters():
+                param.requires_grad = False
+        else:
+            for param in self.model.parameters():
+                param.requires_grad = False
+
                                
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
@@ -116,8 +128,11 @@ class HynetImgrModel(AbsESPnetModel):
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
-        focused_layer = self.model.focused_layer
+        # Todo(j-pong): we should change index of layer to not 0 at not bg
+        focused_layer = self.model.encoder[0]
+        # focused_layer_st = self.model_st.encoder[0]
         attn_hook_handle = None
+        # attn_hook_handle_st = None
 
         for i in range(self.max_iter):
             # 1. preprocessing with each iteration
@@ -127,15 +142,31 @@ class HynetImgrModel(AbsESPnetModel):
                     def attn_apply(self, x):
                         return x[0] * mask_prod
                     attn_hook_handle = focused_layer.register_forward_pre_hook(attn_apply)
+                    # attn_hook_handle_st = focused_layer_st.register_forward_pre_hook(attn_apply)
             # 2. feedforward
             logit = self.model(image)
+            logit_st = self.model_st(image)
             
             # 3. caculate measurment
+            ## 3.0. check parameter norm
+            # parm_norm = 0.0
+            # for name, param in self.model.named_parameters():
+            #     if param.requires_grad:
+            #         parm_abs = param.data.abs()
+            #         m = parm_abs.mean()
+            #         var = parm_abs.var()
+            #         parm_norm += var
+            ## 3.1. Teacher model for making attributions
             if i == 0:
                 # classification ce-loss
                 losses.append(self.criterion(logit, label))
             acc = self._calc_acc(logit, label)        
             logger['accs'].append(acc)
+            ## 3.2. Student model for traiing attributions
+            if self.xai_excute and self.st_excute:
+                if i == (self.max_iter - 1):                    
+                    losses.append(self.criterion(logit_st, label))
+            acc_st = self._calc_acc(logit_st, label)
 
             # 4. attribution with gradient-based methods
             if self.xai_excute:
@@ -264,6 +295,8 @@ class HynetImgrModel(AbsESPnetModel):
                 # flush hook handle
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
+                if attn_hook_handle_st is not None:
+                    attn_hook_handle_st.remove()
 
                 # 5. for logging
                 if not self.training:
@@ -289,12 +322,13 @@ class HynetImgrModel(AbsESPnetModel):
                     loss_brew=loss_brew,
                     acc_iter0=logger['accs'][0],
                     acc_iter1=logger['accs'][1],
-                    acc_iter_last=logger['accs'][2]
+                    acc_iter_last=logger['accs'][2],
+                    acc_st=acc_st
                 )
         else:
             stats = dict(
                     loss=loss.detach(),
-                    acc_iter0=logger['accs'][0]
+                    acc_start=logger['accs'][0]
                 )
                 
         if not self.training:

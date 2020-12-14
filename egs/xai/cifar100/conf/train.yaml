@@ -14,7 +14,7 @@ keep_nbest_models: 10
 
 scheduler: steplr
 scheduler_conf:
-    step_size: 150
+    step_size: 100
     gamma: 0.1
 
 optim: sgd
@@ -30,5 +30,5 @@ st_excute: 0
 
 bias: 0
 batch_norm: 0
-cfg_type: D
+cfg_type: wrn50_2
 

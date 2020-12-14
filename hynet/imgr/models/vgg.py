@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from hynet.layers.brew import BrewModel, BrewModuleList
+from hynet.imgr.models.brew_module import BrewModel, BrewModuleList
 
 cfgs = {
     'A':  [64,     'M', 128,      'M', 256, 256,           'M', 512, 512,           'M', 512, 512,           'M'],
@@ -68,6 +68,8 @@ class EnDecoder(BrewModel):
             nn.Dropout(),
             nn.Linear(4096, num_classes, bias=bias)
         ])
+
+        self.focused_layer = self.encoder[0]
 
         # check network wrong classification case
         def all_zero_hook(self, input, result):
