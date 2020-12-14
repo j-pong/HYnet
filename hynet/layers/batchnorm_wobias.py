@@ -25,7 +25,8 @@ class BatchNorm2d(nn.BatchNorm2d):
         # calculate running estimates
         if self.training:
             mean = input.mean([0, 2, 3])
-            var = input.var([0, 2, 3], unbiased=True) # unbiased really need?
+            # use biased var in train
+            var = input.var([0, 2, 3], unbiased=False)
             n = input.numel() / input.size(1)
             with torch.no_grad():
                 # self.running_mean = exponential_average_factor * mean\
