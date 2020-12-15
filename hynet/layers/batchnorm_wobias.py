@@ -42,6 +42,7 @@ class BatchNorm2d(nn.BatchNorm2d):
         else:
             bn_training = (self.running_mean is None) and (self.running_var is None)
 
+        # cehck without bias setting
         if (self.running_mean.sum() != 0) or (self.bias.sum() != 0):
             raise ValueError("bias and running_mean something goes wrong : {} {}".format(self.running_mean.sum(), self.bias.sum()))
 
