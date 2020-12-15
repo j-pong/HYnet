@@ -132,14 +132,13 @@ class ImgrTrainer(Trainer):
                     options=trainer_options,
                 )
 
-            if not distributed_option.distributed or distributed_option.dist_rank == 0:
-                with reporter.observe("valid") as sub_reporter:
-                    cls.validate_one_epoch(
-                        model=dp_model,
-                        iterator=valid_iter_factory.build_iter(iepoch),
-                        reporter=sub_reporter,
-                        options=trainer_options
-                    )
+            with reporter.observe("valid") as sub_reporter:
+                cls.validate_one_epoch(
+                    model=dp_model,
+                    iterator=valid_iter_factory.build_iter(iepoch),
+                    reporter=sub_reporter,
+                    options=trainer_options
+                )
 
             # 2. LR Scheduler step
             for scheduler in schedulers:

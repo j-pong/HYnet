@@ -29,16 +29,6 @@ from captum.attr import NoiseTunnel
 
 from hynet.attr.bg import BrewGradient
 
-
-def attribute_image_features(net, target, algorithm, input, **kwargs):
-    # net.zero_grad()
-    tensor_attributions = algorithm.attribute(input,
-                                              target=target,
-                                              **kwargs
-                                             )
-    
-    return tensor_attributions
-
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
 
