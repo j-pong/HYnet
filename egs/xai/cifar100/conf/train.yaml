@@ -4,13 +4,13 @@ out_ch: 100
 
 accum_grad: 1
 max_epoch: 200
-batch_size: 50
+batch_size: 1000
 
 best_model_criterion:
 -   - valid
     - acc
     - max
-keep_nbest_models: 10
+keep_nbest_models: 1
 
 scheduler: multisteplr
 scheduler_conf:

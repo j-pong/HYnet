@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from hynet.layers.batchnorm_wobias import BatchNorm2d
+from hynet.layers.batchnorm_wobias import BatchNorm2d # BatchNorm2d = nn.BatchNorm2d
 from hynet.imgr.models.brew_module import BrewModel, BrewModuleList
 
 cfgs = {

@@ -241,18 +241,24 @@ class ImgrTrainer(Trainer):
         model: torch.nn.Module,
         iterator: Iterable[Dict[str, torch.Tensor]],
         reporter: SubReporter,
-        options: TrainerOptions
+        options: TrainerOptions,
     ) -> None:
         assert check_argument_types()
         ngpu = options.ngpu
         no_forward_run = options.no_forward_run
+        distributed = isinstance(model, torch.nn.parallel.DistributedDataParallel)
 
         model.eval()
+
         # [For distributed] Because iteration counts are not always equals between
         # processes, send stop-flag to the other processes if iterator is finished
         iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
         for (_, batch) in iterator:
             assert isinstance(batch, dict), type(batch)
+            if distributed:
+                torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)
+                if iterator_stop > 0:
+                    break
 
             batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
             if no_forward_run:
@@ -260,6 +266,15 @@ class ImgrTrainer(Trainer):
 
             _, stats, weight = model(**batch)
             del stats['aux']
+            if ngpu > 1 or distributed:
+                # Apply weighted averaging for stats.
+                # if distributed, this method can also apply all_reduce()
+                stats, weight = recursive_average(stats, weight, distributed)
 
             reporter.register(stats, weight)
             reporter.next()
+
+        else:
+            if distributed:
+                iterator_stop.fill_(1)
+                torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)

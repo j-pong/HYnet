@@ -10,12 +10,11 @@ class BatchNorm2d(nn.BatchNorm2d):
 
         # without bias setting with learable parameter of bn
         self.bias.requires_grad = False
+        
+        self.hardship = False
 
     def forward(self, input):
         self._check_input_dim(input)
-
-        # without bias setting with buffer parameter of bn
-        self.running_mean = self.running_mean - self.running_mean
 
         # exponential_average_factor is set to self.momentum
         # (when it is available) only so that it gets updated
@@ -34,25 +33,32 @@ class BatchNorm2d(nn.BatchNorm2d):
                 else:  # use exponential moving average
                     exponential_average_factor = self.momentum
 
-        """ Decide whether the mini-batch stats should be used for normalization rather than the buffers.
-        Mini-batch stats are used in training mode, and in eval mode when buffers are None.
-        """
+        # calculate running estimates
         if self.training:
-            bn_training = True
+            mean = input.mean([0, 2, 3])
+            # use biased var in train
+            var = input.var([0, 2, 3], unbiased=False)
+            n = input.numel() / input.size(1)
+            with torch.no_grad():
+                # self.running_mean = exponential_average_factor * mean\
+                #     + (1 - exponential_average_factor) * self.running_mean
+                # update running_var with unbiased var
+                self.running_var = exponential_average_factor * var * n / (n - 1)\
+                    + (1 - exponential_average_factor) * self.running_var
         else:
-            bn_training = (self.running_mean is None) and (self.running_var is None)
+            mean = self.running_mean
+            var = self.running_var
+
+        denorm  = torch.sqrt(var[None, :, None, None] + self.eps)
+        if self.hardship:
+            input = (input - mean[None, :, None, None]) / denorm
+        else:
+            input = input / denorm
+        if self.affine:
+            input = input * self.weight[None, :, None, None] + self.bias[None, :, None, None]
 
         # cehck without bias setting
         if (self.running_mean.sum() != 0) or (self.bias.sum() != 0):
             raise ValueError("bias and running_mean something goes wrong : {} {}".format(self.running_mean.sum(), self.bias.sum()))
 
-        """Buffers are only updated if they are to be tracked and we are in training mode. Thus they only need to be
-        passed when the update should occur (i.e. in training mode when they are tracked), or when buffer stats are
-        used for normalization (i.e. in eval mode when buffers are not None).
-        """
-        return F.batch_norm(
-            input,
-            # If buffers are not to be tracked, ensure that they won't be updated
-            self.running_mean if not self.training or self.track_running_stats else None,
-            self.running_var if not self.training or self.track_running_stats else None,
-            self.weight, self.bias, bn_training, exponential_average_factor, self.eps)
+        return input
