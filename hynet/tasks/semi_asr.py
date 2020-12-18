@@ -133,6 +133,14 @@ class ASRTask(AbsTask):
         required += ["token_list"]
 
         group.add_argument(
+            "--train_pseudo_data_path_and_name_and_type",
+            type=str2triple_str,
+            action="append",
+            default=[]
+        )
+        group.add_argument("--train_pseudo_shape_file", type=str, action="append", default=[])
+
+        group.add_argument(
             "--token_list",
             type=str_or_none,
             default=None,
@@ -355,6 +363,107 @@ class ASRTask(AbsTask):
         return model
 
     @classmethod
+    def build_iter_options(
+        cls,
+        args: argparse.Namespace,
+        distributed_option: DistributedOption,
+        mode: str,
+    ):
+        if mode == "train":
+            preprocess_fn = cls.build_preprocess_fn(args, train=True)
+            collate_fn = cls.build_collate_fn(args, train=True)
+            data_path_and_name_and_type = args.train_data_path_and_name_and_type
+            shape_files = args.train_shape_file
+            batch_size = args.batch_size
+            batch_bins = args.batch_bins
+            batch_type = args.batch_type
+            max_cache_size = args.max_cache_size
+            max_cache_fd = args.max_cache_fd
+            distributed = distributed_option.distributed
+            num_batches = None
+            num_iters_per_epoch = args.num_iters_per_epoch
+            train = True
+        
+        elif mode == "pseudo":
+            preprocess_fn = cls.build_preprocess_fn(args, train=True)
+            collate_fn = cls.build_collate_fn(args, train=True)
+            data_path_and_name_and_type = args.train_pseudo_data_path_and_name_and_type
+            shape_files = args.train_pseudo_shape_file
+            batch_size = args.batch_size
+            batch_bins = args.batch_bins
+            batch_type = args.batch_type
+            max_cache_size = args.max_cache_size
+            max_cache_fd = args.max_cache_fd
+            distributed = distributed_option.distributed
+            num_batches = None
+            num_iters_per_epoch = args.num_iters_per_epoch
+            train = True
+
+        elif mode == "valid":
+            preprocess_fn = cls.build_preprocess_fn(args, train=False)
+            collate_fn = cls.build_collate_fn(args, train=False)
+            data_path_and_name_and_type = args.valid_data_path_and_name_and_type
+            shape_files = args.valid_shape_file
+
+            if args.valid_batch_type is None:
+                batch_type = args.batch_type
+            else:
+                batch_type = args.valid_batch_type
+            if args.valid_batch_size is None:
+                batch_size = args.batch_size
+            else:
+                batch_size = args.valid_batch_size
+            if args.valid_batch_bins is None:
+                batch_bins = args.batch_bins
+            else:
+                batch_bins = args.valid_batch_bins
+            if args.valid_max_cache_size is None:
+                # Cache 5% of maximum size for validation loader
+                max_cache_size = 0.05 * args.max_cache_size
+            else:
+                max_cache_size = args.valid_max_cache_size
+            max_cache_fd = args.max_cache_fd
+            distributed = distributed_option.distributed
+            num_batches = None
+            num_iters_per_epoch = None
+            train = False
+
+        elif mode == "plot_att":
+            preprocess_fn = cls.build_preprocess_fn(args, train=False)
+            collate_fn = cls.build_collate_fn(args, train=False)
+            data_path_and_name_and_type = args.valid_data_path_and_name_and_type
+            shape_files = args.valid_shape_file
+            batch_type = "unsorted"
+            batch_size = 1
+            batch_bins = 0
+            num_batches = args.num_att_plot
+            max_cache_fd = args.max_cache_fd
+            # num_att_plot should be a few sample ~ 3, so cache all data.
+            max_cache_size = np.inf if args.max_cache_size != 0.0 else 0.0
+            # always False because plot_attention performs on RANK0
+            distributed = False
+            num_iters_per_epoch = None
+            train = False
+        else:
+            raise NotImplementedError(f"mode={mode}")
+
+        return IteratorOptions(
+            preprocess_fn=preprocess_fn,
+            collate_fn=collate_fn,
+            data_path_and_name_and_type=data_path_and_name_and_type,
+            shape_files=shape_files,
+            batch_type=batch_type,
+            batch_size=batch_size,
+            batch_bins=batch_bins,
+            num_batches=num_batches,
+            max_cache_size=max_cache_size,
+            max_cache_fd=max_cache_fd,
+            distributed=distributed,
+            num_iters_per_epoch=num_iters_per_epoch,
+            train=train,
+        )
+
+    @classmethod
     def main_worker(cls, args: argparse.Namespace):
         assert check_argument_types()
 
@@ -539,6 +648,13 @@ class ASRTask(AbsTask):
                     distributed_option=distributed_option,
                     mode="train",
                 )
+
+            train_pseudo_iter_factory = cls.build_iter_factory(
+                    args=args,
+                    distributed_option=distributed_option,
+                    mode="pseudo",
+            )
+
             valid_iter_factory = cls.build_iter_factory(
                 args=args,
                 distributed_option=distributed_option,
@@ -552,9 +668,6 @@ class ASRTask(AbsTask):
                 )
             else:
                 plot_attention_iter_factory = None
-
-            print(train_iter_factory)
-            exit()
 
             # 9. Start training
             if isinstance(args.keep_nbest_models, int):
@@ -604,6 +717,7 @@ class ASRTask(AbsTask):
                 optimizers=optimizers,
                 schedulers=schedulers,
                 train_iter_factory=train_iter_factory,
+                train_pseudo_iter_factory=train_pseudo_iter_factory,
                 valid_iter_factory=valid_iter_factory,
                 plot_attention_iter_factory=plot_attention_iter_factory,
                 reporter=reporter,

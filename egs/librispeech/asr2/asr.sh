@@ -989,6 +989,12 @@ if ! "${skip_train}"; then
             _opts+="--train_shape_file ${asr_stats_dir}/train/text_shape.${token_type} "
         fi
 
+        # FIXME(j-pong): Hard coding for instance task
+        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860/${_scp},speech,${_type} "
+        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860/text,text,text "
+        _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/speech_shape "
+        _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/text_shape.${token_type} "
+
         log "Generate '${asr_exp}/run.sh'. You can resume the process from stage 10 using this script"
         mkdir -p "${asr_exp}"; echo "${run_args} --stage 10 \"\$@\"; exit \$?" > "${asr_exp}/run.sh"; chmod +x "${asr_exp}/run.sh"
 
