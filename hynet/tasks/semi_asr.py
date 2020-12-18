@@ -43,7 +43,6 @@ from espnet2.torch_utils.initialize import initialize
 from espnet2.train.class_choices import ClassChoices
 from espnet2.train.collate_fn import CommonCollateFn
 from espnet2.train.preprocessor import CommonPreprocessor
-from espnet2.train.trainer import Trainer
 from espnet2.utils.get_default_kwargs import get_default_kwargs
 from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import int_or_none
@@ -52,6 +51,7 @@ from espnet2.utils.types import str_or_none
 
 from espnet2.tasks.abs_task import *
 from hynet.asr.espnet_model import ESPnetASRModel
+from hynet.train.trainer import PseudoTrainer as Trainer
 
 frontend_choices = ClassChoices(
     name="frontend",
