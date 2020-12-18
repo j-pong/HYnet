@@ -292,3 +292,78 @@ class ESPnetASRModel(AbsESPnetModel):
         ys_pad_lens: torch.Tensor,
     ):
         raise NotImplementedError
+
+    @torch.no_grad()
+    def _calc_confidence(
+        self, 
+        ys_in_pad, 
+        ys_out_pad,
+        ys_in_lens, 
+        encoder_out,
+        encoder_out_lens,
+        decoder_out,
+    ):
+        bsz, tsz = ys_in_pad.size()
+        ys_in_pad = ys_in_pad.view(bsz * tsz)
+        
+        # Simulating
+        corrupt_pos = torch.rand_like(ys_in_pad.float()) > 0.9
+        corrupt_ys_in_pad = torch.randint_like(ys_in_pad.float(), low=1, high=5000)
+        ys_in_pad[corrupt_pos] = corrupt_ys_in_pad[corrupt_pos].long()
+        ys_in_pad = ys_in_pad.view(bsz, tsz)
+        
+        decoder_corrupt_out, _ = self.decoder(
+            encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+        )
+
+        # Caculating predictive distribution with corrupted labels
+        pred_dist = torch.softmax(decoder_out, dim=-1)
+        pred_corrupt_dist = torch.softmax(decoder_corrupt_out, dim=-1)
+
+        # Confidence
+        def select_mean_var(x, indces):
+            bsz, tsz = indces.size()
+            select_mean = x.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
+                                                indces.view(bsz * tsz)]
+            # select_var = torch.square(x.view(bsz * tsz, -1) - select_mean.unsqueeze(-1)).sum(-1)
+            select_var = x.var(-1)
+            return select_mean.view(bsz, tsz), select_var.view(bsz, tsz)
+
+        select_mean, select_var = select_mean_var(pred_dist, ys_out_pad)
+        insertion = torch.ones_like(ys_out_pad) * 4999
+        corrupt_ys_out_pad = torch.cat([corrupt_ys_in_pad.view(bsz, tsz)[:,1:], insertion[:,0:1]], dim=-1).view(bsz * tsz)
+        ys_out_pad = ys_out_pad.view(bsz * tsz)
+        ys_out_pad[corrupt_pos] = corrupt_ys_in_pad[corrupt_pos].long()
+        ys_out_pad = ys_out_pad.view(bsz, tsz)
+        select_mean_corrupt, select_var_corrupt = select_mean_var(pred_corrupt_dist, ys_out_pad)
+
+        # Plot the result
+        import matplotlib.pyplot as plt
+
+        plt.clf()
+
+        plt.subplot(3,1,1)
+        plt.title('Predictive probability')
+        plt.xlim(0, ys_out_pad.size(1))
+        plt.plot(select_mean[0].detach().cpu().numpy(), 'D-')
+        plt.plot(select_mean_corrupt[0].detach().cpu().numpy(), 'o-')
+        plt.grid()
+
+        plt.subplot(3,1,2)
+        plt.title('Corrupted label position')
+        plt.xlim(0, ys_out_pad.size(1))
+        plt.plot(corrupt_pos.view(bsz, tsz)[0].detach().cpu().numpy(), 'rD-')
+        plt.grid()
+
+        plt.subplot(3,1,3)
+        plt.title('Corrupted label position')
+        plt.xlim(0, ys_out_pad.size(1))
+        plt.plot(corrupt_pos.view(bsz, tsz)[0].detach().cpu().numpy(), 'rD-')
+        plt.grid()
+
+        plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
+
+        p =  f"test_{pred_dist.device}.png"
+        plt.savefig(p)
+    
+        raise ValueError("This process should be stoped at this line")
