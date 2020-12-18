@@ -101,6 +101,7 @@ class ESPnetASRModel(AbsESPnetModel):
         speech_lengths: torch.Tensor,
         text: torch.Tensor,
         text_lengths: torch.Tensor,
+        mode=None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         """Frontend + Encoder + Decoder + Calc loss
 
@@ -131,7 +132,7 @@ class ESPnetASRModel(AbsESPnetModel):
             loss_att, acc_att, cer_att, wer_att = None, None, None, None
         else:
             loss_att, acc_att, cer_att, wer_att = self._calc_att_loss(
-                encoder_out, encoder_out_lens, text, text_lengths
+                encoder_out, encoder_out_lens, text, text_lengths, mode
             )
 
         # 2b. CTC branch
@@ -241,9 +242,24 @@ class ESPnetASRModel(AbsESPnetModel):
         encoder_out_lens: torch.Tensor,
         ys_pad: torch.Tensor,
         ys_pad_lens: torch.Tensor,
+        mode=None,
     ):
-        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-        ys_in_lens = ys_pad_lens + 1
+        if mode is None:
+            ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+            ys_in_lens = ys_pad_lens + 1
+        elif mode == 'pseudo':
+            from espnet.nets.pytorch_backend.nets_utils import pad_list
+
+            _sos = ys_pad.new([self.sos])
+            _ignore = ys_pad.new([self.ignore_id])
+            ys = [y[y != self.ignore_id] for y in ys_pad]  # parse padded ys
+            ys_in = [torch.cat([_sos, y], dim=0) for y in ys]
+            ys_out = [torch.cat([y, _ignore], dim=0) for y in ys]
+
+            ys_in_pad = pad_list(ys_in, self.eos)
+            ys_out_pad = pad_list(ys_out, self.ignore_id)
+
+            ys_in_lens = ys_pad_lens + 1
 
         # 1. Forward decoder
         decoder_out, _ = self.decoder(

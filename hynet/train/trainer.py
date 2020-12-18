@@ -1,34 +1,4 @@
-import argparse
-import dataclasses
-from dataclasses import is_dataclass
-import logging
-import time
-from typing import Dict
-from typing import Iterable
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Sequence
-
-import numpy as np
-
-import humanfriendly
-import torch
-from typeguard import check_argument_types
-
-from espnet2.iterators.abs_iter_factory import AbsIterFactory
-from espnet2.schedulers.abs_scheduler import AbsScheduler
-from espnet2.schedulers.abs_scheduler import AbsValEpochStepScheduler
-from espnet2.schedulers.abs_scheduler import AbsEpochStepScheduler
-from espnet2.torch_utils.device_funcs import to_device
-from espnet2.torch_utils.recursive_op import recursive_average
-from espnet2.torch_utils.set_all_random_seed import set_all_random_seed
-from espnet2.train.reporter import Reporter
-from espnet2.train.reporter import SubReporter
-from espnet2.train.abs_espnet_model import AbsESPnetModel
-from espnet2.train.distributed_utils import DistributedOption
-
-from espnet2.train.trainer import Trainer, ReduceOp, TrainerOptions, GradScaler, SummaryWriter, Path
+from espnet2.train.trainer import *
 
 class ImgrTrainer(Trainer):
     @classmethod
@@ -563,7 +533,7 @@ class PseudoTrainer(Trainer):
             with autocast(scaler is not None):
                 with reporter.measure_time("forward_time"):
                     loss, stats, weight = model(**batch)
-                    loss_pseudo, _, weight_pseudo = model(**pseudo_batch)
+                    loss_pseudo, _, weight_pseudo = model(**pseudo_batch, mode='pseudo')
                 stats = {k: v for k, v in stats.items() if v is not None}
                 if ngpu > 1 or distributed:
                     # Apply weighted averaging for loss and stats
