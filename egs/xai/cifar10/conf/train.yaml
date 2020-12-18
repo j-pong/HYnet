@@ -1,21 +1,23 @@
-dataset: cifar100
+dataset: cifar10
 in_ch: 3
-out_ch: 100
+out_ch: 10
 
 accum_grad: 1
 max_epoch: 200
-batch_size: 1000
+batch_size: 88
 
 best_model_criterion:
 -   - valid
     - acc
     - max
-keep_nbest_models: 10
+keep_nbest_models: 1
 
-scheduler: steplr
+scheduler: multisteplr
 scheduler_conf:
-    step_size: 60
-    gamma: 0.2
+    milestones:
+        - 100
+        - 150
+    gamma: 0.1
 
 optim: sgd
 optim_conf:
@@ -23,12 +25,12 @@ optim_conf:
     weight_decay: 0.0005
     momentum: 0.9
 
-xai_excute: 1
+xai_excute: 0
 xai_mode: bg
 xai_iter: 3
 st_excute: 0
 
 bias: 0
-batch_norm: 0
+batch_norm: 1
 cfg_type: D
 

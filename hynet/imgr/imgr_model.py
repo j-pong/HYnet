@@ -183,21 +183,20 @@ class HynetImgrModel(AbsESPnetModel):
                             attn_hook_handle.remove()
                             attn_hook_handle = None
                         ig = IntegratedGradients(self.model)
-                        if i > 0:    
-                            attr_ig, delta = ig.attribute(image * mask_prod,
-                                                          baselines=image * 0, 
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        else:
-                            attr_ig, delta = ig.attribute(image,
-                                                          baselines=image * 0, 
-                                                          target=label,
-                                                          return_convergence_delta=True)
                         nt = NoiseTunnel(ig)
-                        attr_ig_nt = attribute_image_features(self.model, label, nt, image, 
-                                                              baselines=image * 0, 
-                                                              nt_type='smoothgrad',
-                                                              n_samples=4, stdevs=0.02)
+                        if i > 0:    
+                            attr_ig_nt = nt.attribute(image * mask_prod,
+                                                    target=label,
+                                                    baselines=image * 0, 
+                                                    nt_type='smoothgrad',
+                                                    n_samples=4, stdevs=0.02)
+                        else:
+                            attr_ig_nt = nt.attribute(image,
+                                                    target=label,
+                                                    baselines=image * 0, 
+                                                    nt_type='smoothgrad',
+                                                    n_samples=4, stdevs=0.02)
+                        
                         attn = attr_ig_nt.squeeze(0)
                         loss_brew = 0.0
                     elif self.xai_mode == 'dl':

@@ -10,7 +10,7 @@ class BatchNorm2d(nn.BatchNorm2d):
 
         # without bias setting with learable parameter of bn
         self.bias.requires_grad = False
-        
+        # data bias setting
         self.hardship = False
 
     def forward(self, input):
