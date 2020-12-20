@@ -252,7 +252,9 @@ class ESPnetASRModel(AbsESPnetModel):
 
             _sos = ys_pad.new([self.sos])
             _ignore = ys_pad.new([self.ignore_id])
+            
             ys = [y[y != self.ignore_id] for y in ys_pad]  # parse padded ys
+
             ys_in = [torch.cat([_sos, y], dim=0) for y in ys]
             ys_out = [torch.cat([y, _ignore], dim=0) for y in ys]
 
@@ -260,11 +262,62 @@ class ESPnetASRModel(AbsESPnetModel):
             ys_out_pad = pad_list(ys_out, self.ignore_id)
 
             ys_in_lens = ys_pad_lens + 1
+        else:
+            raise AttributeError("{} mode is not supported!".format(mode))
 
         # 1. Forward decoder
-        decoder_out, _ = self.decoder(
-            encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-        )
+        if mode is None:
+            decoder_out, _ = self.decoder(
+                encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+            )
+        elif mode == 'pseudo':
+            with torch.no_grad():
+                decoder_out, _ = self.decoder(
+                    encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+                )
+                # Calculate pred dist
+                pred_dist = torch.softmax(decoder_out, dim=-1)
+
+                bsz, tsz = ys_out_pad.size()
+
+                # Select target label probability from pred_dist
+                pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
+                                                        ys_out_pad.view(bsz * tsz)]
+                pred_prob = pred_prob.view(bsz, tsz)
+
+                # Samplling labels
+                # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
+                # sampled_labels = sampler.sample()
+                # sampled_labels = sampled_labels.view(bsz, tsz)
+
+                # Replace ys_in_pad, ys_out_pad with replaceable token
+                repl_mask = pred_prob < 0.2
+                repl_mask = repl_mask[:, :-1]
+
+                _sos = ys_pad.new([self.sos])
+                _ignore = ys_pad.new([self.ignore_id])
+                
+                # replace ys_in with index 1 and replace ys_out with ignore
+                ys_in = [y[y != self.ignore_id].clone() for y in ys_pad]
+                ys_out = [y[y != self.ignore_id].clone() for y in ys_pad]
+
+                for rm, y in zip(repl_mask, ys):
+                    y[rm[:len(y)]] = 1
+                for rm, y in zip(repl_mask, ys):
+                    y[rm[:len(y)]] = self.ignore_id
+
+                ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
+                ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
+
+                ys_in_pad = pad_list(ys_in, self.eos)
+                ys_out_pad = pad_list(ys_out, self.ignore_id)
+                
+            decoder_out, _ = self.decoder(
+                    encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+                )
+
+        else:
+            raise AttributeError("{} mode is not supported!".format(mode))
 
         # 2. Compute attention loss
         loss_att = self.criterion_att(decoder_out, ys_out_pad)
