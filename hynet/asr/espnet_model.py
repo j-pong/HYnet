@@ -87,6 +87,7 @@ class ESPnetASRModel(AbsESPnetModel):
             smoothing=lsm_weight,
             normalize_length=length_normalized_loss,
         )
+        self.register_buffer('th_beta', torch.tensor(0.0, dtype=torch.float))
 
         if report_cer or report_wer:
             self.error_calculator = ErrorCalculator(
@@ -291,26 +292,26 @@ class ESPnetASRModel(AbsESPnetModel):
                 # sampled_labels = sampled_labels.view(bsz, tsz)
 
                 # Replace ys_in_pad, ys_out_pad with replaceable token
-                repl_mask = pred_prob < 0.2
+                repl_mask = pred_prob < self.th_beta
                 repl_mask = repl_mask[:, :-1]
 
-                _sos = ys_pad.new([self.sos])
-                _ignore = ys_pad.new([self.ignore_id])
-                
-                # replace ys_in with index 1 and replace ys_out with ignore
-                ys_in = [y[y != self.ignore_id].clone() for y in ys_pad]
-                ys_out = [y[y != self.ignore_id].clone() for y in ys_pad]
+            _sos = ys_pad.new([self.sos])
+            _ignore = ys_pad.new([self.ignore_id])
+            
+            # replace ys_in with index 1 and replace ys_out with ignore
+            ys_in = [y[y != self.ignore_id].clone() for y in ys_pad]
+            ys_out = [y[y != self.ignore_id].clone() for y in ys_pad]
 
-                for rm, y in zip(repl_mask, ys):
-                    y[rm[:len(y)]] = 1
-                for rm, y in zip(repl_mask, ys):
-                    y[rm[:len(y)]] = self.ignore_id
+            for rm, y in zip(repl_mask, ys_in):
+                y[rm[:len(y)]] = 1
+            for rm, y in zip(repl_mask, ys_out):
+                y[rm[:len(y)]] = self.ignore_id
 
-                ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
-                ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
+            ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
+            ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
 
-                ys_in_pad = pad_list(ys_in, self.eos)
-                ys_out_pad = pad_list(ys_out, self.ignore_id)
+            ys_in_pad = pad_list(ys_in, self.eos)
+            ys_out_pad = pad_list(ys_out, self.ignore_id)
                 
             decoder_out, _ = self.decoder(
                     encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
