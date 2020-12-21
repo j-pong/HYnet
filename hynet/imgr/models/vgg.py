@@ -72,24 +72,25 @@ class EnDecoder(BrewModel):
 
         self.focused_layer = self.encoder[0]
 
-        # check network wrong classification case
-        def all_zero_hook(self, input, result):
-            if isinstance(result, tuple):
-                res = result[0]
-            else:
-                res = result
-            aggregate = res.abs().flatten(start_dim=1).sum(-1)
-            flag = (aggregate > 0).float().mean()
-            if flag != 1.0:
-                warnings.warn("{} layer has all zero value : {}".format(self, flag))
-        for m in self.encoder.named_modules():
-            m[1].register_forward_hook(all_zero_hook)
-        for m in self.decoder.named_modules():
-            m[1].register_forward_hook(all_zero_hook)
+        if self.training:
+            # check network wrong classification case
+            def all_zero_hook(self, input, result):
+                if isinstance(result, tuple):
+                    res = result[0]
+                else:
+                    res = result
+                aggregate = res.abs().flatten(start_dim=1).sum(-1)
+                flag = (aggregate > 0).float().mean()
+                if flag != 1.0:
+                    warnings.warn("{} layer has all zero value : {}".format(self, flag))
+            for m in self.encoder.named_modules():
+                m[1].register_forward_hook(all_zero_hook)
+            for m in self.decoder.named_modules():
+                m[1].register_forward_hook(all_zero_hook)
 
-        # intislaization whole network module
-        self._initialization(self.encoder)
-        self._initialization(self.decoder)
+            # intislaization whole network module
+            self._initialization(self.encoder)
+            self._initialization(self.decoder)
     
     def _initialization(self, mlist):
         for idx, m in enumerate(mlist):

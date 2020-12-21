@@ -4,7 +4,7 @@ out_ch: 100
 
 accum_grad: 1
 max_epoch: 200
-batch_size: 88
+batch_size: 128
 
 best_model_criterion:
 -   - valid
