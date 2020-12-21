@@ -380,7 +380,7 @@ class PseudoTrainer(Trainer):
                     scheduler.step(reporter.get_value(*val_scheduler_criterion))
                 elif isinstance(scheduler, AbsEpochStepScheduler):
                     scheduler.step()
-            model.th_beta = iepoch / max_epoch * 0.2
+            model.th_beta = model.th_beta.new([float(iepoch / max_epoch * 0.2)])
 
             if not distributed_option.distributed or distributed_option.dist_rank == 0:
                 # 3. Report the results

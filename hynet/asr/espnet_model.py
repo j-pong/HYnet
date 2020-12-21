@@ -130,9 +130,9 @@ class ESPnetASRModel(AbsESPnetModel):
 
         # 2a. Attention-decoder branch
         if self.ctc_weight == 1.0:
-            loss_att, acc_att, cer_att, wer_att = None, None, None, None
+            loss_att, acc_att, cer_att, wer_att, err_pred = None, None, None, None, None
         else:
-            loss_att, acc_att, cer_att, wer_att = self._calc_att_loss(
+            loss_att, acc_att, cer_att, wer_att, err_pred = self._calc_att_loss(
                 encoder_out, encoder_out_lens, text, text_lengths, mode
             )
 
@@ -163,6 +163,7 @@ class ESPnetASRModel(AbsESPnetModel):
             cer=cer_att,
             wer=wer_att,
             cer_ctc=cer_ctc,
+            err_pred=err_pred,
         )
 
         # force_gatherable: to-device and to-tensor if scalar for DataParallel
@@ -267,6 +268,7 @@ class ESPnetASRModel(AbsESPnetModel):
             raise AttributeError("{} mode is not supported!".format(mode))
 
         # 1. Forward decoder
+        err_pred = 0.0
         if mode is None:
             decoder_out, _ = self.decoder(
                 encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
@@ -283,29 +285,29 @@ class ESPnetASRModel(AbsESPnetModel):
 
                 # Select target label probability from pred_dist
                 pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
-                                                        ys_out_pad.view(bsz * tsz)]
+                                                          ys_out_pad.view(bsz * tsz)]
                 pred_prob = pred_prob.view(bsz, tsz)
 
-                # Samplling labels
+                # # Samplling labels
                 # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
                 # sampled_labels = sampler.sample()
                 # sampled_labels = sampled_labels.view(bsz, tsz)
 
-                # Replace ys_in_pad, ys_out_pad with replaceable token
+                # Wrong labels position with confidence filtering
                 repl_mask = pred_prob < self.th_beta
-                repl_mask = repl_mask[:, :-1]
+                repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
+                err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
 
             _sos = ys_pad.new([self.sos])
             _ignore = ys_pad.new([self.ignore_id])
             
-            # replace ys_in with index 1 and replace ys_out with ignore
-            ys_in = [y[y != self.ignore_id].clone() for y in ys_pad]
-            ys_out = [y[y != self.ignore_id].clone() for y in ys_pad]
+            ys_in = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
+            ys_out = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
 
             for rm, y in zip(repl_mask, ys_in):
-                y[rm[:len(y)]] = 1
+                y[rm] = 1
             for rm, y in zip(repl_mask, ys_out):
-                y[rm[:len(y)]] = self.ignore_id
+                y[rm] = self.ignore_id
 
             ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
             ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
@@ -335,7 +337,7 @@ class ESPnetASRModel(AbsESPnetModel):
             ys_hat = decoder_out.argmax(dim=-1)
             cer_att, wer_att = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
 
-        return loss_att, acc_att, cer_att, wer_att
+        return loss_att, acc_att, cer_att, wer_att, err_pred
 
     def _calc_ctc_loss(
         self,
