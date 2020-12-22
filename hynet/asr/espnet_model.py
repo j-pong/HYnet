@@ -164,6 +164,7 @@ class ESPnetASRModel(AbsESPnetModel):
             wer=wer_att,
             cer_ctc=cer_ctc,
             err_pred=err_pred,
+            th_beta=float(self.th_beta),
         )
 
         # force_gatherable: to-device and to-tensor if scalar for DataParallel
