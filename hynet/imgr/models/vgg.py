@@ -71,7 +71,6 @@ class EnDecoder(BrewModel):
         ])
 
         self.focused_layer = self.encoder[0]
-
         # check network wrong classification case
         def all_zero_hook(self, input, result):
             if isinstance(result, tuple):

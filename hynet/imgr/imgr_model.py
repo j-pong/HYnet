@@ -159,6 +159,7 @@ class HynetImgrModel(AbsESPnetModel):
                         saliency = Saliency(self.model)
                         grads = saliency.attribute(image, target=label)
                         attn = grads.squeeze()
+                        attn = image * attn
                         loss_brew = 0.0
                     elif self.xai_mode == 'ig':
                         if attn_hook_handle is not None:

@@ -33,7 +33,7 @@ from espnet2.train.trainer import Trainer, ReduceOp, TrainerOptions, GradScaler,
 
 from hynet.tasks.imgr import ImgrTask
 
-class ImgrTrainer(Trainer):
+class ImgrInference(Trainer):
     @classmethod
     def run(
         cls,
@@ -143,6 +143,8 @@ class ImgrTrainer(Trainer):
                     plt.imshow(img_, cmap='seismic')
                     plt.colorbar()
 
+                    plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
+
             if output_dir is not None:
                 p = output_dir / f"valid_{ids[k]}" / f"{ids[k]}_{epoch}ep.png"
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -154,7 +156,7 @@ class ImgrTaskInference(ImgrTask):
     num_optimizers: int = 1
 
     # If you need to modify train() or eval() procedures, change Trainer class here
-    trainer = ImgrTrainer
+    trainer = ImgrInference
 
 def get_parser():
     parser = ImgrTaskInference.get_parser()
