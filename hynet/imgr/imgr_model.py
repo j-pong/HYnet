@@ -22,22 +22,23 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 from hynet.imgr.models.vgg import EnDecoder as Vgg
 from hynet.imgr.models.resnet import EnDecoder as Resnet
 
-from captum.attr import IntegratedGradients, LayerIntegratedGradients, NeuronIntegratedGradients
+from captum.attr import IntegratedGradients
 from captum.attr import Saliency, GuidedBackprop
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
 from hynet.attr.bg import BrewGradient
 
+
 class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
 
-    def __init__(self, 
-                 xai_excute, 
+    def __init__(self,
+                 xai_excute,
                  xai_mode,
-                 xai_iter, 
+                 xai_iter,
                  st_excute,
-                 cfg_type, 
+                 cfg_type,
                  batch_norm,
                  bias,
                  in_ch,
@@ -61,7 +62,7 @@ class HynetImgrModel(AbsESPnetModel):
         self.in_ch = in_ch
         self.out_ch = out_ch
 
-        # network archictecture 
+        # network archictecture
         if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn101_2':
             self.model = Resnet(in_channels=self.in_ch,
                                 num_classes=self.out_ch,
@@ -74,7 +75,7 @@ class HynetImgrModel(AbsESPnetModel):
                              batch_norm=self.batch_norm,
                              bias=self.bias,
                              model_type=self.cfg_type)
-                                
+
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
 
@@ -85,7 +86,7 @@ class HynetImgrModel(AbsESPnetModel):
         # flatten for whole space dimension
         x = x.flatten(start_dim=2)
 
-        # get min-max value 
+        # get min-max value
         max_x = torch.max(x, dim=2, keepdim=True)[0]
         min_x = torch.min(x, dim=2, keepdim=True)[0]
 
@@ -93,211 +94,203 @@ class HynetImgrModel(AbsESPnetModel):
         norm = (max_x - min_x)
         denorm = (max_y - min_y)
         norm[norm == 0.0] = 1.0
-        
+
         # normalization
         x = (x - min_x) / norm * denorm + min_y
         x = x.view(b_sz, ch, in_h, in_w)
-        
+
         return x
+
+    @torch.no_grad()
+    def forward_xai(
+        self,
+        image: torch.Tensor,
+        label: torch.Tensor,
+        logger
+    ):
+        focused_layer = self.model.focused_layer
+        attn_hook_handle = None
+
+        mask_prod = torch.ones_like(image)
+
+        for i in range(self.max_iter):
+            def attn_apply(self, x):
+                return x[0] * mask_prod
+            attn_hook_handle = focused_layer.register_forward_pre_hook(
+                attn_apply)
+
+            logit = self.model(image)
+            acc = self._calc_acc(logit, label)
+            logger['accs'].append(acc)
+
+            self.model.zero_grad()
+
+            if self.xai_mode == 'brew':
+                # label generation
+                logit = self.model(image, save_grad=True)
+                logit_softmax = torch.softmax(logit, dim=-1)
+                mask = F.one_hot(label, num_classes=self.out_ch).bool()
+
+                # logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
+                logit_softmax_cent = mask.float()
+                outputs = logit.masked_select(mask).unsqueeze(-1)
+                attn_cent = self.model.backward_linear(
+                    image, logit_softmax_cent, outputs)
+                # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
+                # attn_other = self.model.backward_linear(image, logit_softmax_other)
+                attn = attn_cent
+
+                loss_brew = self.model.loss_brew
+                # flush hook handle
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+            elif self.xai_mode == 'saliency':
+                saliency = Saliency(self.model)
+                grads = saliency.attribute(image, target=label)
+                attn = grads.squeeze()
+                attn = image * attn
+                loss_brew = 0.0
+                # flush hook handle
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+            elif self.xai_mode == 'ig':
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+                image_ = image * mask_prod
+                ig = IntegratedGradients(self.model)
+                attr_ig, delta = ig.attribute(image_,
+                                              baselines=image * 0,
+                                              target=label,
+                                              return_convergence_delta=True)
+                attn = attr_ig.squeeze()
+                loss_brew = 0.0
+            elif self.xai_mode == 'ig_nt':
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+                image_ = image * mask_prod
+                ig = IntegratedGradients(self.model)
+                nt = NoiseTunnel(ig)
+                attr_ig_nt = nt.attribute(image_,
+                                          target=label,
+                                          baselines=image * 0,
+                                          nt_type='smoothgrad',
+                                          n_samples=4, stdevs=0.02)
+                attn = attr_ig_nt.squeeze(0)
+                loss_brew = 0.0
+            elif self.xai_mode == 'dl':
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+                image_ = image * mask_prod
+                dl = DeepLift(self.model)
+                attr_dl, delta = dl.attribute(image_,
+                                              baselines=image * 0,
+                                              target=label,
+                                              return_convergence_delta=True)
+                attn = attr_dl.squeeze(0)
+                loss_brew = 0.0
+            elif self.xai_mode == 'dls':
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+                image_ = image * mask_prod
+                dls = DeepLiftShap(self.model)
+                attr_dls, delta = dls.attribute(image_,
+                                                baselines=image * 0,
+                                                target=label,
+                                                return_convergence_delta=True)
+                attn = attr_dls.squeeze(0)
+                loss_brew = 0.0
+            elif self.xai_mode == 'bg':
+                bg = BrewGradient(self.model)
+                attr_bg = bg.attribute(image,
+                                       layer=focused_layer,
+                                       target=label)
+
+                attn = attr_bg.squeeze()
+                loss_brew = bg.loss_brew
+                # flush hook handle
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+            elif self.xai_mode == 'gbp':
+                gbp = GuidedBackprop(self.model)
+                attr_bg = gbp.attribute(image,
+                                        target=label)
+                attn = attr_bg.squeeze()
+                loss_brew = 0.0
+                # flush hook handle
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+
+            # recasting to float type
+            attn = attn.float()
+
+            mask = self.feat_minmax_norm(attn, 1.0, 0.0)
+            image_ = (image * mask_prod).permute(0, 2, 3, 1)
+            mask_prod *= mask
+
+            logger['loss_brew'] = loss_brew
+
+            if not self.training:
+                logger['imgs'].append(image_.sum(-1))
+                attn1 = attn.permute(0, 2, 3, 1)
+                logger['attns'][0].append(attn1.sum(-1))
+                attn2 = mask.permute(0, 2, 3, 1)
+                logger['attns'][1].append(attn2.sum(-1))
+
+        self.model.zero_grad()
+
+        return logger
 
     def forward(
         self,
         image: torch.Tensor,
         label: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        logger = {'imgs':[], 
-                  'attns': [[],[]], 
-                  'accs':[]}
 
-        losses = []
+        logger = {
+            'loss_brew': 0.0,
+            'imgs': [],
+            'attns': [[], []],
+            'accs': []
+        }
+
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
-        focused_layer = self.model.focused_layer
-        attn_hook_handle = None
+        # 1. feedforward
+        logit = self.model(image)
 
-        for i in range(self.max_iter):
-            # 1. preprocessing with each iteration
-            if self.xai_excute:
-                if i > 0:
-                    # for solving additive feature problem
-                    def attn_apply(self, x):
-                        return x[0] * mask_prod
-                    attn_hook_handle = focused_layer.register_forward_pre_hook(attn_apply)
-            # 2. feedforward
-            logit = self.model(image)
-            
-            # 3. caculate measurment
-            if i == 0:
-                # classification ce-loss
-                losses.append(self.criterion(logit, label))
-            acc = self._calc_acc(logit, label)        
-            logger['accs'].append(acc)
+        # 2. caculate measurment
+        loss = self.criterion(logit, label)
+        acc = self._calc_acc(logit, label)
 
-            # 4. attribution with gradient-based methods
-            if self.xai_excute:
-                with torch.no_grad():
-                    if self.xai_mode == 'brew':
-                        # label generation
-                        logit = self.model(image, save_grad=True)
+        stats = dict(
+                loss=loss.detach(),
+                acc_iter0=acc
+            )
 
-                        logit_softmax = torch.softmax(logit, dim=-1)
-                        mask = F.one_hot(label, num_classes=self.out_ch).bool()
-                        
-                        # logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                        logit_softmax_cent = mask.float()
-                        outputs = logit.masked_select(mask).unsqueeze(-1)
-                        attn_cent = self.model.backward_linear(image, logit_softmax_cent, outputs)
+        # 3. attribution with gradient-based methods
+        if self.xai_excute and not self.training:
+            logger = self.forward_xai(image, label, logger)
 
-                        # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                        # attn_other = self.model.backward_linear(image, logit_softmax_other)
-                        
-                        attn = attn_cent
-
-                        loss_brew = self.model.loss_brew
-                    elif self.xai_mode == 'saliency':
-                        saliency = Saliency(self.model)
-                        grads = saliency.attribute(image, target=label)
-                        attn = grads.squeeze()
-                        attn = image * attn
-                        loss_brew = 0.0
-                    elif self.xai_mode == 'ig':
-                        if attn_hook_handle is not None:
-                            attn_hook_handle.remove()
-                            attn_hook_handle = None
-                        ig = IntegratedGradients(self.model)
-                        if i > 0:    
-                            attr_ig, delta = ig.attribute(image * mask_prod,
-                                                          baselines=image * 0, 
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        else:
-                            attr_ig, delta = ig.attribute(image,
-                                                          baselines=image * 0, 
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        attn = attr_ig.squeeze()
-
-                        loss_brew = 0.0
-                    elif self.xai_mode == 'ig_nt':
-                        if attn_hook_handle is not None:
-                            attn_hook_handle.remove()
-                            attn_hook_handle = None
-                        ig = IntegratedGradients(self.model)
-                        nt = NoiseTunnel(ig)
-                        if i > 0:    
-                            attr_ig_nt = nt.attribute(image * mask_prod,
-                                                    target=label,
-                                                    baselines=image * 0, 
-                                                    nt_type='smoothgrad',
-                                                    n_samples=4, stdevs=0.02)
-                        else:
-                            attr_ig_nt = nt.attribute(image,
-                                                    target=label,
-                                                    baselines=image * 0, 
-                                                    nt_type='smoothgrad',
-                                                    n_samples=4, stdevs=0.02)
-                        
-                        attn = attr_ig_nt.squeeze(0)
-                        loss_brew = 0.0
-                    elif self.xai_mode == 'dl':
-                        if attn_hook_handle is not None:
-                            attn_hook_handle.remove()
-                            attn_hook_handle = None
-                        dl = DeepLift(self.model)
-                        if i > 0:    
-                            attr_dl, delta = dl.attribute(image * mask_prod,
-                                                          baselines=image * 0,
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        else:
-                            attr_dl, delta = dl.attribute(image,
-                                                          baselines=image * 0,
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        attn = attr_dl.squeeze(0)
-                        loss_brew = 0.0
-                    elif self.xai_mode == 'dls':
-                        if attn_hook_handle is not None:
-                            attn_hook_handle.remove()
-                            attn_hook_handle = None
-                        dls = DeepLiftShap(self.model)
-                        if i > 0:    
-                            attr_dls, delta = dls.attribute(image * mask_prod,
-                                                          baselines=image * 0,
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        else:
-                            attr_dls, delta = dls.attribute(image,
-                                                          baselines=image * 0,
-                                                          target=label,
-                                                          return_convergence_delta=True)
-                        attn = attr_dls.squeeze(0)
-
-                        loss_brew = 0.0
-                    elif self.xai_mode == 'bg':
-                        bg = BrewGradient(self.model)
-                        attr_bg = bg.attribute(image,
-                                               layer=focused_layer,
-                                               target=label)
-
-                        attn = attr_bg.squeeze()
-                        loss_brew = bg.loss_brew
-                    elif self.xai_mode == 'gbp':
-                        gbp = GuidedBackprop(self.model)
-                        attr_bg = gbp.attribute(image,
-                                                target=label)
-                        attn = attr_bg.squeeze()
-                        loss_brew = 0.0
-                    # recasting to float type
-                    attn = attn.detach().float()
-
-                    mask = self.feat_minmax_norm(attn, 1.0, 0.0)
-                    if i == 0:
-                        mask_prod = mask
-                    else:
-                        mask_prod *= mask
-                
-                # flush hook handle
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-
-                # 5. for logging
-                if not self.training:
-                    image_ = (image * mask_prod).permute(0, 2, 3, 1)
-                    logger['imgs'].append(image_.sum(-1))
-                    attn1 = attn.permute(0, 2, 3, 1)
-                    logger['attns'][0].append(attn1.sum(-1))
-                    attn2 = mask.permute(0, 2, 3, 1)
-                    logger['attns'][1].append(attn2.sum(-1))
-            else: 
-                if not self.training:
-                    image_ = image.permute(0, 2, 3, 1)
-                    logger['imgs'].append(image_)
-                    logger['attns'][0].append(image_[:,:,:,0])
-                    logger['attns'][1].append(image_[:,:,:,1])
-        loss = 0.0
-        for los in losses:
-            loss += los
-
-        if self.max_iter > 1:
-            stats = dict(
-                    loss=loss.detach(),
-                    loss_brew=loss_brew,
-                    acc_iter0=logger['accs'][0],
-                    acc_iter1=logger['accs'][1],
-                    acc_iter_last=logger['accs'][2]
-                )
-        else:
-            stats = dict(
-                    loss=loss.detach(),
-                    acc_iter0=logger['accs'][0]
-                )
-                
-        if not self.training:
-            stats['aux'] = [logger['imgs'], 
+            stats['loss_brew'] = logger['loss_brew']
+            for i in range(1, self.max_iter):
+                stats['acc_iter{}'.format(i)] = logger['accs'][i]
+            stats['aux'] = [logger['imgs'],
                             logger['attns'][0],
                             logger['attns'][1]]
+        elif not self.training:
+            image_ = image.permute(0, 2, 3, 1)
+            stats['aux'] = [[image_],
+                            [image_[:, :, :, 0]],
+                            [image_[:, :, :, 1]]]
 
         loss, stats, weight = force_gatherable(
             (loss, stats, b_sz), loss.device)
@@ -305,10 +298,11 @@ class HynetImgrModel(AbsESPnetModel):
 
     def _calc_acc(
         self,
-        y_hat: torch.Tensor, 
+        y_hat: torch.Tensor,
         y: torch.Tensor
     ):
-        pred = y_hat.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+        # get the index of the max log-probability
+        pred = y_hat.argmax(dim=1, keepdim=True)
         correct = pred.eq(y.view_as(pred)).float().mean().item()
         return correct
 
@@ -318,14 +312,16 @@ class HynetImgrModel(AbsESPnetModel):
         label,
         p_hat
     ):
-        label_hat = F.one_hot(torch.arange(start=0, end=self.out_ch), 
+        label_hat = F.one_hot(torch.arange(start=0, end=self.out_ch),
                               num_classes=self.out_ch).to(label.device)
         label_hat = label_hat.float()
         label_hat = label_hat.view(1, self.out_ch, self.out_ch)
         label_hat = label_hat.repeat(feat_flat.size(0), 1, 1)
 
-        attn_pos, attn_neg = self.inv(feat_flat, label_hat, p_hat[0], split_to_np=False)
-        label_hat_hat_cs = F.cosine_similarity(attn_pos, feat_flat.unsqueeze(1), dim=2)
+        attn_pos, attn_neg = self.inv(
+            feat_flat, label_hat, p_hat[0], split_to_np=False)
+        label_hat_hat_cs = F.cosine_similarity(
+            attn_pos, feat_flat.unsqueeze(1), dim=2)
 
         return self._calc_acc(label_hat_hat_cs, label)
 

@@ -10,7 +10,7 @@ best_model_criterion:
 -   - valid
     - acc_iter0
     - max
-keep_nbest_models: 10
+keep_nbest_models: 1
 
 scheduler: multisteplr
 scheduler_conf:
@@ -31,4 +31,4 @@ st_excute: 0
 
 bias: 0
 batch_norm: 1
-cfg_type: D
+cfg_type: B

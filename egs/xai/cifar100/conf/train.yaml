@@ -10,7 +10,7 @@ best_model_criterion:
 -   - valid
     - acc_iter0
     - max
-keep_nbest_models: 50
+keep_nbest_models: 1
 
 scheduler: multisteplr
 scheduler_conf:
