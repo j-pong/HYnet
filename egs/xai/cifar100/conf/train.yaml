@@ -3,8 +3,8 @@ in_ch: 3
 out_ch: 100
 
 accum_grad: 1
-max_epoch: 110
-batch_size: 88
+max_epoch: 175
+batch_size: 22
 
 best_model_criterion:
 -   - valid
@@ -16,6 +16,7 @@ scheduler: multisteplr
 scheduler_conf:
     milestones:
         - 100
+        - 150
     gamma: 0.1
 
 optim: sgd
@@ -25,7 +26,7 @@ optim_conf:
     momentum: 0.9
 
 xai_excute: 1
-xai_mode: bg
+xai_mode: saliency
 xai_iter: 3
 st_excute: 0
 

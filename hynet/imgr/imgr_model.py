@@ -146,15 +146,15 @@ class HynetImgrModel(AbsESPnetModel):
                     attn_hook_handle.remove()
                     attn_hook_handle = None
             elif self.xai_mode == 'saliency':
-                saliency = Saliency(self.model)
-                grads = saliency.attribute(image, target=label)
-                attn = grads.squeeze()
-                attn = image * attn
-                loss_brew = 0.0
-                # flush hook handle
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
                     attn_hook_handle = None
+                image_ = image * mask_prod
+                saliency = Saliency(self.model)
+                grads = saliency.attribute(image_, target=label)
+                attn = grads.squeeze()
+                attn = image * attn
+                loss_brew = 0.0
             elif self.xai_mode == 'ig':
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
@@ -218,15 +218,15 @@ class HynetImgrModel(AbsESPnetModel):
                     attn_hook_handle.remove()
                     attn_hook_handle = None
             elif self.xai_mode == 'gbp':
-                gbp = GuidedBackprop(self.model)
-                attr_bg = gbp.attribute(image,
-                                        target=label)
-                attn = attr_bg.squeeze()
-                loss_brew = 0.0
-                # flush hook handle
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
                     attn_hook_handle = None
+                image_ = image * mask_prod
+                gbp = GuidedBackprop(self.model)
+                attr_bg = gbp.attribute(image_,
+                                        target=label)
+                attn = attr_bg.squeeze()
+                loss_brew = 0.0
 
             # recasting to float type
             attn = attn.float()
