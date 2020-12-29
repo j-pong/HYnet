@@ -75,6 +75,17 @@ class HynetImgrModel(AbsESPnetModel):
                              batch_norm=self.batch_norm,
                              bias=self.bias,
                              model_type=self.cfg_type)
+            self.model_s = Vgg(in_channels=self.in_ch,
+                                num_classes=self.out_ch,
+                                batch_norm=self.batch_norm,
+                                bias=self.bias,
+                                model_type='B')
+        if not self.st_excute:
+            for param in self.model_s.parameters():
+                param.requires_grad = False
+        else:
+            for param in self.model.parameters():
+                param.requires_grad = False
 
         # cirterion fo task
         self.criterion = nn.CrossEntropyLoss()
@@ -246,7 +257,7 @@ class HynetImgrModel(AbsESPnetModel):
 
         self.model.zero_grad()
 
-        return logger
+        return logger, mask_prod
 
     def forward(
         self,
@@ -264,21 +275,22 @@ class HynetImgrModel(AbsESPnetModel):
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
-        # 1. feedforward
-        logit = self.model(image)
+        if not self.st_excute:
+            # 1. feedforward
+            logit = self.model(image)
 
-        # 2. caculate measurment
-        loss = self.criterion(logit, label)
-        acc = self._calc_acc(logit, label)
+            # 2. caculate measurment
+            loss = self.criterion(logit, label)
+            acc = self._calc_acc(logit, label)
 
-        stats = dict(
-                loss=loss.detach(),
-                acc_iter0=acc
-            )
+            stats = dict(
+                    loss=loss.detach(),
+                    acc_iter0=acc
+                )
 
         # 3. attribution with gradient-based methods
-        if self.xai_excute and not self.training:
-            logger = self.forward_xai(image, label, logger)
+        if self.xai_excute:
+            logger, attns = self.forward_xai(image, label, logger)
 
             stats['loss_brew'] = logger['loss_brew']
             for i in range(1, self.max_iter):
@@ -291,6 +303,19 @@ class HynetImgrModel(AbsESPnetModel):
             stats['aux'] = [[image_],
                             [image_[:, :, :, 0]],
                             [image_[:, :, :, 1]]]
+
+        if self.st_excute:
+            # 1. feedforward
+            logit = self.model_s(image * attns.detach().clone())
+
+            # 2. caculate measurment
+            loss = self.criterion(logit, label)
+            acc = self._calc_acc(logit, label)
+
+            stats = dict(
+                    loss=loss.detach(),
+                    acc_iter0=acc
+                )
 
         loss, stats, weight = force_gatherable(
             (loss, stats, b_sz), loss.device)
@@ -305,25 +330,6 @@ class HynetImgrModel(AbsESPnetModel):
         pred = y_hat.argmax(dim=1, keepdim=True)
         correct = pred.eq(y.view_as(pred)).float().mean().item()
         return correct
-
-    def _calc_sim_acc(
-        self,
-        feat_flat,
-        label,
-        p_hat
-    ):
-        label_hat = F.one_hot(torch.arange(start=0, end=self.out_ch),
-                              num_classes=self.out_ch).to(label.device)
-        label_hat = label_hat.float()
-        label_hat = label_hat.view(1, self.out_ch, self.out_ch)
-        label_hat = label_hat.repeat(feat_flat.size(0), 1, 1)
-
-        attn_pos, attn_neg = self.inv(
-            feat_flat, label_hat, p_hat[0], split_to_np=False)
-        label_hat_hat_cs = F.cosine_similarity(
-            attn_pos, feat_flat.unsqueeze(1), dim=2)
-
-        return self._calc_acc(label_hat_hat_cs, label)
 
     def collect_feats(
         self,

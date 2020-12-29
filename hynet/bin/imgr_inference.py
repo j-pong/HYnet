@@ -33,6 +33,8 @@ from espnet2.train.trainer import Trainer, ReduceOp, TrainerOptions, GradScaler,
 
 from hynet.tasks.imgr import ImgrTask
 
+from tqdm import tqdm
+
 class ImgrInference(Trainer):
     @classmethod
     def run(
@@ -98,7 +100,7 @@ class ImgrInference(Trainer):
 
         model.eval()
         iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
-        for (ids, batch) in iterator:
+        for (ids, batch) in tqdm(iterator):
             assert isinstance(batch, dict), type(batch)
 
             batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
@@ -109,9 +111,9 @@ class ImgrInference(Trainer):
 
             
             img_list = stats['aux']
-            if flag:
-                cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
-                flag = False
+            # if flag:
+            #     cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
+            #     flag = False
             del stats['aux']
 
             reporter.register(stats, weight)
