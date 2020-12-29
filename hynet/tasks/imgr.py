@@ -28,7 +28,7 @@ from espnet2.utils.types import str_or_none
 from hynet.train.dataset import MNISTDataset, CIFAR10Dataset, CIFAR100Dataset
 from hynet.train.trainer import ImgrTrainer
 from hynet.iterators.img_iter_factory import ImgrIterFactory
-from hynet.imgr.imgrst_model import HynetImgrModel
+from hynet.imgr.imgr_st_model import HynetImgrModel
 
 
 class ImgrTask(AbsTask):
