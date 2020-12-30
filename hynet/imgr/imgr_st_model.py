@@ -76,17 +76,15 @@ class HynetImgrModel(AbsESPnetModel):
                              bias=self.bias,
                              model_type=self.cfg_type)
 
-        self.pt_model = pt_model(xai_excute,
-                                 xai_mode,
-                                 xai_iter,
-                                 0,
-                                 'D',
-                                 batch_norm,
-                                 bias,
-                                 in_ch,
-                                 out_ch)
-        # FIXME(j-pong): Hard coding for instance task
-        ckpt = torch.load('/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg16_bnwob/checkpoint.pth', map_location=f"cuda:{torch.cuda.current_device()}")
+        self.pt_model = pt_model(
+            xai_excute, xai_mode, xai_iter,
+            0, 'B2', batch_norm, bias, in_ch, out_ch
+            )
+        # FIXME(j-pong): Hard coding for instance task (batchnorm running var can be reconstructed)
+        ckpt = torch.load(
+            '/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg7_bnwob/checkpoint.pth', 
+            map_location=f"cuda:{torch.cuda.current_device()}"
+            )
         self.pt_model.load_state_dict(ckpt['model'])
         for param in self.pt_model.parameters():
             param.requires_grad = False

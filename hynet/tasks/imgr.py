@@ -28,7 +28,6 @@ from espnet2.utils.types import str_or_none
 from hynet.train.dataset import MNISTDataset, CIFAR10Dataset, CIFAR100Dataset
 from hynet.train.trainer import ImgrTrainer
 from hynet.iterators.img_iter_factory import ImgrIterFactory
-from hynet.imgr.imgr_st_model import HynetImgrModel
 
 
 class ImgrTask(AbsTask):
@@ -129,8 +128,13 @@ class ImgrTask(AbsTask):
         return retval
 
     @classmethod
-    def build_model(cls, args: argparse.Namespace) -> HynetImgrModel:
+    def build_model(cls, args: argparse.Namespace):
         assert check_argument_types()
+
+        if args.st_excute:
+            from hynet.imgr.imgr_st_model import HynetImgrModel
+        else:
+            from hynet.imgr.imgr_model import HynetImgrModel
 
         # 1. Build model
         model = HynetImgrModel(

@@ -24,7 +24,7 @@ optim_conf:
     weight_decay: 0.0005
     momentum: 0.9
 
-xai_excute: 0
+xai_excute: 1
 xai_mode: bg
 xai_iter: 3
 st_excute: 0
