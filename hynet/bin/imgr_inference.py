@@ -90,13 +90,12 @@ class ImgrInference(Trainer):
         output_dir: Path,
         iterator: Iterable[Dict[str, torch.Tensor]],
         reporter: SubReporter,
-        options: TrainerOptions
+        options: TrainerOptions,
+        flag: bool = False,
     ) -> None:
         assert check_argument_types()
         ngpu = options.ngpu
         no_forward_run = options.no_forward_run
-
-        flag = True # Firt iteration is need to plot
 
         model.eval()
         iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
@@ -111,9 +110,9 @@ class ImgrInference(Trainer):
 
             
             img_list = stats['aux']
-            # if flag:
-            #     cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
-            #     flag = False
+            if flag:
+                cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
+                flag = False
             del stats['aux']
 
             reporter.register(stats, weight)

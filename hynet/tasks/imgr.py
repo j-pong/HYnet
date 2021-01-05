@@ -10,20 +10,9 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-import torchvision.transforms as transforms
-from typeguard import check_argument_types
-from typeguard import check_return_type
+from espnet2.tasks.abs_task import *
 
-from espnet2.tasks.abs_task import AbsTask, IteratorOptions, AbsIterFactory
-from espnet2.torch_utils.initialize import initialize
-from espnet2.train.trainer import Trainer
-from espnet2.utils.get_default_kwargs import get_default_kwargs
-from espnet2.utils.nested_dict_action import NestedDictAction
-from espnet2.utils.types import int_or_none
-from espnet2.utils.types import str_or_none
+import torchvision.transforms as transforms
 
 from hynet.train.dataset import MNISTDataset, CIFAR10Dataset, CIFAR100Dataset
 from hynet.train.trainer import ImgrTrainer
@@ -126,6 +115,27 @@ class ImgrTask(AbsTask):
             # Recognition mode
             retval = ("image",)
         return retval
+
+    @classmethod
+    def build_optimizers(
+        cls,
+        args: argparse.Namespace,
+        model: torch.nn.Module,
+    ) -> List[torch.optim.Optimizer]:
+        if cls.num_optimizers != 1:
+            raise RuntimeError(
+                "build_optimizers() must be overridden if num_optimizers != 1"
+            )
+
+        optim_class = optim_classes.get(args.optim)
+        if optim_class is None:
+            raise ValueError(f"must be one of {list(optim_classes)}: {args.optim}")
+        if args.st_excute:
+            optim = optim_class(model.model.parameters(), **args.optim_conf)
+        else:
+            optim = optim_class(model.parameters(), **args.optim_conf)
+        optimizers = [optim]
+        return optimizers
 
     @classmethod
     def build_model(cls, args: argparse.Namespace):

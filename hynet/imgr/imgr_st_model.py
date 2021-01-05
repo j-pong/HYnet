@@ -46,11 +46,7 @@ class HynetImgrModel(AbsESPnetModel):
         assert check_argument_types()
         super().__init__()
         # task related
-        self.xai_excute = xai_excute
-        if self.xai_excute:
-            self.max_iter = xai_iter
-        else:
-            self.max_iter = 1
+        self.max_iter = xai_iter
         self.xai_mode = xai_mode
         self.st_excute = st_excute
         self.cfg_type = cfg_type
@@ -77,7 +73,7 @@ class HynetImgrModel(AbsESPnetModel):
                              model_type=self.cfg_type)
 
         self.pt_model = pt_model(
-            xai_excute, xai_mode, xai_iter,
+            0, xai_mode, xai_iter,
             0, 'B2', batch_norm, bias, in_ch, out_ch
             )
         # FIXME(j-pong): Hard coding for instance task (batchnorm running var can be reconstructed)
@@ -86,6 +82,8 @@ class HynetImgrModel(AbsESPnetModel):
             map_location=f"cuda:{torch.cuda.current_device()}"
             )
         self.pt_model.load_state_dict(ckpt['model'])
+        self.pt_model = self.pt_model.model
+        self.pt_model.train(False)
         for param in self.pt_model.parameters():
             param.requires_grad = False
 
@@ -128,6 +126,8 @@ class HynetImgrModel(AbsESPnetModel):
         mask_prod = torch.ones_like(image)
 
         for i in range(self.max_iter):
+            model.zero_grad()
+
             def attn_apply(self, x):
                 return x[0] * mask_prod
             attn_hook_handle = focused_layer.register_forward_pre_hook(
@@ -137,29 +137,7 @@ class HynetImgrModel(AbsESPnetModel):
             acc = self._calc_acc(logit, label)
             logger['accs'].append(acc)
 
-            model.zero_grad()
-
-            if self.xai_mode == 'brew':
-                # label generation
-                logit = model(image, save_grad=True)
-                logit_softmax = torch.softmax(logit, dim=-1)
-                mask = F.one_hot(label, num_classes=self.out_ch).bool()
-
-                # logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                logit_softmax_cent = mask.float()
-                outputs = logit.masked_select(mask).unsqueeze(-1)
-                attn_cent = model.backward_linear(
-                    image, logit_softmax_cent, outputs)
-                # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                # attn_other = model.backward_linear(image, logit_softmax_other)
-                attn = attn_cent
-
-                loss_brew = model.loss_brew
-                # flush hook handle
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-            elif self.xai_mode == 'saliency':
+            if self.xai_mode == 'saliency':
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
                     attn_hook_handle = None
@@ -168,56 +146,6 @@ class HynetImgrModel(AbsESPnetModel):
                 grads = saliency.attribute(image_, target=label)
                 attn = grads.squeeze()
                 attn = image * attn
-                loss_brew = 0.0
-            elif self.xai_mode == 'ig':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-                image_ = image * mask_prod
-                ig = IntegratedGradients(model)
-                attr_ig, delta = ig.attribute(image_,
-                                              baselines=image * 0,
-                                              target=label,
-                                              return_convergence_delta=True)
-                attn = attr_ig.squeeze()
-                loss_brew = 0.0
-            elif self.xai_mode == 'ig_nt':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-                image_ = image * mask_prod
-                ig = IntegratedGradients(model)
-                nt = NoiseTunnel(ig)
-                attr_ig_nt = nt.attribute(image_,
-                                          target=label,
-                                          baselines=image * 0,
-                                          nt_type='smoothgrad',
-                                          n_samples=4, stdevs=0.02)
-                attn = attr_ig_nt.squeeze(0)
-                loss_brew = 0.0
-            elif self.xai_mode == 'dl':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-                image_ = image * mask_prod
-                dl = DeepLift(model)
-                attr_dl, delta = dl.attribute(image_,
-                                              baselines=image * 0,
-                                              target=label,
-                                              return_convergence_delta=True)
-                attn = attr_dl.squeeze(0)
-                loss_brew = 0.0
-            elif self.xai_mode == 'dls':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-                image_ = image * mask_prod
-                dls = DeepLiftShap(model)
-                attr_dls, delta = dls.attribute(image_,
-                                                baselines=image * 0,
-                                                target=label,
-                                                return_convergence_delta=True)
-                attn = attr_dls.squeeze(0)
                 loss_brew = 0.0
             elif self.xai_mode == 'bg':
                 if attn_hook_handle is not None:
@@ -249,7 +177,7 @@ class HynetImgrModel(AbsESPnetModel):
             image_ = (image * mask_prod).permute(0, 2, 3, 1)
             mask_prod *= mask
 
-            logger['loss_brew'] = loss_brew
+            logger['loss_brew'].append(loss_brew)
 
             if not self.training:
                 logger['imgs'].append(image_.sum(-1))
@@ -258,8 +186,6 @@ class HynetImgrModel(AbsESPnetModel):
                 attn2 = mask.permute(0, 2, 3, 1)
                 logger['attns'][1].append(attn2.sum(-1))
 
-        model.zero_grad()
-
         return logger, mask_prod
 
     def forward(
@@ -267,9 +193,10 @@ class HynetImgrModel(AbsESPnetModel):
         image: torch.Tensor,
         label: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self.pt_model.train(False)
 
         logger = {
-                'loss_brew': 0.0,
+                'loss_brew': [],
                 'imgs': [],
                 'attns': [[], []],
                 'accs': []
@@ -279,22 +206,20 @@ class HynetImgrModel(AbsESPnetModel):
         assert self.in_ch == in_ch
 
         # 1. feedforward
-        logger, attns = self.forward_xai(self.pt_model.model, image, label, logger)
+        logger, attns = self.forward_xai(self.pt_model, image, label, logger)
         logit = self.model(image * attns.detach().clone())
 
         # 2. caculate measurment
         loss = self.criterion(logit, label)
         acc = self._calc_acc(logit, label)
-        acc_pt = self._calc_acc(self.pt_model.model(image), label)
 
         stats = dict(
                 loss=loss.detach(),
-                acc_iter0=acc,
-                acc_pt=acc_pt
+                acc=acc,
             )
-        stats['loss_brew'] = logger['loss_brew']
-        for i in range(1, self.max_iter):
+        for i in range(0, self.max_iter):
             stats['acc_iter{}'.format(i)] = logger['accs'][i]
+            stats['loss_brew{}'.format(i)] = logger['loss_brew'][i]
         if not self.training:
             stats['aux'] = [logger['imgs'],
                             logger['attns'][0],

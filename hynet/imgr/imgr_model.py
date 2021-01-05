@@ -114,6 +114,8 @@ class HynetImgrModel(AbsESPnetModel):
         mask_prod = torch.ones_like(image)
 
         for i in range(self.max_iter):
+            self.model.zero_grad()
+
             def attn_apply(self, x):
                 return x[0] * mask_prod
             attn_hook_handle = focused_layer.register_forward_pre_hook(
@@ -122,8 +124,6 @@ class HynetImgrModel(AbsESPnetModel):
             logit = self.model(image)
             acc = self._calc_acc(logit, label)
             logger['accs'].append(acc)
-
-            self.model.zero_grad()
 
             if self.xai_mode == 'brew':
                 # label generation

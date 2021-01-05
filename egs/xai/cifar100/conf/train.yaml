@@ -32,4 +32,4 @@ st_excute: 0
 
 bias: 0
 batch_norm: 1
-cfg_type: D
+cfg_type: B
