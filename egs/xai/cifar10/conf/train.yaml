@@ -4,7 +4,7 @@ out_ch: 10
 
 accum_grad: 1
 max_epoch: 70
-batch_size: 1000
+batch_size: 88
 
 best_model_criterion:
 -   - valid
@@ -24,11 +24,11 @@ optim_conf:
     weight_decay: 0.0005
     momentum: 0.9
 
-xai_excute: 0
+xai_excute: 1
 xai_mode: bg
 xai_iter: 3
 st_excute: 1
 
 bias: 0
 batch_norm: 1
-cfg_type: B2
+cfg_type: simnet

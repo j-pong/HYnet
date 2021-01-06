@@ -21,6 +21,7 @@ from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.imgr.models.vgg import EnDecoder as Vgg
 from hynet.imgr.models.resnet import EnDecoder as Resnet
+from hynet.imgr.models.simnet import EnDecoder as Simnet
 
 from captum.attr import IntegratedGradients
 from captum.attr import Saliency, GuidedBackprop
@@ -65,6 +66,12 @@ class HynetImgrModel(AbsESPnetModel):
                                 batch_norm=self.batch_norm,
                                 bias=self.bias,
                                 model_type=self.cfg_type)
+        elif self.cfg_type == 'simnet':
+            self.model = Simnet(in_channels=self.in_ch,
+                             num_classes=self.out_ch,
+                             batch_norm=self.batch_norm,
+                             bias=self.bias,
+                             model_type=self.cfg_type)
         else:
             self.model = Vgg(in_channels=self.in_ch,
                              num_classes=self.out_ch,
