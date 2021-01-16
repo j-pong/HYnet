@@ -25,7 +25,13 @@ class EnDecoder(nn.Module):
 
         self.endecoder = nn.Sequential(
             nn.Flatten(start_dim=1),
-            nn.Linear(self.out_channels * self.img_size[0] * self.img_size[1], num_classes, bias=bias),
+            nn.Linear(self.out_channels * self.img_size[0] * self.img_size[1], 4096, bias=bias),
+            activation(),
+            nn.Dropout(),
+            nn.Linear(4096, 4096, bias=bias),
+            activation(),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes, bias=bias)
         )
 
         self.focused_layer = self.endecoder[0]

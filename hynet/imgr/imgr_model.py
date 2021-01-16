@@ -27,7 +27,7 @@ from captum.attr import Saliency, GuidedBackprop
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
-from hynet.attr.bg import BrewGradient
+from hynet.attr.bg import BrewGradient, GradientxInput
 
 
 class HynetImgrModel(AbsESPnetModel):
@@ -63,12 +63,18 @@ class HynetImgrModel(AbsESPnetModel):
         self.out_ch = out_ch
 
         # network archictecture
-        if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn101_2':
+        if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn40_4' or self.cfg_type == 'wrn28_10':
             self.model = Resnet(in_channels=self.in_ch,
                                 num_classes=self.out_ch,
                                 batch_norm=self.batch_norm,
                                 bias=self.bias,
                                 model_type=self.cfg_type)
+        elif self.cfg_type == 'simnet':
+            self.model = Simnet(in_channels=self.in_ch,
+                             num_classes=self.out_ch,
+                             batch_norm=self.batch_norm,
+                             bias=self.bias,
+                             model_type=self.cfg_type)
         else:
             self.model = Vgg(in_channels=self.in_ch,
                              num_classes=self.out_ch,
@@ -217,6 +223,18 @@ class HynetImgrModel(AbsESPnetModel):
 
                 attn = attr_bg.squeeze()
                 loss_brew = bg.loss_brew
+            elif self.xai_mode == 'gxi':
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+                image_ = image * mask_prod
+                gxi = GradientxInput(self.model)
+                attr_gxi = gxi.attribute(image_,
+                                         layer=focused_layer,
+                                         target=label)
+
+                attn = attr_gxi.squeeze()
+                loss_brew = gxi.loss_brew
             elif self.xai_mode == 'gbp':
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()
@@ -278,6 +296,7 @@ class HynetImgrModel(AbsESPnetModel):
 
         # 3. attribution with gradient-based methods
         if self.xai_excute and not self.training:
+            assert self.model.training == False
             logger = self.forward_xai(image, label, logger)
 
             stats['loss_brew'] = logger['loss_brew']

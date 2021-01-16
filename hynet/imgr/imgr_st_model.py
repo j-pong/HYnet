@@ -28,7 +28,7 @@ from captum.attr import Saliency, GuidedBackprop
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
-from hynet.attr.bg import BrewGradient
+from hynet.attr.bg import BrewGradient, GradientxInput
 from hynet.imgr.imgr_model import HynetImgrModel as pt_model
 
 class HynetImgrModel(AbsESPnetModel):
@@ -60,7 +60,7 @@ class HynetImgrModel(AbsESPnetModel):
         self.out_ch = out_ch
 
         # network archictecture
-        if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn101_2':
+        if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn40_4' or self.cfg_type == 'wrn28_10':
             self.model = Resnet(in_channels=self.in_ch,
                                 num_classes=self.out_ch,
                                 batch_norm=self.batch_norm,
@@ -81,11 +81,10 @@ class HynetImgrModel(AbsESPnetModel):
 
         self.pt_model = pt_model(
             0, xai_mode, xai_iter,
-            0, 'B2', batch_norm, bias, in_ch, out_ch
+            0, 'D', batch_norm, bias, in_ch, out_ch
             )
-        # FIXME(j-pong): Hard coding for instance task (batchnorm running var can be reconstructed)
         ckpt = torch.load(
-            '/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg7_bnwob/checkpoint.pth', 
+            '/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg16_bnwob/checkpoint.pth', 
             map_location=f"cuda:{torch.cuda.current_device()}"
             )
         self.pt_model.load_state_dict(ckpt['model'])
@@ -166,6 +165,18 @@ class HynetImgrModel(AbsESPnetModel):
 
                 attn = attr_bg.squeeze()
                 loss_brew = bg.loss_brew
+            elif self.xai_mode == 'gxi':
+                if attn_hook_handle is not None:
+                    attn_hook_handle.remove()
+                    attn_hook_handle = None
+                image_ = image * mask_prod
+                gxi = GradientxInput(model)
+                attr_gxi = gxi.attribute(image_,
+                                       layer=focused_layer,
+                                       target=label)
+
+                attn = attr_gxi.squeeze()
+                loss_brew = gxi.loss_brew
             elif self.xai_mode == 'gbp':
                 if attn_hook_handle is not None:
                     attn_hook_handle.remove()

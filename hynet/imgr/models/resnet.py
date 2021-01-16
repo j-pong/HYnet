@@ -9,12 +9,6 @@ from hynet.imgr.models.brew_module import BrewModel, BrewModuleList
 
 from torchvision.models.resnet import conv1x1, conv3x3
 
-
-cfgs = {
-    'wrn50_2':  [3, 4,  6,  3],
-    'wrn101_2': [3, 4,  23, 3] 
-}
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -120,9 +114,15 @@ class ResNet(nn.Module):
             self.dilation *= stride
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride)
-            )
+            if norm_layer is None:
+                downsample = nn.Sequential(
+                    conv1x1(self.inplanes, planes * block.expansion, stride)
+                )
+            else:
+                downsample = nn.Sequential(
+                    conv1x1(self.inplanes, planes * block.expansion, stride),
+                    norm_layer(planes * block.expansion),
+                )
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
@@ -168,10 +168,19 @@ class EnDecoder(nn.Module):
         super(EnDecoder, self).__init__()
 
         if batch_norm:
-            norm_layer = BatchNorm2d
+            norm_layer = nn.BatchNorm2d
         else:
             norm_layer = None
-        self.endecoder = ResNet(Bottleneck, cfgs[model_type], num_classes, norm_layer=norm_layer)
+        if model_type == 'wrn50_2':
+            self.endecoder = ResNet(Bottleneck, [3, 4,  6,  3], num_classes, norm_layer=norm_layer)
+        elif model_type == 'wrn40_4':
+            from hynet.imgr.models.temp import WideResNet
+            self.endecoder = WideResNet(40, num_classes, widen_factor=4, cfg=[16, 32, 64])
+        elif model_type == 'wrn28_10':
+            from hynet.imgr.models.temp import WideResNet
+            self.endecoder = WideResNet(28, num_classes, widen_factor=10, cfg=[16, 32, 64])
+        else:
+            raise AttributeError("This model type is not supported!!")
 
         self.focused_layer = self.endecoder.conv1
 
