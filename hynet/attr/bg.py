@@ -54,19 +54,9 @@ class GradientxInput(GradientAttribution):
             raise AttributeError()
         
         # gradient setting 
-        gv = {}
+        # gv = {}
         inputs = _format_input(inputs)
         gradient_mask = apply_gradient_requirements(inputs)
-
-        # augmented gradient hooks
-        def save_val_hook(self, x, y):
-            gv['val'] = x[0]
-        def save_grad_hook(self, x, y):
-            gv['grad'] = x[0]
-
-        #save grad to specific layer
-        val_hook_handle = layer.register_forward_hook(save_val_hook)
-        grad_hook_handle = layer.register_backward_hook(save_grad_hook)
         
         with torch.autograd.set_grad_enabled(True):
             # runs forward pass
@@ -76,7 +66,10 @@ class GradientxInput(GradientAttribution):
                 " take gradient with respect to multiple outputs."
             )
             # calculate gradient
-            torch.autograd.grad(torch.unbind(outputs), inputs)
+            grads = torch.autograd.grad(torch.unbind(outputs), inputs)[0]
+
+        # clear gradient and detach from graph
+        undo_gradient_requirements(inputs, gradient_mask)
 
         # back to the original precision
         if precision == 'float32':
@@ -85,25 +78,20 @@ class GradientxInput(GradientAttribution):
             self.forward_func.float()
         else:
             raise AttributeError()
+        
+        # output type check
+        if isinstance(inputs, tuple):
+            inputs = inputs[0]
 
-        # clear gradient and detach from graph
-        undo_gradient_requirements(inputs, gradient_mask)
-
-        val_hook_handle.remove()
-        grad_hook_handle.remove()
-
-        # Efficiency property check
         if return_convergence_delta:
-            outputs_hat = (gv['val'] * gv['grad']).flatten(start_dim=1).sum(-1, keepdim=True)
+            outputs_hat = (inputs * grads).flatten(start_dim=1).sum(-1, keepdim=True)
             loss_brew = F.mse_loss(outputs, outputs_hat)
             self.loss_brew = loss_brew
 
         # importance of feature has sign field 
-        attn = gv['grad'] * gv['val']
+        grads = grads * inputs
 
-        # flush dictionary
-        gv = {}
-        return attn
+        return grads
 
 class BrewGradient(GradientAttribution):
     def __init__(self, forward_func: Callable) -> None:
@@ -137,19 +125,8 @@ class BrewGradient(GradientAttribution):
             raise AttributeError()
         
         # gradient setting 
-        gv = {}
         inputs = _format_input(inputs)
         gradient_mask = apply_gradient_requirements(inputs)
-
-        # augmented gradient hooks
-        def save_val_hook(self, x, y):
-            gv['val'] = x[0]
-        def save_grad_hook(self, x, y):
-            gv['grad'] = x[0]
-
-        #save grad to specific layer
-        val_hook_handle = layer.register_forward_hook(save_val_hook)
-        grad_hook_handle = layer.register_backward_hook(save_grad_hook)
         
         with torch.autograd.set_grad_enabled(True):
             # runs forward pass
@@ -159,7 +136,10 @@ class BrewGradient(GradientAttribution):
                 " take gradient with respect to multiple outputs."
             )
             # calculate gradient
-            torch.autograd.grad(torch.unbind(outputs), inputs)
+            grads = torch.autograd.grad(torch.unbind(outputs), inputs)[0]
+
+        # clear gradient and detach from graph
+        undo_gradient_requirements(inputs, gradient_mask)
 
         # back to the original precision
         if precision == 'float32':
@@ -168,23 +148,18 @@ class BrewGradient(GradientAttribution):
             self.forward_func.float()
         else:
             raise AttributeError()
+        
+        # output type check
+        if isinstance(inputs, tuple):
+            inputs = inputs[0]
 
-        # clear gradient and detach from graph
-        undo_gradient_requirements(inputs, gradient_mask)
-
-        val_hook_handle.remove()
-        grad_hook_handle.remove()
-
-        # Efficiency property check
         if return_convergence_delta:
-            outputs_hat = (gv['val'] * gv['grad']).flatten(start_dim=1).sum(-1, keepdim=True)
+            outputs_hat = (inputs * grads).flatten(start_dim=1).sum(-1, keepdim=True)
             loss_brew = F.mse_loss(outputs, outputs_hat)
             self.loss_brew = loss_brew
 
         # importance of feature has sign field 
-        sign = torch.sign(gv['val'])
-        attn = gv['grad'] * sign
+        sign = torch.sign(inputs)
+        grads = grads * sign
 
-        # flush dictionary
-        gv = {}
-        return attn
+        return grads

@@ -81,10 +81,10 @@ class HynetImgrModel(AbsESPnetModel):
 
         self.pt_model = pt_model(
             0, xai_mode, xai_iter,
-            0, 'D', batch_norm, bias, in_ch, out_ch
+            0, 'B2', batch_norm, bias, in_ch, out_ch
             )
         ckpt = torch.load(
-            '/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg16_bnwob/checkpoint.pth', 
+            '/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg7_bnwob/checkpoint.pth', 
             map_location=f"cuda:{torch.cuda.current_device()}"
             )
         self.pt_model.load_state_dict(ckpt['model'])

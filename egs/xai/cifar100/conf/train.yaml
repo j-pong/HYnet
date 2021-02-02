@@ -4,7 +4,7 @@ out_ch: 100
 
 accum_grad: 1
 max_epoch: 175
-batch_size: 88
+batch_size: 22
 
 best_model_criterion:
 -   - valid
@@ -27,9 +27,9 @@ optim_conf:
 
 xai_excute: 1
 xai_mode: bg
-xai_iter: 3
+xai_iter: 20
 st_excute: 0
 
 bias: 0
 batch_norm: 1
-cfg_type: B
+cfg_type: D
