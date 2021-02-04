@@ -20,7 +20,7 @@ encoder_conf:
     hidden_size: 1024
     output_size: 1024
 
-decoder: rnn
+decoder: beam_rnn
 decoder_conf:
     rnn_type: lstm
     num_layers: 2
