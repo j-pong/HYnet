@@ -4,11 +4,16 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from torch.nn.modules import BatchNorm2d
-
+from hynet.layers.batchnorm_wobias import BatchNorm2d
 from hynet.imgr.models.brew_module import BrewModel, BrewModuleList
 
 cfgs = {
+    'A':  [64,     'M', 128,      'M', 256, 256,           'M', 512, 512,           'M', 512, 512,           'M'],
+    'B0': [64, 64], # cehck 0
+    'B1': [64, 64, 'M'], # cehck 5
+    'B2': [64, 64, 'M', 128, 128, 'M'], # check 7 
+    'B3': [64, 64, 'M', 128, 128, 'M', 256, 256,           'M'], # check 9
+    'B4': [64, 64, 'M', 128, 128, 'M', 256, 256,           'M', 512, 512,           'M'], # check 11
     'B':  [64, 64, 'M', 128, 128, 'M', 256, 256,           'M', 512, 512,           'M', 512, 512,           'M'], # check 13
     'D':  [64, 64, 'M', 128, 128, 'M', 256, 256, 256,      'M', 512, 512, 512,      'M', 512, 512, 512,      'M'], # check 16
     'E':  [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'], # check 19

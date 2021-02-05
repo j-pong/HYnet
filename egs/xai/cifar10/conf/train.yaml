@@ -25,10 +25,10 @@ optim_conf:
     momentum: 0.9
 
 xai_excute: 1
-xai_mode: bg
-xai_iter: 10
+xai_mode: gxsi
+xai_iter: 3
 st_excute: 0
 
 bias: 0
 batch_norm: 1
-cfg_type: B
+cfg_type: nib_B

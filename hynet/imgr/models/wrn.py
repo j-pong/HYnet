@@ -1,3 +1,5 @@
+import warnings
+
 import math
 import torch
 import torch.nn as nn
@@ -130,3 +132,46 @@ class WideResNet(nn.Module):
         out = F.avg_pool2d(out, 8)
         out = out.view(-1, self.nChannels[3])
         return self.fc(out).cpu().detach().numpy()
+
+class EnDecoder(nn.Module):
+
+    def __init__(self,
+                 in_channels,
+                 num_classes,
+                 batch_norm=False,
+                 bias=False,
+                 model_type='wrn50_2'):
+        super(EnDecoder, self).__init__()
+
+        if batch_norm:
+            norm_layer = nn.BatchNorm2d
+        else:
+            norm_layer = None
+        if model_type == 'wrn50_2':
+            self.endecoder = ResNet(Bottleneck, [3, 4,  6,  3], num_classes, norm_layer=norm_layer)
+        elif model_type == 'wrn40_4':
+            from hynet.imgr.models.temp import WideResNet
+            self.endecoder = WideResNet(40, num_classes, widen_factor=4, cfg=[16, 32, 64])
+        elif model_type == 'wrn28_10':
+            from hynet.imgr.models.temp import WideResNet
+            self.endecoder = WideResNet(28, num_classes, widen_factor=10, cfg=[16, 32, 64])
+        else:
+            raise AttributeError("This model type is not supported!!")
+
+        self.focused_layer = self.endecoder.conv1
+
+        # check network wrong classification case
+        def all_zero_hook(self, input, result):
+            if isinstance(result, tuple):
+                res = result[0]
+            else:
+                res = result
+            aggregate = res.abs().flatten(start_dim=1).sum(-1)
+            flag = (aggregate > 0).float().mean()
+            if flag != 1.0:
+                warnings.warn("{} layer has all zero value : {}".format(self, flag))
+        for m in self.endecoder.named_modules():
+            m[1].register_forward_hook(all_zero_hook)
+
+    def forward(self, x, save_grad=False):
+        return self.endecoder.forward(x)

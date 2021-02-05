@@ -19,8 +19,9 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
+from hynet.imgr.models.nib_vgg import EnDecoder as NibVgg
 from hynet.imgr.models.vgg import EnDecoder as Vgg
-from hynet.imgr.models.resnet import EnDecoder as Resnet
+from hynet.imgr.models.wrn import EnDecoder as WideResNet
 
 from captum.attr import IntegratedGradients
 from captum.attr import Saliency, GuidedBackprop
@@ -28,7 +29,6 @@ from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
 from hynet.attr.bg import BrewGradient, GradientxInput
-# from hynet.attr.bg_ig import IntegratedGradients
 
 
 class HynetImgrModel(AbsESPnetModel):
@@ -64,18 +64,18 @@ class HynetImgrModel(AbsESPnetModel):
         self.out_ch = out_ch
 
         # network archictecture
-        if self.cfg_type == 'wrn50_2' or self.cfg_type == 'wrn40_4' or self.cfg_type == 'wrn28_10':
-            self.model = Resnet(in_channels=self.in_ch,
+        if self.cfg_type.find('wrn') != -1:
+            self.model = WideResNet(in_channels=self.in_ch,
+                                    num_classes=self.out_ch,
+                                    batch_norm=self.batch_norm,
+                                    bias=self.bias,
+                                    model_type=self.cfg_type)
+        elif self.cfg_type.find('nib') != -1:
+            self.model = NibVgg(in_channels=self.in_ch,
                                 num_classes=self.out_ch,
                                 batch_norm=self.batch_norm,
                                 bias=self.bias,
-                                model_type=self.cfg_type)
-        elif self.cfg_type == 'simnet':
-            self.model = Simnet(in_channels=self.in_ch,
-                             num_classes=self.out_ch,
-                             batch_norm=self.batch_norm,
-                             bias=self.bias,
-                             model_type=self.cfg_type)
+                                model_type=self.cfg_type.split('_')[-1])
         else:
             self.model = Vgg(in_channels=self.in_ch,
                              num_classes=self.out_ch,
@@ -115,47 +115,16 @@ class HynetImgrModel(AbsESPnetModel):
         label: torch.Tensor,
         logger
     ):
-        focused_layer = self.model.focused_layer
-        attn_hook_handle = None
-
         mask_prod = torch.ones_like(image)
 
         for i in range(self.max_iter):
             self.model.zero_grad()
 
-            def attn_apply(self, x):
-                return x[0] * mask_prod
-            attn_hook_handle = focused_layer.register_forward_pre_hook(
-                attn_apply)
-
             logit = self.model(image)
             acc = self._calc_acc(logit, label)
             logger['accs'].append(acc)
 
-            if self.xai_mode == 'brew':
-                # label generation
-                logit = self.model(image, save_grad=True)
-                logit_softmax = torch.softmax(logit, dim=-1)
-                mask = F.one_hot(label, num_classes=self.out_ch).bool()
-
-                # logit_softmax_cent = logit_softmax.masked_fill(~mask, 0.0)
-                logit_softmax_cent = mask.float()
-                outputs = logit.masked_select(mask).unsqueeze(-1)
-                attn_cent = self.model.backward_linear(
-                    image, logit_softmax_cent, outputs)
-                # logit_softmax_other = logit_softmax.masked_fill(mask, 0.0)
-                # attn_other = self.model.backward_linear(image, logit_softmax_other)
-                attn = attn_cent
-
-                loss_brew = self.model.loss_brew
-                # flush hook handle
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-            elif self.xai_mode == 'saliency':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
+            if self.xai_mode == 'pgxi':
                 image_ = image * mask_prod
                 saliency = Saliency(self.model)
                 grads = saliency.attribute(image_, target=label)
@@ -163,9 +132,6 @@ class HynetImgrModel(AbsESPnetModel):
                 attn = image * attn
                 loss_brew = 0.0
             elif self.xai_mode == 'ig':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
                 image_ = image * mask_prod
                 ig = IntegratedGradients(self.model)
                 attr_ig, delta = ig.attribute(image_,
@@ -174,24 +140,7 @@ class HynetImgrModel(AbsESPnetModel):
                                               return_convergence_delta=True)
                 attn = attr_ig.squeeze()
                 loss_brew = 0.0
-            elif self.xai_mode == 'ig_nt':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-                image_ = image * mask_prod
-                ig = IntegratedGradients(self.model)
-                nt = NoiseTunnel(ig)
-                attr_ig_nt = nt.attribute(image_,
-                                          target=label,
-                                          baselines=image * 0,
-                                          nt_type='smoothgrad',
-                                          n_samples=4, stdevs=0.02)
-                attn = attr_ig_nt.squeeze(0)
-                loss_brew = 0.0
             elif self.xai_mode == 'dl':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
                 image_ = image * mask_prod
                 dl = DeepLift(self.model)
                 attr_dl, delta = dl.attribute(image_,
@@ -200,52 +149,31 @@ class HynetImgrModel(AbsESPnetModel):
                                               return_convergence_delta=True)
                 attn = attr_dl.squeeze(0)
                 loss_brew = 0.0
-            elif self.xai_mode == 'dls':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
-                image_ = image * mask_prod
-                dls = DeepLiftShap(self.model)
-                attr_dls, delta = dls.attribute(image_,
-                                                baselines=image * 0,
-                                                target=label,
-                                                return_convergence_delta=True)
-                attn = attr_dls.squeeze(0)
-                loss_brew = 0.0
-            elif self.xai_mode == 'bg':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
+            elif self.xai_mode == 'gxsi':
                 image_ = image * mask_prod
                 bg = BrewGradient(self.model)
                 attr_bg = bg.attribute(image_,
-                                       layer=focused_layer,
                                        target=label)
 
                 attn = attr_bg.squeeze()
                 loss_brew = bg.loss_brew
             elif self.xai_mode == 'gxi':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
                 image_ = image * mask_prod
                 gxi = GradientxInput(self.model)
                 attr_gxi = gxi.attribute(image_,
-                                         layer=focused_layer,
                                          target=label)
 
                 attn = attr_gxi.squeeze()
                 loss_brew = gxi.loss_brew
             elif self.xai_mode == 'gbp':
-                if attn_hook_handle is not None:
-                    attn_hook_handle.remove()
-                    attn_hook_handle = None
                 image_ = image * mask_prod
                 gbp = GuidedBackprop(self.model)
                 attr_bg = gbp.attribute(image_,
                                         target=label)
                 attn = attr_bg.squeeze()
                 loss_brew = 0.0
+            else:
+                raise AttributeError("This attribution method is not supported!")
 
             # recasting to float type
             attn = attn.float()
@@ -325,25 +253,6 @@ class HynetImgrModel(AbsESPnetModel):
         pred = y_hat.argmax(dim=1, keepdim=True)
         correct = pred.eq(y.view_as(pred)).float().mean().item()
         return correct
-
-    def _calc_sim_acc(
-        self,
-        feat_flat,
-        label,
-        p_hat
-    ):
-        label_hat = F.one_hot(torch.arange(start=0, end=self.out_ch),
-                              num_classes=self.out_ch).to(label.device)
-        label_hat = label_hat.float()
-        label_hat = label_hat.view(1, self.out_ch, self.out_ch)
-        label_hat = label_hat.repeat(feat_flat.size(0), 1, 1)
-
-        attn_pos, attn_neg = self.inv(
-            feat_flat, label_hat, p_hat[0], split_to_np=False)
-        label_hat_hat_cs = F.cosine_similarity(
-            attn_pos, feat_flat.unsqueeze(1), dim=2)
-
-        return self._calc_acc(label_hat_hat_cs, label)
 
     def collect_feats(
         self,

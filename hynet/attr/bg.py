@@ -36,7 +36,6 @@ class GradientxInput(GradientAttribution):
     def attribute(  # type: ignore
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        layer, 
         target: TargetType = None,
         return_convergence_delta: bool = True,
         precision: str = 'float32'
@@ -107,7 +106,6 @@ class BrewGradient(GradientAttribution):
     def attribute(  # type: ignore
         self,
         inputs: TensorOrTupleOfTensorsGeneric,
-        layer, 
         target: TargetType = None,
         return_convergence_delta: bool = True,
         precision: str = 'float32'
