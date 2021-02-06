@@ -28,7 +28,7 @@ from captum.attr import Saliency, GuidedBackprop
 from captum.attr import DeepLift, DeepLiftShap
 from captum.attr import NoiseTunnel
 
-from hynet.attr.bg import BrewGradient, GradientxInput
+from hynet.attr.custom_gba import GradientxSingofInput, GradientxInput
 
 
 class HynetImgrModel(AbsESPnetModel):
@@ -64,13 +64,7 @@ class HynetImgrModel(AbsESPnetModel):
         self.out_ch = out_ch
 
         # network archictecture
-        if self.cfg_type.find('wrn') != -1:
-            self.model = WideResNet(in_channels=self.in_ch,
-                                    num_classes=self.out_ch,
-                                    batch_norm=self.batch_norm,
-                                    bias=self.bias,
-                                    model_type=self.cfg_type)
-        elif self.cfg_type.find('nib') != -1:
+        if self.cfg_type.find('nib') != -1:
             self.model = NibVgg(in_channels=self.in_ch,
                                 num_classes=self.out_ch,
                                 batch_norm=self.batch_norm,
@@ -111,6 +105,7 @@ class HynetImgrModel(AbsESPnetModel):
     @torch.no_grad()
     def forward_xai(
         self,
+        model,
         image: torch.Tensor,
         label: torch.Tensor,
         logger
@@ -118,62 +113,74 @@ class HynetImgrModel(AbsESPnetModel):
         mask_prod = torch.ones_like(image)
 
         for i in range(self.max_iter):
-            self.model.zero_grad()
+            model.zero_grad()
 
-            logit = self.model(image)
-            acc = self._calc_acc(logit, label)
-            logger['accs'].append(acc)
+            image_ = image * mask_prod
 
             if self.xai_mode == 'pgxi':
-                image_ = image * mask_prod
-                saliency = Saliency(self.model)
+                saliency = Saliency(model)
+
                 grads = saliency.attribute(image_, target=label)
+
                 attn = grads.squeeze()
                 attn = image * attn
+                
                 loss_brew = 0.0
             elif self.xai_mode == 'ig':
-                image_ = image * mask_prod
-                ig = IntegratedGradients(self.model)
+                ig = IntegratedGradients(model)
+
                 attr_ig, delta = ig.attribute(image_,
                                               baselines=image * 0,
                                               target=label,
                                               return_convergence_delta=True)
+                
                 attn = attr_ig.squeeze()
+
                 loss_brew = 0.0
             elif self.xai_mode == 'dl':
-                image_ = image * mask_prod
-                dl = DeepLift(self.model)
+                dl = DeepLift(model)
+                
                 attr_dl, delta = dl.attribute(image_,
                                               baselines=image * 0,
                                               target=label,
                                               return_convergence_delta=True)
+
                 attn = attr_dl.squeeze(0)
+                
                 loss_brew = 0.0
             elif self.xai_mode == 'gxsi':
-                image_ = image * mask_prod
-                bg = BrewGradient(self.model)
+                bg = GradientxSingofInput(model)
+
                 attr_bg = bg.attribute(image_,
                                        target=label)
 
                 attn = attr_bg.squeeze()
+
                 loss_brew = bg.loss_brew
-            elif self.xai_mode == 'gxi':
-                image_ = image * mask_prod
-                gxi = GradientxInput(self.model)
+            elif self.xai_mode == 'gxi':                
+                gxi = GradientxInput(model)
+
                 attr_gxi = gxi.attribute(image_,
                                          target=label)
 
                 attn = attr_gxi.squeeze()
+
                 loss_brew = gxi.loss_brew
             elif self.xai_mode == 'gbp':
-                image_ = image * mask_prod
-                gbp = GuidedBackprop(self.model)
+                gbp = GuidedBackprop(model)
+                
                 attr_bg = gbp.attribute(image_,
                                         target=label)
+
                 attn = attr_bg.squeeze()
+
                 loss_brew = 0.0
             else:
                 raise AttributeError("This attribution method is not supported!")
+
+            logit = model(image_)
+            acc = self._calc_acc(logit, label)
+            logger['accs'].append(acc)
 
             # recasting to float type
             attn = attn.float()
@@ -191,7 +198,7 @@ class HynetImgrModel(AbsESPnetModel):
                 attn2 = mask.permute(0, 2, 3, 1)
                 logger['attns'][1].append(attn2.sum(-1))
 
-        self.model.zero_grad()
+        model.zero_grad()
 
         return logger
 
@@ -224,21 +231,22 @@ class HynetImgrModel(AbsESPnetModel):
             )
 
         # 3. attribution with gradient-based methods
-        if self.xai_excute and not self.training:
-            assert self.model.training == False
-            logger = self.forward_xai(image, label, logger)
+        if not self.training:
+            if self.xai_excute:
+                assert self.model.training == False
+                logger = self.forward_xai(self.model, image, label, logger)
 
-            stats['loss_brew'] = logger['loss_brew']
-            for i in range(1, self.max_iter):
-                stats['acc_iter{}'.format(i)] = logger['accs'][i]
-            stats['aux'] = [logger['imgs'],
-                            logger['attns'][0],
-                            logger['attns'][1]]
-        elif not self.training:
-            image_ = image.permute(0, 2, 3, 1)
-            stats['aux'] = [[image_],
-                            [image_[:, :, :, 0]],
-                            [image_[:, :, :, 1]]]
+                stats['loss_brew'] = logger['loss_brew']
+                for i in range(1, self.max_iter):
+                    stats['acc_iter{}'.format(i)] = logger['accs'][i]
+                stats['aux'] = [logger['imgs'],
+                                logger['attns'][0],
+                                logger['attns'][1]]
+            else:
+                image_ = image.permute(0, 2, 3, 1)
+                stats['aux'] = [[image_],
+                                [image_[:, :, :, 0]],
+                                [image_[:, :, :, 1]]]
 
         loss, stats, weight = force_gatherable(
             (loss, stats, b_sz), loss.device)

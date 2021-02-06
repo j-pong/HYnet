@@ -29,31 +29,13 @@ class ImgrTask(AbsTask):
     @classmethod
     def add_task_arguments(cls, parser: argparse.ArgumentParser):
         group = parser.add_argument_group(description="Task related")
-        parser.set_defaults(
-            num_att_plot=0,
-            iterator_type="task")
-        
-        # Custom task
-        group.add_argument(
-            "--xai_excute",
-            type=int,
-            default=0 
-        )
-        group.add_argument(
-            "--xai_mode",
-            type=str,
-            default="bg"
-        )
-        group.add_argument(
-            "--xai_iter",
-            type=int,
-            default=3 
-        )
-        group.add_argument(
-            "--st_excute",
-            type=int,
-            default=0 
-        )
+        parser.set_defaults(num_att_plot=0, iterator_type="task")
+        group.add_argument("--xai_excute", type=int, default=0)
+        group.add_argument("--xai_mode", type=str, default="gxi")
+        group.add_argument("--xai_iter", type=int, default=3)
+        group.add_argument("--st_excute", type=int, default=0)
+
+        group = parser.add_argument_group(description="Input related")
         group.add_argument(
             "--dataset",
             type=str,
@@ -65,32 +47,14 @@ class ImgrTask(AbsTask):
                 "imagenet"
             ]   
         )
+        
+        group = parser.add_argument_group(description="Input related")
         # Model configuration
-        group.add_argument(
-            "--cfg_type",
-            type=str,
-            default="D" 
-        )
-        group.add_argument(
-            "--batch_norm",
-            type=int,
-            default=0 
-        )
-        group.add_argument(
-            "--bias",
-            type=int,
-            default=0 
-        )
-        group.add_argument(
-            "--in_ch",
-            type=int,
-            default=3
-        )
-        group.add_argument(
-            "--out_ch",
-            type=int,
-            default=10
-        )
+        group.add_argument("--cfg_type", type=str, default="D")
+        group.add_argument("--batch_norm", type=int, default=0)
+        group.add_argument("--bias", type=int, default=0)
+        group.add_argument("--in_ch", type=int, default=3)
+        group.add_argument("--out_ch", type=int, default=10)
 
     @classmethod
     def build_collate_fn(

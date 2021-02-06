@@ -1,0 +1,6 @@
+# -m hynet.bin.imgr_inference --ngpu 1 --output_dir exp/imgr_train_vgg13_bnwob --config conf/decode.yaml 
+# Started at Sat Feb  6 14:14:41 KST 2021
+#
+bash: line 1: -m: command not found
+# Accounting: time=0 threads=1
+# Ended (code 127) at Sat Feb  6 14:14:41 KST 2021, elapsed time 0 seconds

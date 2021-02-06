@@ -1,172 +1,246 @@
 #!/usr/bin/env python3
 import argparse
-import dataclasses
-from dataclasses import is_dataclass
 import logging
-import time
+from pathlib import Path
+import sys
+
 from typing import Dict
-from typing import Iterable
 from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Sequence
-
-import numpy as np
-
-import humanfriendly
-import torch
+from typing import Union
 from typeguard import check_argument_types
 
-from espnet2.iterators.abs_iter_factory import AbsIterFactory
-from espnet2.schedulers.abs_scheduler import AbsScheduler
-from espnet2.schedulers.abs_scheduler import AbsValEpochStepScheduler
-from espnet2.schedulers.abs_scheduler import AbsEpochStepScheduler
-from espnet2.torch_utils.device_funcs import to_device
-from espnet2.torch_utils.recursive_op import recursive_average
-from espnet2.torch_utils.set_all_random_seed import set_all_random_seed
-from espnet2.train.reporter import Reporter
-from espnet2.train.reporter import SubReporter
-from espnet2.train.abs_espnet_model import AbsESPnetModel
-from espnet2.train.distributed_utils import DistributedOption
+import numpy as np
+import torch
+import torchvision.transforms as transforms
 
-from espnet2.train.trainer import Trainer, ReduceOp, TrainerOptions, GradScaler, SummaryWriter, Path
+from espnet.utils.cli_utils import get_commandline_args
+from espnet2.utils import config_argparse
+from espnet2.torch_utils.device_funcs import to_device
+
+from hynet.iterators.img_iter_factory import ImgrIterFactory
+from hynet.train.dataset import MNISTDataset, CIFAR10Dataset, CIFAR100Dataset
+import torchvision.transforms as transforms
 
 from hynet.tasks.imgr import ImgrTask
 
 from tqdm import tqdm
 
-class ImgrInference(Trainer):
-    @classmethod
-    def run(
-        cls,
-        model: AbsESPnetModel,
-        optimizers: Sequence[torch.optim.Optimizer],
-        schedulers: Sequence[Optional[AbsScheduler]],
-        train_iter_factory: AbsIterFactory,
-        valid_iter_factory: AbsIterFactory,
-        plot_attention_iter_factory: Optional[AbsIterFactory],
-        reporter: Reporter,
-        scaler: Optional[GradScaler],
-        output_dir: Path,
-        max_epoch: int,
-        seed: int,
-        patience: Optional[int],
-        keep_nbest_models: int,
-        early_stopping_criterion: Sequence[str],
-        best_model_criterion: Sequence[Sequence[str]],
-        val_scheduler_criterion: Sequence[str],
-        trainer_options,
-        distributed_option: DistributedOption,
-        find_unused_parameters: bool = False,
-    ) -> None:
-        """Perform training. This method performs the main process of training."""
-        assert check_argument_types()
-        # NOTE(kamo): Don't check the type more strictly as far trainer_options
-        assert is_dataclass(trainer_options), type(trainer_options)
+# def plot_(
+#     img_list: List, 
+#     output_dir: Path, 
+#     ids: int, 
+#     epoch: int,
+#     max_plot=3
+# ) -> None:
+#     import matplotlib.pyplot as plt
 
-        start_epoch = reporter.get_epoch() + 1
-
-        dp_model = model
-
-        reporter.set_epoch(start_epoch)
-
-        if not distributed_option.distributed or distributed_option.dist_rank == 0:
-            with reporter.observe("attns") as sub_reporter:
-                cls.plot_attention(
-                    model=dp_model,
-                    output_dir=output_dir / "brew_ws",
-                    iterator=valid_iter_factory.build_iter(start_epoch),
-                    reporter=sub_reporter,
-                    options=trainer_options
-                )
+#     col_max = len(img_list)
+#     row_max = len(img_list[0])
     
-            logging.info(reporter.log_message())
+#     for k in range(max_plot):
+#         plt.clf()
 
-    @classmethod
-    @torch.no_grad()
-    def plot_attention(
-        cls,
-        model: torch.nn.Module,
-        output_dir: Path,
-        iterator: Iterable[Dict[str, torch.Tensor]],
-        reporter: SubReporter,
-        options: TrainerOptions,
-        flag: bool = False,
-    ) -> None:
-        assert check_argument_types()
-        ngpu = options.ngpu
-        no_forward_run = options.no_forward_run
+#         for i in range(col_max):
+#             for j, img in enumerate(img_list[i]):
+#                 img_ = img[k].detach().cpu().numpy()
 
-        model.eval()
-        iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
-        for (ids, batch) in tqdm(iterator):
-            assert isinstance(batch, dict), type(batch)
+#                 plt.subplot(col_max, row_max, i * row_max + (j + 1))
 
-            batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
-            if no_forward_run:
-                continue
+#                 plt.imshow(img_, cmap='seismic')
+#                 plt.colorbar()
 
-            _, stats, weight = model(**batch)
+#                 plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
 
-            
-            img_list = stats['aux']
-            if flag:
-                cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
-                flag = False
-            del stats['aux']
+#         if output_dir is not None:
+#             p = output_dir / f"valid_{ids[k]}" / f"{ids[k]}_{epoch}ep.png"
+#             p.parent.mkdir(parents=True, exist_ok=True)
+#             plt.savefig(p)
 
-            reporter.register(stats, weight)
-            reporter.next()
+def inference(
+    args: argparse.Namespace,
+):
+    assert check_argument_types()
+    train = False
 
-    @classmethod
-    def plot_(
-        cls, 
-        img_list: List, 
-        output_dir: Path, 
-        ids: int, 
-        epoch: int,
-        max_plot=3
-    ) -> None:
-        import matplotlib.pyplot as plt
+    if args.dataset == 'mnist':
+        transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507], std=[0.267])
+            ])
+        dataset = MNISTDataset(
+            root='data',
+            train=train,
+            download=False,
+            transform=transform)
+    elif args.dataset == 'cifar10':
+        if train:
+            transform = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+            ])
+        else:
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+            ])
+        dataset = CIFAR10Dataset(root='data',
+                                    train=train,
+                                    download=False,
+                                    transform=transform)
+    elif args.dataset == 'cifar100':
+        if train:
+            transform = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+            ])
+        else:
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276])
+            ])
+        dataset = CIFAR100Dataset(root='data',
+                                    train=train,
+                                    download=False,
+                                    transform=transform)
+    else: 
+        raise AttributeError("This dataset is not supported!")
 
-        col_max = len(img_list)
-        row_max = len(img_list[0])
-        
-        for k in range(max_plot):
-            plt.clf()
+    iterator = ImgrIterFactory(
+                dataset=dataset,
+                batch_size=args.batch_size,
+                seed=0,
+                num_iters_per_epoch=1,
+                shuffle=False,
+                num_workers=args.num_workers,
+                collate_fn=None,
+                pin_memory=args.ngpu > 0,
+                )
+    iterator = iterator.build_iter(1)
 
-            for i in range(col_max):
-                for j, img in enumerate(img_list[i]):
-                    img_ = img[k].detach().cpu().numpy()
+    if args.st_excute:
+        from hynet.imgr.imgr_st_model import HynetImgrModel
+    else:
+        from hynet.imgr.imgr_model import HynetImgrModel
 
-                    plt.subplot(col_max, row_max, i * row_max + (j + 1))
+    model = HynetImgrModel(
+        args.xai_excute,
+        args.xai_mode,
+        args.xai_iter,
+        args.st_excute,
+        args.cfg_type,
+        args.batch_norm,
+        args.bias,
+        args.in_ch,
+        args.out_ch
+    )
+    device = f"cuda:{torch.cuda.current_device()}"
+    model.to(device)
+    # model.load_state_dict(torch.load(args.model_file, map_location=device))
+    model.load_state_dict(torch.load("/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg13_bnwob/62epoch.pth", map_location=device))
+    
+    ngpu = args.ngpu
+    model.eval()
+    count = 0
+    acc_accum0 = 0.0
+    acc_accum1 = 0.0
+    acc_accum2 = 0.0
+    for (ids, batch) in tqdm(iterator):
+        assert isinstance(batch, dict), type(batch)
 
-                    plt.imshow(img_, cmap='seismic')
-                    plt.colorbar()
+        batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
 
-                    plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
+        _, stats, weight = model(**batch)
 
-            if output_dir is not None:
-                p = output_dir / f"valid_{ids[k]}" / f"{ids[k]}_{epoch}ep.png"
-                p.parent.mkdir(parents=True, exist_ok=True)
-                plt.savefig(p)
+        img_list = stats['aux']
+        # # if flag:
+        # #     cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
+        # #     flag = False
+        del stats['aux']
+        acc_accum0 += stats['acc_iter0']
+        acc_accum1 += stats['acc_iter1']
+        acc_accum2 += stats['acc_iter2']
 
-
-class ImgrTaskInference(ImgrTask):
-    # If you need more than one optimizers, change this value
-    num_optimizers: int = 1
-
-    # If you need to modify train() or eval() procedures, change Trainer class here
-    trainer = ImgrInference
+        count += 1
+    print(acc_accum0 / count)
+    print(acc_accum1 / count)
+    print(acc_accum2 / count)
 
 def get_parser():
-    parser = ImgrTaskInference.get_parser()
+    parser = config_argparse.ArgumentParser(
+        description="IMGR Decoding",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--log_level",
+        type=lambda x: x.upper(),
+        default="INFO",
+        choices=("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"),
+        help="The verbose level of logging",
+    )
+
+    parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--batch_size", type=int, default=88)
+    parser.add_argument(
+        "--ngpu",
+        type=int,
+        default=0,
+        help="The number of gpus. 0 indicates CPU mode",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="Random seed")
+    parser.add_argument(
+        "--dtype",
+        default="float32",
+        choices=["float16", "float32", "float64"],
+        help="Data type",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=1,
+        help="The number of workers used for DataLoader",
+    )
+
+    group = parser.add_argument_group("Task related")
+    group.add_argument("--xai_excute", type=int, default=0)
+    group.add_argument("--xai_mode", type=str, default="gxi")
+    group.add_argument("--xai_iter", type=int, default=3)
+    group.add_argument("--st_excute", type=int, default=0)
+
+    group = parser.add_argument_group("Input related")
+    group.add_argument(
+        "--dataset",
+        type=str,
+        default="cifar10",
+        choices=[
+            "mnist",
+            "cifar10",
+            "cifar100",
+            "imagenet"
+        ]   
+    )
+    group.add_argument("--model_file", type=str, default='')
+
+    group = parser.add_argument_group("Model related")
+    group.add_argument("--cfg_type", type=str, default="D")
+    group.add_argument("--batch_norm", type=int, default=0)
+    group.add_argument("--bias", type=int, default=0)
+    group.add_argument("--in_ch", type=int, default=3)
+    group.add_argument("--out_ch", type=int, default=10)
+
     return parser
 
-
 def main(cmd=None):
-    ImgrTaskInference.main(cmd=cmd)
-
+    print(get_commandline_args(), file=sys.stderr)
+    parser = get_parser()
+    args = parser.parse_args(cmd)
+    kwargs = vars(args)
+    kwargs.pop("config", None)
+    inference(args)
 
 if __name__ == "__main__":
     main()

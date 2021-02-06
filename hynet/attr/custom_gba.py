@@ -92,7 +92,7 @@ class GradientxInput(GradientAttribution):
 
         return grads
 
-class BrewGradient(GradientAttribution):
+class GradientxSingofInput(GradientAttribution):
     def __init__(self, forward_func: Callable) -> None:
         r"""
         Args:

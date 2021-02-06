@@ -26,7 +26,6 @@ class ImgrTrainer(Trainer):
     ) -> None:
         """Perform training. This method performs the main process of training."""
         assert check_argument_types()
-        # NOTE(kamo): Don't check the type more strictly as far trainer_options
         assert is_dataclass(trainer_options), type(trainer_options)
 
         start_epoch = reporter.get_epoch() + 1
@@ -220,8 +219,6 @@ class ImgrTrainer(Trainer):
 
         model.eval()
 
-        # [For distributed] Because iteration counts are not always equals between
-        # processes, send stop-flag to the other processes if iterator is finished
         iterator_stop = torch.tensor(0).to("cuda" if ngpu > 0 else "cpu")
         for (_, batch) in iterator:
             assert isinstance(batch, dict), type(batch)

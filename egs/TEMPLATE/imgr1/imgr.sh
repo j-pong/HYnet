@@ -35,10 +35,11 @@ expdir=exp           # Directory to save experiments.
 python=python3       # Specify python to execute espnet commands
 resume=false
 
-# Ingr model related
+# Imgr model related
 imgr_tag=
 imgr_exp=
 imgr_config=conf/train.yaml
+imgr_decode_config=conf/decode.yaml
 imgr_args=
 
 # Feature extraction related
@@ -86,7 +87,6 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 
     mkdir -p "${imgr_exp}"
 
-    # NOTE(kamo): --fold_length is used only if --batch_type=folded and it's ignored in the other case
     log "IMGR training started... log: '${imgr_exp}/train.log'"
     if echo "${cuda_cmd}" | grep -e queue.pl -e queue-freegpu.pl &> /dev/null; then
         # SGE can't include "/" in a job name
@@ -113,13 +113,11 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     log "Stage 2: IMGR Inference"
 
     _opts=
-    if [ -n "${imgr_config}" ]; then
-        _opts+="--config ${imgr_config} "
+    if [ -n "${imgr_decode_config}" ]; then
+        _opts+="--config ${imgr_decode_config} "
     fi
-
     mkdir -p "${imgr_exp}"
 
-    # NOTE(kamo): --fold_length is used only if --batch_type=folded and it's ignored in the other case
     log "IMGR inference started... log: '${imgr_exp}/decode.log'"
     if echo "${cuda_cmd}" | grep -e queue.pl -e queue-freegpu.pl &> /dev/null; then
         # SGE can't include "/" in a job name
@@ -129,17 +127,22 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     fi
 
     # shellcheck disable=SC2086
-    ${python} -m espnet2.bin.launch \
-        --cmd "${cuda_cmd} --name ${jobname}" \
-        --log "${imgr_exp}"/decode.log \
-        --ngpu 1 \
-        --num_nodes "${num_nodes}" \
-        --init_file_prefix "${imgr_exp}"/.dist_init_ \
-        --multiprocessing_distributed true -- \
-        ${python} -m hynet.bin.imgr_inference \
-                    --resume true \
-                    --output_dir "${imgr_exp}" \
-                    ${_opts} ${imgr_args}                                              
+    # ${python} -m espnet2.bin.launch \
+    #     --cmd "${cuda_cmd} --name ${jobname}" \
+    #     --log "${imgr_exp}"/decode.log \
+    #     --ngpu 1 \
+    #     --num_nodes "${num_nodes}" \
+    #     --init_file_prefix "${imgr_exp}"/.dist_init_ -- \
+    #     CUDA_VISIBLE_DEVICES=0 ${python} -m hynet.bin.imgr_inference \
+    #                 --output_dir "${imgr_exp}" \
+    #                 ${_opts} ${imgr_args}
+
+    # shellcheck disable=SC2086
+    ${cuda_cmd} --gpu 1 "${imgr_exp}"/decode.log \
+        CUDA_VISIBLE_DEVICES=0 ${python} -m hynet.bin.imgr_inference \
+            --ngpu 1 \
+            --output_dir "${imgr_exp}" \
+            ${_opts} ${imgr_args}
 
 fi
 
