@@ -31,4 +31,4 @@ st_excute: 0
 
 bias: 0
 batch_norm: 1
-cfg_type: nib_B
+cfg_type: nib_D

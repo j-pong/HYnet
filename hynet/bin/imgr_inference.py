@@ -25,36 +25,29 @@ from hynet.tasks.imgr import ImgrTask
 
 from tqdm import tqdm
 
-# def plot_(
-#     img_list: List, 
-#     output_dir: Path, 
-#     ids: int, 
-#     epoch: int,
-#     max_plot=3
-# ) -> None:
-#     import matplotlib.pyplot as plt
-
-#     col_max = len(img_list)
-#     row_max = len(img_list[0])
+def plot_and_save(
+    img_list: List, 
+    output_dir: str,
+    xai_mode: str, 
+    ids: int, 
+    max_plot=3
+) -> None:
+    import matplotlib.pyplot as plt
     
-#     for k in range(max_plot):
-#         plt.clf()
+    for k in range(max_plot):
+        img_ = img_list[k].detach().cpu().numpy()
+        for j in range(50):
+            plt.clf()
 
-#         for i in range(col_max):
-#             for j, img in enumerate(img_list[i]):
-#                 img_ = img[k].detach().cpu().numpy()
+            plt.imshow(img_[j], cmap='seismic')
+            plt.colorbar()
 
-#                 plt.subplot(col_max, row_max, i * row_max + (j + 1))
+            plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
 
-#                 plt.imshow(img_, cmap='seismic')
-#                 plt.colorbar()
-
-#                 plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
-
-#         if output_dir is not None:
-#             p = output_dir / f"valid_{ids[k]}" / f"{ids[k]}_{epoch}ep.png"
-#             p.parent.mkdir(parents=True, exist_ok=True)
-#             plt.savefig(p)
+            if output_dir is not None:
+                p = Path(output_dir) / Path("masked_input") / Path(xai_mode) / Path(f"valid_{ids[j]}_iter{k}.png")
+                p.parent.mkdir(parents=True, exist_ok=True)
+                plt.savefig(p)
 
 def inference(
     args: argparse.Namespace,
@@ -139,35 +132,40 @@ def inference(
     )
     device = f"cuda:{torch.cuda.current_device()}"
     model.to(device)
-    # model.load_state_dict(torch.load(args.model_file, map_location=device))
-    model.load_state_dict(torch.load("/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg13_bnwob/62epoch.pth", map_location=device))
+    model.load_state_dict(torch.load(Path(args.output_dir) / Path(args.model_file), map_location=device))
     
     ngpu = args.ngpu
+    
     model.eval()
+    
+    flag = args.plot_flag
     count = 0
-    acc_accum0 = 0.0
-    acc_accum1 = 0.0
-    acc_accum2 = 0.0
+    reporter = {}
     for (ids, batch) in tqdm(iterator):
         assert isinstance(batch, dict), type(batch)
 
         batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
 
-        _, stats, weight = model(**batch)
-
-        img_list = stats['aux']
-        # # if flag:
-        # #     cls.plot_(img_list, output_dir, ids, reporter.get_epoch())
-        # #     flag = False
-        del stats['aux']
-        acc_accum0 += stats['acc_iter0']
-        acc_accum1 += stats['acc_iter1']
-        acc_accum2 += stats['acc_iter2']
-
+        _, stats, weight = model(**batch, return_plot=flag)
+        
+        if flag:
+            img_list = stats['imgs']
+            plot_and_save(img_list, args.output_dir, args.xai_mode, ids, max_plot=args.xai_iter)
+            flag = False
+            del stats['imgs']
+        
+        if count == 0:
+            for k, v in stats.items():
+                reporter[k] = v
+        else:
+            for k, v in stats.items():
+                reporter[k] += v                
         count += 1
-    print(acc_accum0 / count)
-    print(acc_accum1 / count)
-    print(acc_accum2 / count)
+
+    print("=========Results=========")
+    for k, v in reporter.items():
+        print(k+':', float(v / count))
+    
 
 def get_parser():
     parser = config_argparse.ArgumentParser(
@@ -204,6 +202,7 @@ def get_parser():
         default=1,
         help="The number of workers used for DataLoader",
     )
+    parser.add_argument("--plot_flag", type=int, default=0, help="Return Maksed Input Feature for saving at output dir")
 
     group = parser.add_argument_group("Task related")
     group.add_argument("--xai_excute", type=int, default=0)

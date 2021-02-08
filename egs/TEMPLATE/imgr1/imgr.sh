@@ -104,9 +104,9 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         --init_file_prefix "${imgr_exp}"/.dist_init_ \
         --multiprocessing_distributed true -- \
         CUDA_VISIBLE_DEVICES=${ngpu_id} ${python} -m hynet.bin.imgr_train \
-                                                    --resume ${resume} \
-                                                    --output_dir "${imgr_exp}" \
-                                                    ${_opts} ${imgr_args}
+                                                  --resume ${resume} \
+                                                  --output_dir "${imgr_exp}" \
+                                                  ${_opts} ${imgr_args}
 fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
@@ -125,17 +125,6 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     else
         jobname="${imgr_exp}/decode.log"
     fi
-
-    # shellcheck disable=SC2086
-    # ${python} -m espnet2.bin.launch \
-    #     --cmd "${cuda_cmd} --name ${jobname}" \
-    #     --log "${imgr_exp}"/decode.log \
-    #     --ngpu 1 \
-    #     --num_nodes "${num_nodes}" \
-    #     --init_file_prefix "${imgr_exp}"/.dist_init_ -- \
-    #     CUDA_VISIBLE_DEVICES=0 ${python} -m hynet.bin.imgr_inference \
-    #                 --output_dir "${imgr_exp}" \
-    #                 ${_opts} ${imgr_args}
 
     # shellcheck disable=SC2086
     ${cuda_cmd} --gpu 1 "${imgr_exp}"/decode.log \

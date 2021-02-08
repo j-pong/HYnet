@@ -48,8 +48,7 @@ class ImgrTask(AbsTask):
             ]   
         )
         
-        group = parser.add_argument_group(description="Input related")
-        # Model configuration
+        group = parser.add_argument_group(description="Model related")
         group.add_argument("--cfg_type", type=str, default="D")
         group.add_argument("--batch_norm", type=int, default=0)
         group.add_argument("--bias", type=int, default=0)

@@ -35,15 +35,16 @@ class HynetImgrModel(AbsESPnetModel):
     """Image recognition model"""
 
     def __init__(self,
-                 xai_excute,
-                 xai_mode,
-                 xai_iter,
-                 st_excute,
-                 cfg_type,
-                 batch_norm,
-                 bias,
-                 in_ch,
-                 out_ch):
+                 xai_excute: int,
+                 xai_mode: str,
+                 xai_iter: int,
+                 st_excute: int,
+                 cfg_type: str,
+                 batch_norm: int,
+                 bias: int,
+                 in_ch: int,
+                 out_ch: int,
+                 ):
         assert check_argument_types()
         super().__init__()
         # task related
@@ -125,7 +126,7 @@ class HynetImgrModel(AbsESPnetModel):
                 attn = grads.squeeze()
                 attn = image * attn
                 
-                loss_brew = 0.0
+                delta = 0.0
             elif self.xai_mode == 'ig':
                 ig = IntegratedGradients(model)
 
@@ -136,7 +137,7 @@ class HynetImgrModel(AbsESPnetModel):
                 
                 attn = attr_ig.squeeze()
 
-                loss_brew = 0.0
+                delta = 0.0
             elif self.xai_mode == 'dl':
                 dl = DeepLift(model)
                 
@@ -147,7 +148,7 @@ class HynetImgrModel(AbsESPnetModel):
 
                 attn = attr_dl.squeeze(0)
                 
-                loss_brew = 0.0
+                delta = 0.0
             elif self.xai_mode == 'gxsi':
                 bg = GradientxSingofInput(model)
 
@@ -156,7 +157,7 @@ class HynetImgrModel(AbsESPnetModel):
 
                 attn = attr_bg.squeeze()
 
-                loss_brew = bg.loss_brew
+                delta = bg.loss_brew
             elif self.xai_mode == 'gxi':                
                 gxi = GradientxInput(model)
 
@@ -165,7 +166,7 @@ class HynetImgrModel(AbsESPnetModel):
 
                 attn = attr_gxi.squeeze()
 
-                loss_brew = gxi.loss_brew
+                delta = gxi.loss_brew
             elif self.xai_mode == 'gbp':
                 gbp = GuidedBackprop(model)
                 
@@ -174,29 +175,26 @@ class HynetImgrModel(AbsESPnetModel):
 
                 attn = attr_bg.squeeze()
 
-                loss_brew = 0.0
+                delta = 0.0
             else:
                 raise AttributeError("This attribution method is not supported!")
-
+            
+            # Measure the MIA
             logit = model(image_)
             acc = self._calc_acc(logit, label)
+
+            # Normalzation the attributions for obtaining the attrbituion mask
+            attn = attn.float()
+            mask = self.feat_minmax_norm(attn, 1.0, 0.0)
+
+            # Update the attribution mask
+            mask_prod *= mask
+            
             logger['accs'].append(acc)
 
-            # recasting to float type
-            attn = attn.float()
-
-            mask = self.feat_minmax_norm(attn, 1.0, 0.0)
-            image_ = (image * mask_prod).permute(0, 2, 3, 1)
-            mask_prod *= mask
-
-            logger['loss_brew'] = loss_brew
-
             if not self.training:
+                image_ = image_.permute(0, 2, 3, 1)
                 logger['imgs'].append(image_.sum(-1))
-                attn1 = attn.permute(0, 2, 3, 1)
-                logger['attns'][0].append(attn1.sum(-1))
-                attn2 = mask.permute(0, 2, 3, 1)
-                logger['attns'][1].append(attn2.sum(-1))
 
         model.zero_grad()
 
@@ -205,48 +203,41 @@ class HynetImgrModel(AbsESPnetModel):
     def forward(
         self,
         image: torch.Tensor,
-        label: torch.Tensor
+        label: torch.Tensor,
+        return_plot: bool=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         logger = {
-            'loss_brew': 0.0,
-            'imgs': [],
-            'attns': [[], []],
-            'accs': []
+            'accs': [],
+            'imgs': []
         }
 
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
 
-        # 1. feedforward
+        # 1. Feedforward
         logit = self.model(image)
 
-        # 2. caculate measurment
+        # 2. Coculate loss and accuracy
         loss = self.criterion(logit, label)
         acc = self._calc_acc(logit, label)
 
         stats = dict(
-                loss=loss.detach(),
+                loss_iter0=loss.detach(),
                 acc_iter0=acc
-            )
+                )
 
-        # 3. attribution with gradient-based methods
-        if not self.training:
-            if self.xai_excute:
-                assert self.model.training == False
-                logger = self.forward_xai(self.model, image, label, logger)
+        # 3. Attributions are caculated by the GBA methods
+        if not self.training and self.xai_excute:
+            assert self.model.training == False
 
-                stats['loss_brew'] = logger['loss_brew']
-                for i in range(1, self.max_iter):
-                    stats['acc_iter{}'.format(i)] = logger['accs'][i]
-                stats['aux'] = [logger['imgs'],
-                                logger['attns'][0],
-                                logger['attns'][1]]
-            else:
-                image_ = image.permute(0, 2, 3, 1)
-                stats['aux'] = [[image_],
-                                [image_[:, :, :, 0]],
-                                [image_[:, :, :, 1]]]
+            logger = self.forward_xai(self.model, image, label, logger)
+
+            for i in range(1, self.max_iter):
+                stats['acc_iter{}'.format(i)] = logger['accs'][i]
+
+            if return_plot:
+                stats['imgs'] = logger['imgs']
 
         loss, stats, weight = force_gatherable(
             (loss, stats, b_sz), loss.device)

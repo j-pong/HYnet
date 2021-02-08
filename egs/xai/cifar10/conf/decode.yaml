@@ -1,13 +1,17 @@
+model_file: latest.pth
+
 dataset: cifar10
 in_ch: 3
 out_ch: 10
-batch_size: 88
+batch_size: 600
 
 xai_excute: 1
 xai_mode: gxsi
-xai_iter: 3
+xai_iter: 10
 st_excute: 0
 
 bias: 0
 batch_norm: 1
 cfg_type: nib_B
+
+plot_flag: 0

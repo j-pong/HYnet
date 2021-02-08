@@ -232,7 +232,6 @@ class ImgrTrainer(Trainer):
                 continue
 
             _, stats, weight = model(**batch)
-            del stats['aux']
             if ngpu > 1 or distributed:
                 # Apply weighted averaging for stats.
                 # if distributed, this method can also apply all_reduce()
