@@ -19,9 +19,9 @@ from typeguard import check_argument_types
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
+from hynet.imgr.models.nib_vgg import EnDecoder as NibVgg
 from hynet.imgr.models.vgg import EnDecoder as Vgg
-from hynet.imgr.models.resnet import EnDecoder as Resnet
-from hynet.imgr.models.simnet import EnDecoder as Simnet
+from hynet.imgr.models.wrn import EnDecoder as WideResNet
 
 from captum.attr import IntegratedGradients
 from captum.attr import Saliency, GuidedBackprop
@@ -40,6 +40,8 @@ class HynetImgrModel(AbsESPnetModel):
                  xai_iter,
                  st_excute,
                  cfg_type,
+                 teacher_cfg_type,
+                 teacher_mdoel_path,
                  batch_norm,
                  bias,
                  in_ch,
@@ -79,15 +81,17 @@ class HynetImgrModel(AbsESPnetModel):
                              bias=self.bias,
                              model_type=self.cfg_type)
 
+        # FIXME(j-pong): Only the NIB models are supported yet!
+        assert teacher_cfg_type.find('nib') != -1
         self.pt_model = pt_model(
             0, xai_mode, xai_iter,
-            0, 'B2', batch_norm, bias, in_ch, out_ch
+            0, teacher_cfg_type, 1, bias, in_ch, out_ch
             )
         ckpt = torch.load(
-            '/home/Workspace/HYnet/egs/xai/cifar10/exp/imgr_train_vgg7_bnwob/checkpoint.pth', 
+            teacher_mdoel_path, 
             map_location=f"cuda:{torch.cuda.current_device()}"
             )
-        self.pt_model.load_state_dict(ckpt['model'])
+        self.pt_model.load_state_dict(ckpt)
         self.pt_model = self.pt_model.model
         self.pt_model.train(False)
         for param in self.pt_model.parameters():
@@ -129,96 +133,105 @@ class HynetImgrModel(AbsESPnetModel):
         mask_prod = torch.ones_like(image)
 
         for i in range(self.max_iter):
-            mdoel.zero_grad()
+            model.zero_grad()
 
-            logit = mdoel(image)
-            acc = self._calc_acc(logit, label)
-            logger['accs'].append(acc)
+            image_ = image * mask_prod
 
             if self.xai_mode == 'pgxi':
-                image_ = image * mask_prod
-                saliency = Saliency(mdoel)
+                saliency = Saliency(model)
+
                 grads = saliency.attribute(image_, target=label)
+
                 attn = grads.squeeze()
                 attn = image * attn
-                loss_brew = 0.0
+                
+                delta = 0.0
             elif self.xai_mode == 'ig':
-                image_ = image * mask_prod
-                ig = IntegratedGradients(mdoel)
+                ig = IntegratedGradients(model)
+
                 attr_ig, delta = ig.attribute(image_,
                                               baselines=image * 0,
                                               target=label,
                                               return_convergence_delta=True)
+                
                 attn = attr_ig.squeeze()
-                loss_brew = 0.0
+
+                delta = 0.0
             elif self.xai_mode == 'dl':
-                image_ = image * mask_prod
-                dl = DeepLift(mdoel)
+                dl = DeepLift(model)
+                
                 attr_dl, delta = dl.attribute(image_,
                                               baselines=image * 0,
                                               target=label,
                                               return_convergence_delta=True)
+
                 attn = attr_dl.squeeze(0)
-                loss_brew = 0.0
+                
+                delta = 0.0
             elif self.xai_mode == 'gxsi':
-                image_ = image * mask_prod
-                bg = GradientxSingofInput(mdoel)
+                bg = GradientxSingofInput(model)
+
                 attr_bg = bg.attribute(image_,
                                        target=label)
 
                 attn = attr_bg.squeeze()
-                loss_brew = bg.loss_brew
-            elif self.xai_mode == 'gxi':
-                image_ = image * mask_prod
-                gxi = GradientxInput(mdoel)
+
+                delta = bg.loss_brew
+            elif self.xai_mode == 'gxi':                
+                gxi = GradientxInput(model)
+
                 attr_gxi = gxi.attribute(image_,
                                          target=label)
 
                 attn = attr_gxi.squeeze()
-                loss_brew = gxi.loss_brew
+
+                delta = gxi.loss_brew
             elif self.xai_mode == 'gbp':
-                image_ = image * mask_prod
-                gbp = GuidedBackprop(mdoel)
+                gbp = GuidedBackprop(model)
+                
                 attr_bg = gbp.attribute(image_,
                                         target=label)
+
                 attn = attr_bg.squeeze()
-                loss_brew = 0.0
+
+                delta = 0.0
             else:
                 raise AttributeError("This attribution method is not supported!")
+            
+            # Measure the MIA
+            logit = model(image_)
+            acc = self._calc_acc(logit, label)
 
-            # recasting to float type
+            # Normalzation the attributions for obtaining the attrbituion mask
             attn = attn.float()
-
             mask = self.feat_minmax_norm(attn, 1.0, 0.0)
-            image_ = (image * mask_prod).permute(0, 2, 3, 1)
-            mask_prod *= mask
 
-            logger['loss_brew'] = loss_brew
+            # Update the attribution mask
+            mask_prod *= mask
+            
+            logger['accs'].append(acc)
 
             if not self.training:
-                logger['imgs'].append(image_.sum(-1))
-                attn1 = attn.permute(0, 2, 3, 1)
-                logger['attns'][0].append(attn1.sum(-1))
-                attn2 = mask.permute(0, 2, 3, 1)
-                logger['attns'][1].append(attn2.sum(-1))
+                image_ = self.feat_minmax_norm(image_)
+                image_ = image_.permute(0, 2, 3, 1)
+                logger['imgs'].append(image_)
 
-        mdoel.zero_grad()
+        model.zero_grad()
 
         return logger, mask_prod
 
     def forward(
         self,
         image: torch.Tensor,
-        label: torch.Tensor
+        label: torch.Tensor,
+        return_plot: bool=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         self.pt_model.train(False)
 
         logger = {
-                'loss_brew': [],
-                'imgs': [],
-                'attns': [[], []],
-                'accs': []
-            }
+            'accs': [],
+            'imgs': []
+        }
 
         b_sz, in_ch, in_h, in_w = image.size()
         assert self.in_ch == in_ch
@@ -233,15 +246,13 @@ class HynetImgrModel(AbsESPnetModel):
 
         stats = dict(
                 loss=loss.detach(),
-                acc=acc,
+                acc_iter0=acc,
             )
         for i in range(0, self.max_iter):
-            stats['acc_iter{}'.format(i)] = logger['accs'][i]
-            stats['loss_brew{}'.format(i)] = logger['loss_brew'][i]
-        if not self.training:
-            stats['aux'] = [logger['imgs'],
-                            logger['attns'][0],
-                            logger['attns'][1]]
+            stats['teacher_acc_iter{}'.format(i)] = logger['accs'][i]
+
+        if return_plot:
+            stats['imgs'] = logger['imgs']
 
         loss, stats, weight = force_gatherable(
             (loss, stats, b_sz), loss.device)

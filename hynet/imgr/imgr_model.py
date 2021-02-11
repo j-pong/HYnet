@@ -20,7 +20,6 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 
 from hynet.imgr.models.nib_vgg import EnDecoder as NibVgg
-from hynet.imgr.models.vgg import EnDecoder as Vgg
 from hynet.imgr.models.wrn import EnDecoder as WideResNet
 
 from captum.attr import IntegratedGradients
@@ -193,8 +192,9 @@ class HynetImgrModel(AbsESPnetModel):
             logger['accs'].append(acc)
 
             if not self.training:
+                image_ = self.feat_minmax_norm(image_)
                 image_ = image_.permute(0, 2, 3, 1)
-                logger['imgs'].append(image_.sum(-1))
+                logger['imgs'].append(image_)
 
         model.zero_grad()
 

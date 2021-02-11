@@ -27,8 +27,11 @@ optim_conf:
 xai_excute: 1
 xai_mode: gxsi
 xai_iter: 3
-st_excute: 0
 
 bias: 0
 batch_norm: 1
 cfg_type: nib_D
+
+st_excute: 1
+teacher_cfg_type: nib_B2
+teacher_model_path: exp/imgr_train_vgg7_bnwob/latest.pth

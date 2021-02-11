@@ -32,22 +32,21 @@ def plot_and_save(
     ids: int, 
     max_plot=3
 ) -> None:
-    import matplotlib.pyplot as plt
+    # import matplotlib.pyplot as plt
+    import matplotlib
     
     for k in range(max_plot):
         img_ = img_list[k].detach().cpu().numpy()
         for j in range(50):
-            plt.clf()
-
-            plt.imshow(img_[j], cmap='seismic')
-            plt.colorbar()
-
-            plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
+            # plt.clf()
+            # plt.imshow(img_[j], cmap='seismic')
+            # plt.colorbar()
+            # plt.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0)
 
             if output_dir is not None:
-                p = Path(output_dir) / Path("masked_input") / Path(xai_mode) / Path(f"valid_{ids[j]}_iter{k}.png")
+                p = Path(output_dir) / Path("masked_input") / Path(xai_mode) /  Path(f"valid_{ids[j]}") /Path(f"iter{k}.png")
                 p.parent.mkdir(parents=True, exist_ok=True)
-                plt.savefig(p)
+                matplotlib.image.imsave(p, img_[j], cmap='seismic')
 
 def inference(
     args: argparse.Namespace,
@@ -116,20 +115,34 @@ def inference(
 
     if args.st_excute:
         from hynet.imgr.imgr_st_model import HynetImgrModel
+
+        model = HynetImgrModel(
+            args.xai_excute,
+            args.xai_mode,
+            args.xai_iter,
+            args.st_excute,
+            args.cfg_type,
+            args.teacher_cfg_type,
+            args.teacher_model_path,
+            args.batch_norm,
+            args.bias,
+            args.in_ch,
+            args.out_ch
+        )
     else:
         from hynet.imgr.imgr_model import HynetImgrModel
 
-    model = HynetImgrModel(
-        args.xai_excute,
-        args.xai_mode,
-        args.xai_iter,
-        args.st_excute,
-        args.cfg_type,
-        args.batch_norm,
-        args.bias,
-        args.in_ch,
-        args.out_ch
-    )
+        model = HynetImgrModel(
+            args.xai_excute,
+            args.xai_mode,
+            args.xai_iter,
+            args.st_excute,
+            args.cfg_type,
+            args.batch_norm,
+            args.bias,
+            args.in_ch,
+            args.out_ch
+        )
     device = f"cuda:{torch.cuda.current_device()}"
     model.to(device)
     model.load_state_dict(torch.load(Path(args.output_dir) / Path(args.model_file), map_location=device))
@@ -208,7 +221,6 @@ def get_parser():
     group.add_argument("--xai_excute", type=int, default=0)
     group.add_argument("--xai_mode", type=str, default="gxi")
     group.add_argument("--xai_iter", type=int, default=3)
-    group.add_argument("--st_excute", type=int, default=0)
 
     group = parser.add_argument_group("Input related")
     group.add_argument(
@@ -230,6 +242,11 @@ def get_parser():
     group.add_argument("--bias", type=int, default=0)
     group.add_argument("--in_ch", type=int, default=3)
     group.add_argument("--out_ch", type=int, default=10)
+
+    group = parser.add_argument_group(description="Teacher Model related")
+    group.add_argument("--st_excute", type=int, default=0)
+    group.add_argument("--teacher_model_path", type=str, default="")
+    group.add_argument("--teacher_cfg_type", type=str, default="nib_B2")
 
     return parser
 

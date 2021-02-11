@@ -33,7 +33,6 @@ class ImgrTask(AbsTask):
         group.add_argument("--xai_excute", type=int, default=0)
         group.add_argument("--xai_mode", type=str, default="gxi")
         group.add_argument("--xai_iter", type=int, default=3)
-        group.add_argument("--st_excute", type=int, default=0)
 
         group = parser.add_argument_group(description="Input related")
         group.add_argument(
@@ -54,6 +53,11 @@ class ImgrTask(AbsTask):
         group.add_argument("--bias", type=int, default=0)
         group.add_argument("--in_ch", type=int, default=3)
         group.add_argument("--out_ch", type=int, default=10)
+
+        group = parser.add_argument_group(description="Teacher Model related")
+        group.add_argument("--st_excute", type=int, default=0)
+        group.add_argument("--teacher_model_path", type=str, default="")
+        group.add_argument("--teacher_cfg_type", type=str, default="nib_B2")
 
     @classmethod
     def build_collate_fn(
@@ -94,6 +98,7 @@ class ImgrTask(AbsTask):
         if optim_class is None:
             raise ValueError(f"must be one of {list(optim_classes)}: {args.optim}")
         if args.st_excute:
+            # Teacher model parameter unused mode for st framework
             optim = optim_class(model.model.parameters(), **args.optim_conf)
         else:
             optim = optim_class(model.parameters(), **args.optim_conf)
@@ -106,21 +111,34 @@ class ImgrTask(AbsTask):
 
         if args.st_excute:
             from hynet.imgr.imgr_st_model import HynetImgrModel
+
+            model = HynetImgrModel(
+                args.xai_excute,
+                args.xai_mode,
+                args.xai_iter,
+                args.st_excute,
+                args.cfg_type,
+                args.teacher_cfg_type,
+                args.teacher_model_path,
+                args.batch_norm,
+                args.bias,
+                args.in_ch,
+                args.out_ch
+            )
         else:
             from hynet.imgr.imgr_model import HynetImgrModel
 
-        # 1. Build model
-        model = HynetImgrModel(
-            args.xai_excute,
-            args.xai_mode,
-            args.xai_iter,
-            args.st_excute,
-            args.cfg_type,
-            args.batch_norm,
-            args.bias,
-            args.in_ch,
-            args.out_ch
-        )
+            model = HynetImgrModel(
+                args.xai_excute,
+                args.xai_mode,
+                args.xai_iter,
+                args.st_excute,
+                args.cfg_type,
+                args.batch_norm,
+                args.bias,
+                args.in_ch,
+                args.out_ch
+            )
 
         assert check_return_type(model)
         return model
