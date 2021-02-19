@@ -1,15 +1,25 @@
-# network architecture
-# encoder related
+batch_type: numel
+batch_bins: 5500000
+accum_grad: 1
+max_epoch: 80
+patience: 100
+# The initialization method for model parameters
+init: chainer
+best_model_criterion:
+-   - valid
+    - acc
+    - max
+keep_nbest_models: 10
+
 encoder: vgg_rnn
 encoder_conf:
     rnn_type: lstm
-    bidirectional: True
-    use_projection: True
+    bidirectional: true
+    use_projection: true
     num_layers: 4
     hidden_size: 1024
     output_size: 1024
 
-# decoder related
 decoder: rnn
 decoder_conf:
     rnn_type: lstm
@@ -24,30 +34,20 @@ decoder_conf:
         aconv_chans: 10
         aconv_filts: 100
 
-# hybrid CTC/attention
 model_conf:
     ctc_weight: 0.5
+    lsm_weight: 0.1
+    length_normalized_loss: false
 
-# optimization related
 optim: adadelta
 optim_conf:
     lr: 1.0
     rho: 0.95
     eps: 1.0e-08
     weight_decay: 0
-init: chainer
-max_epoch: 24
-patience: 3
-
-# minibatch related
-batch_type: folded
-batch_size: 100
-
-best_model_criterion:
--  - valid
-   - acc
-   - max
-keep_nbest_models: 1
+# scheduler: warmuplr
+# scheduler_conf:
+#     warmup_steps: 25000
 
 specaug: specaug
 specaug_conf:

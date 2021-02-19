@@ -10,25 +10,13 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-import torchvision.transforms as transforms
-from typeguard import check_argument_types
-from typeguard import check_return_type
+from espnet2.tasks.abs_task import *
 
-from espnet2.tasks.abs_task import AbsTask, IteratorOptions, AbsIterFactory
-from espnet2.torch_utils.initialize import initialize
-from espnet2.train.trainer import Trainer
-from espnet2.utils.get_default_kwargs import get_default_kwargs
-from espnet2.utils.nested_dict_action import NestedDictAction
-from espnet2.utils.types import int_or_none
-from espnet2.utils.types import str_or_none
+import torchvision.transforms as transforms
 
 from hynet.train.dataset import MNISTDataset, CIFAR10Dataset, CIFAR100Dataset
 from hynet.train.trainer import ImgrTrainer
 from hynet.iterators.img_iter_factory import ImgrIterFactory
-from hynet.imgr.imgr_model import HynetImgrModel
 
 
 class ImgrTask(AbsTask):
@@ -41,31 +29,12 @@ class ImgrTask(AbsTask):
     @classmethod
     def add_task_arguments(cls, parser: argparse.ArgumentParser):
         group = parser.add_argument_group(description="Task related")
-        parser.set_defaults(
-            num_att_plot=0,
-            iterator_type="task")
-        
-        # Custom task
-        group.add_argument(
-            "--xai_excute",
-            type=int,
-            default=0 
-        )
-        group.add_argument(
-            "--xai_mode",
-            type=str,
-            default="bg"
-        )
-        group.add_argument(
-            "--xai_iter",
-            type=int,
-            default=3 
-        )
-        group.add_argument(
-            "--st_excute",
-            type=int,
-            default=0 
-        )
+        parser.set_defaults(num_att_plot=0, iterator_type="task")
+        group.add_argument("--xai_excute", type=int, default=0)
+        group.add_argument("--xai_mode", type=str, default="gxi")
+        group.add_argument("--xai_iter", type=int, default=3)
+
+        group = parser.add_argument_group(description="Input related")
         group.add_argument(
             "--dataset",
             type=str,
@@ -77,32 +46,18 @@ class ImgrTask(AbsTask):
                 "imagenet"
             ]   
         )
-        # Model configuration
-        group.add_argument(
-            "--cfg_type",
-            type=str,
-            default="D" 
-        )
-        group.add_argument(
-            "--batch_norm",
-            type=int,
-            default=0 
-        )
-        group.add_argument(
-            "--bias",
-            type=int,
-            default=0 
-        )
-        group.add_argument(
-            "--in_ch",
-            type=int,
-            default=3
-        )
-        group.add_argument(
-            "--out_ch",
-            type=int,
-            default=10
-        )
+        
+        group = parser.add_argument_group(description="Model related")
+        group.add_argument("--cfg_type", type=str, default="D")
+        group.add_argument("--batch_norm", type=int, default=0)
+        group.add_argument("--bias", type=int, default=0)
+        group.add_argument("--in_ch", type=int, default=3)
+        group.add_argument("--out_ch", type=int, default=10)
+
+        group = parser.add_argument_group(description="Teacher Model related")
+        group.add_argument("--st_excute", type=int, default=0)
+        group.add_argument("--teacher_model_path", type=str, default="")
+        group.add_argument("--teacher_cfg_type", type=str, default="nib_B2")
 
     @classmethod
     def build_collate_fn(
@@ -129,21 +84,61 @@ class ImgrTask(AbsTask):
         return retval
 
     @classmethod
-    def build_model(cls, args: argparse.Namespace) -> HynetImgrModel:
+    def build_optimizers(
+        cls,
+        args: argparse.Namespace,
+        model: torch.nn.Module,
+    ) -> List[torch.optim.Optimizer]:
+        if cls.num_optimizers != 1:
+            raise RuntimeError(
+                "build_optimizers() must be overridden if num_optimizers != 1"
+            )
+
+        optim_class = optim_classes.get(args.optim)
+        if optim_class is None:
+            raise ValueError(f"must be one of {list(optim_classes)}: {args.optim}")
+        if args.st_excute:
+            # Teacher model parameter unused mode for st framework
+            optim = optim_class(model.model.parameters(), **args.optim_conf)
+        else:
+            optim = optim_class(model.parameters(), **args.optim_conf)
+        optimizers = [optim]
+        return optimizers
+
+    @classmethod
+    def build_model(cls, args: argparse.Namespace):
         assert check_argument_types()
 
-        # 1. Build model
-        model = HynetImgrModel(
-            args.xai_excute,
-            args.xai_mode,
-            args.xai_iter,
-            args.st_excute,
-            args.cfg_type,
-            args.batch_norm,
-            args.bias,
-            args.in_ch,
-            args.out_ch
-        )
+        if args.st_excute:
+            from hynet.imgr.imgr_st_model import HynetImgrModel
+
+            model = HynetImgrModel(
+                args.xai_excute,
+                args.xai_mode,
+                args.xai_iter,
+                args.st_excute,
+                args.cfg_type,
+                args.teacher_cfg_type,
+                args.teacher_model_path,
+                args.batch_norm,
+                args.bias,
+                args.in_ch,
+                args.out_ch
+            )
+        else:
+            from hynet.imgr.imgr_model import HynetImgrModel
+
+            model = HynetImgrModel(
+                args.xai_excute,
+                args.xai_mode,
+                args.xai_iter,
+                args.st_excute,
+                args.cfg_type,
+                args.batch_norm,
+                args.bias,
+                args.in_ch,
+                args.out_ch
+            )
 
         assert check_return_type(model)
         return model
