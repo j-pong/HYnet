@@ -1,4 +1,3 @@
-
 from contextlib import contextmanager
 from distutils.version import LooseVersion
 from typing import Dict
@@ -20,6 +19,7 @@ from espnet2.asr.ctc import CTC
 from espnet2.asr.decoder.abs_decoder import AbsDecoder
 from espnet2.asr.encoder.abs_encoder import AbsEncoder
 from espnet2.asr.frontend.abs_frontend import AbsFrontend
+from espnet2.asr.preencoder.abs_preencoder import AbsPreEncoder
 from espnet2.asr.specaug.abs_specaug import AbsSpecAug
 from espnet2.layers.abs_normalize import AbsNormalize
 from espnet2.torch_utils.device_funcs import force_gatherable
@@ -44,6 +44,7 @@ class ESPnetASRModel(AbsESPnetModel):
         frontend: Optional[AbsFrontend],
         specaug: Optional[AbsSpecAug],
         normalize: Optional[AbsNormalize],
+        preencoder: Optional[AbsPreEncoder],
         encoder: AbsEncoder,
         decoder: AbsDecoder,
         ctc: CTC,
@@ -73,7 +74,7 @@ class ESPnetASRModel(AbsESPnetModel):
         self.frontend = frontend
         self.specaug = specaug
         self.normalize = normalize
-        self.adddiontal_utt_mvn = None
+        self.preencoder = preencoder
         self.encoder = encoder
         self.decoder = decoder
         if ctc_weight == 0.0:
@@ -87,7 +88,6 @@ class ESPnetASRModel(AbsESPnetModel):
             smoothing=lsm_weight,
             normalize_length=length_normalized_loss,
         )
-        self.register_buffer('th_beta', torch.tensor(0.0, dtype=torch.float))
 
         if report_cer or report_wer:
             self.error_calculator = ErrorCalculator(
@@ -102,7 +102,6 @@ class ESPnetASRModel(AbsESPnetModel):
         speech_lengths: torch.Tensor,
         text: torch.Tensor,
         text_lengths: torch.Tensor,
-        mode=None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         """Frontend + Encoder + Decoder + Calc loss
 
@@ -130,10 +129,10 @@ class ESPnetASRModel(AbsESPnetModel):
 
         # 2a. Attention-decoder branch
         if self.ctc_weight == 1.0:
-            loss_att, acc_att, cer_att, wer_att, err_pred = None, None, None, None, None
+            loss_att, acc_att, cer_att, wer_att = None, None, None, None
         else:
-            loss_att, acc_att, cer_att, wer_att, err_pred = self._calc_att_loss(
-                encoder_out, encoder_out_lens, text, text_lengths, mode
+            loss_att, acc_att, cer_att, wer_att = self._calc_att_loss(
+                encoder_out, encoder_out_lens, text, text_lengths
             )
 
         # 2b. CTC branch
@@ -163,8 +162,6 @@ class ESPnetASRModel(AbsESPnetModel):
             cer=cer_att,
             wer=wer_att,
             cer_ctc=cer_ctc,
-            err_pred=err_pred,
-            th_beta=float(self.th_beta),
         )
 
         # force_gatherable: to-device and to-tensor if scalar for DataParallel
@@ -194,15 +191,17 @@ class ESPnetASRModel(AbsESPnetModel):
             # 1. Extract feats
             feats, feats_lengths = self._extract_feats(speech, speech_lengths)
 
-            # 2. Data augmentation for spectrogram
+            # 2. Data augmentation
             if self.specaug is not None and self.training:
                 feats, feats_lengths = self.specaug(feats, feats_lengths)
 
             # 3. Normalization for feature: e.g. Global-CMVN, Utterance-CMVN
             if self.normalize is not None:
                 feats, feats_lengths = self.normalize(feats, feats_lengths)
-                if self.adddiontal_utt_mvn is not None:
-                    feats, feats_lengths = self.adddiontal_utt_mvn(feats, feats_lengths)
+
+        # Pre-encoder, e.g. used for raw input data
+        if self.preencoder is not None:
+            feats, feats_lengths = self.preencoder(feats, feats_lengths)
 
         # 4. Forward encoder
         # feats: (Batch, Length, Dim)
@@ -245,83 +244,14 @@ class ESPnetASRModel(AbsESPnetModel):
         encoder_out_lens: torch.Tensor,
         ys_pad: torch.Tensor,
         ys_pad_lens: torch.Tensor,
-        mode=None,
     ):
-        if mode is None:
-            ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-            ys_in_lens = ys_pad_lens + 1
-        elif mode == 'pseudo':
-            from espnet.nets.pytorch_backend.nets_utils import pad_list
-
-            _sos = ys_pad.new([self.sos])
-            _ignore = ys_pad.new([self.ignore_id])
-            
-            ys = [y[y != self.ignore_id] for y in ys_pad]  # parse padded ys
-
-            ys_in = [torch.cat([_sos, y], dim=0) for y in ys]
-            ys_out = [torch.cat([y, _ignore], dim=0) for y in ys]
-
-            ys_in_pad = pad_list(ys_in, self.eos)
-            ys_out_pad = pad_list(ys_out, self.ignore_id)
-
-            ys_in_lens = ys_pad_lens + 1
-        else:
-            raise AttributeError("{} mode is not supported!".format(mode))
+        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+        ys_in_lens = ys_pad_lens + 1
 
         # 1. Forward decoder
-        err_pred = 0.0
-        if mode is None:
-            decoder_out, _ = self.decoder(
-                encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-            )
-        elif mode == 'pseudo':
-            with torch.no_grad():
-                decoder_out, _ = self.decoder(
-                    encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-                )
-                # Calculate pred dist
-                pred_dist = torch.softmax(decoder_out, dim=-1)
-
-                bsz, tsz = ys_out_pad.size()
-
-                # Select target label probability from pred_dist
-                pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
-                                                          ys_out_pad.view(bsz * tsz)]
-                pred_prob = pred_prob.view(bsz, tsz)
-
-                # # Samplling labels
-                # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
-                # sampled_labels = sampler.sample()
-                # sampled_labels = sampled_labels.view(bsz, tsz)
-
-                # Wrong labels position with confidence filtering
-                repl_mask = pred_prob < self.th_beta
-                repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
-                err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
-
-            _sos = ys_pad.new([self.sos])
-            _ignore = ys_pad.new([self.ignore_id])
-            
-            ys_in = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
-            ys_out = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
-
-            for rm, y in zip(repl_mask, ys_in):
-                y[rm] = 1
-            for rm, y in zip(repl_mask, ys_out):
-                y[rm] = self.ignore_id
-
-            ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
-            ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
-
-            ys_in_pad = pad_list(ys_in, self.eos)
-            ys_out_pad = pad_list(ys_out, self.ignore_id)
-                
-            decoder_out, _ = self.decoder(
-                    encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-                )
-
-        else:
-            raise AttributeError("{} mode is not supported!".format(mode))
+        decoder_out, _ = self.decoder(
+            encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+        )
 
         # 2. Compute attention loss
         loss_att = self.criterion_att(decoder_out, ys_out_pad)
@@ -338,7 +268,7 @@ class ESPnetASRModel(AbsESPnetModel):
             ys_hat = decoder_out.argmax(dim=-1)
             cer_att, wer_att = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
 
-        return loss_att, acc_att, cer_att, wer_att, err_pred
+        return loss_att, acc_att, cer_att, wer_att
 
     def _calc_ctc_loss(
         self,
@@ -365,78 +295,3 @@ class ESPnetASRModel(AbsESPnetModel):
         ys_pad_lens: torch.Tensor,
     ):
         raise NotImplementedError
-
-    @torch.no_grad()
-    def _calc_confidence(
-        self, 
-        ys_in_pad, 
-        ys_out_pad,
-        ys_in_lens, 
-        encoder_out,
-        encoder_out_lens,
-        decoder_out,
-    ):
-        bsz, tsz = ys_in_pad.size()
-        ys_in_pad = ys_in_pad.view(bsz * tsz)
-        
-        # Simulating
-        corrupt_pos = torch.rand_like(ys_in_pad.float()) > 0.9
-        corrupt_ys_in_pad = torch.randint_like(ys_in_pad.float(), low=1, high=5000)
-        ys_in_pad[corrupt_pos] = corrupt_ys_in_pad[corrupt_pos].long()
-        ys_in_pad = ys_in_pad.view(bsz, tsz)
-        
-        decoder_corrupt_out, _ = self.decoder(
-            encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-        )
-
-        # Caculating predictive distribution with corrupted labels
-        pred_dist = torch.softmax(decoder_out, dim=-1)
-        pred_corrupt_dist = torch.softmax(decoder_corrupt_out, dim=-1)
-
-        # Confidence
-        def select_mean_var(x, indces):
-            bsz, tsz = indces.size()
-            select_mean = x.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
-                                                indces.view(bsz * tsz)]
-            # select_var = torch.square(x.view(bsz * tsz, -1) - select_mean.unsqueeze(-1)).sum(-1)
-            select_var = x.var(-1)
-            return select_mean.view(bsz, tsz), select_var.view(bsz, tsz)
-
-        select_mean, select_var = select_mean_var(pred_dist, ys_out_pad)
-        insertion = torch.ones_like(ys_out_pad) * 4999
-        corrupt_ys_out_pad = torch.cat([corrupt_ys_in_pad.view(bsz, tsz)[:,1:], insertion[:,0:1]], dim=-1).view(bsz * tsz)
-        ys_out_pad = ys_out_pad.view(bsz * tsz)
-        ys_out_pad[corrupt_pos] = corrupt_ys_in_pad[corrupt_pos].long()
-        ys_out_pad = ys_out_pad.view(bsz, tsz)
-        select_mean_corrupt, select_var_corrupt = select_mean_var(pred_corrupt_dist, ys_out_pad)
-
-        # Plot the result
-        import matplotlib.pyplot as plt
-
-        plt.clf()
-
-        plt.subplot(3,1,1)
-        plt.title('Predictive probability')
-        plt.xlim(0, ys_out_pad.size(1))
-        plt.plot(select_mean[0].detach().cpu().numpy(), 'D-')
-        plt.plot(select_mean_corrupt[0].detach().cpu().numpy(), 'o-')
-        plt.grid()
-
-        plt.subplot(3,1,2)
-        plt.title('Corrupted label position')
-        plt.xlim(0, ys_out_pad.size(1))
-        plt.plot(corrupt_pos.view(bsz, tsz)[0].detach().cpu().numpy(), 'rD-')
-        plt.grid()
-
-        plt.subplot(3,1,3)
-        plt.title('Corrupted label position')
-        plt.xlim(0, ys_out_pad.size(1))
-        plt.plot(corrupt_pos.view(bsz, tsz)[0].detach().cpu().numpy(), 'rD-')
-        plt.grid()
-
-        plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
-
-        p =  f"test_{pred_dist.device}.png"
-        plt.savefig(p)
-    
-        raise ValueError("This process should be stoped at this line")

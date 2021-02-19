@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from hynet.tasks.semi_asr import ASRTask
+from hynet.tasks.asr import ASRTask
 
 
 def get_parser():
