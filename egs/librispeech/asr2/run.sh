@@ -5,9 +5,10 @@ set -e
 set -u
 set -o pipefail
 
-train_set="train_960"
+train_set="train_clean_100"
 valid_set="dev"
 test_sets="test_clean test_other dev_clean dev_other"
+resume="True"
 
 asr_config=conf/tuning/train_asr_rnn.yaml
 lm_config=conf/tuning/train_lm_adam.yaml
@@ -18,7 +19,7 @@ inference_config=conf/decode_asr.yaml
 
 ./asr.sh \
     --lang en \
-    --ngpu 4 \
+    --ngpu 3 \
     --nbpe 5000 \
     --max_wav_duration 30 \
     --asr_config "${asr_config}" \
@@ -29,3 +30,4 @@ inference_config=conf/decode_asr.yaml
     --test_sets "${test_sets}" \
     --lm_train_text "data/${train_set}/text data/local/other_text/text" \
     --bpe_train_text "data/${train_set}/text" "$@"
+    --resume ${resume}

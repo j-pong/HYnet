@@ -87,7 +87,7 @@ class ESPnetASRModel(AbsESPnetModel):
             smoothing=lsm_weight,
             normalize_length=length_normalized_loss,
         )
-        self.register_buffer('th_beta', torch.tensor(0.0, dtype=torch.float))
+        self.register_buffer('th_beta', torch.tensor(0.33, dtype=torch.float))
 
         if report_cer or report_wer:
             self.error_calculator = ErrorCalculator(
@@ -252,7 +252,7 @@ class ESPnetASRModel(AbsESPnetModel):
             ys_in_lens = ys_pad_lens + 1
         elif mode == 'pseudo':
             from espnet.nets.pytorch_backend.nets_utils import pad_list
-
+            
             _sos = ys_pad.new([self.sos])
             _ignore = ys_pad.new([self.ignore_id])
             
@@ -272,43 +272,43 @@ class ESPnetASRModel(AbsESPnetModel):
         err_pred = 0.0
         if mode is None:
             decoder_out, _ = self.decoder(
-                encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+                encoder_out, encoder_out_lens, ys_in_pad, ys_out_pad, ys_in_lens
             )
         elif mode == 'pseudo':
-            with torch.no_grad():
-                decoder_out, _ = self.decoder(
-                    encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-                )
-                # Calculate pred dist
-                pred_dist = torch.softmax(decoder_out, dim=-1)
+            #with torch.no_grad():
+            decoder_out, _, ys_in_pad, ys_out_pad, repl_mask = self.decoder(
+                encoder_out, encoder_out_lens, ys_in_pad, ys_out_pad, ys_in_lens, ignore_id=self.ignore_id, mode="conf_test", th_beta=self.th_beta)
+            
+            '''# Calculate pred dist
+            pred_dist = torch.softmax(decoder_out, dim=-1)
 
-                bsz, tsz = ys_out_pad.size()
+            bsz, tsz = ys_out_pad.size()
 
-                # Select target label probability from pred_dist
-                pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
-                                                          ys_out_pad.view(bsz * tsz)]
-                pred_prob = pred_prob.view(bsz, tsz)
+            # Select target label probability from pred_dist
+            pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
+                                                        ys_out_pad.view(bsz * tsz)]
+            pred_prob = pred_prob.view(bsz, tsz)'''
 
-                # # Samplling labels
-                # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
-                # sampled_labels = sampler.sample()
-                # sampled_labels = sampled_labels.view(bsz, tsz)
+            # # Samplling labels
+            # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
+            # sampled_labels = sampler.sample()
+            # sampled_labels = sampled_labels.view(bsz, tsz)
 
-                # Wrong labels position with confidence filtering
-                repl_mask = pred_prob < self.th_beta
-                repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
-                err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
+            # Wrong labels position with confidence filtering
+            '''repl_mask = pred_prob < self.th_beta'''
+            repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
+            err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
 
-            _sos = ys_pad.new([self.sos])
+            '''_sos = ys_pad.new([self.sos])
             _ignore = ys_pad.new([self.ignore_id])
             
             ys_in = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
             ys_out = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
 
             for rm, y in zip(repl_mask, ys_in):
-                y[rm] = 1
+                y[rm] = 2
             for rm, y in zip(repl_mask, ys_out):
-                y[rm] = self.ignore_id
+                y[rm] = 2
 
             ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
             ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
@@ -318,7 +318,7 @@ class ESPnetASRModel(AbsESPnetModel):
                 
             decoder_out, _ = self.decoder(
                     encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-                )
+                )'''
 
         else:
             raise AttributeError("{} mode is not supported!".format(mode))
@@ -386,7 +386,7 @@ class ESPnetASRModel(AbsESPnetModel):
         ys_in_pad = ys_in_pad.view(bsz, tsz)
         
         decoder_corrupt_out, _ = self.decoder(
-            encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+            encoder_out, encoder_out_lens, ys_in_pad, ys_out_pad, ys_in_lens
         )
 
         # Caculating predictive distribution with corrupted labels

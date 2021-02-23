@@ -534,7 +534,12 @@ class PseudoTrainer(Trainer):
             with autocast(scaler is not None):
                 with reporter.measure_time("forward_time"):
                     loss, stats, weight = model(**batch)
-                    loss_pseudo, _, weight_pseudo = model(**pseudo_batch, mode='pseudo')
+                    loss_pseudo, stats_pseudo, weight_pseudo = model(**pseudo_batch, mode='pseudo')
+                # stats_temp = {}
+                # for k, v in stats.items():
+                #     if v is not None:
+                #         status_temp[k] = (v + stats_pseudo[k]) / 2
+                # stats = stata_temp
                 stats = {k: v for k, v in stats.items() if v is not None}
                 if ngpu > 1 or distributed:
                     # Apply weighted averaging for loss and stats

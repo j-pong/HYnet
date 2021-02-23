@@ -23,8 +23,8 @@ min() {
 SECONDS=0
 
 # General configuration
-stage=1              # Processes starts from the specified stage.
-stop_stage=10000     # Processes is stopped at the specified stage.
+stage=10              # Processes starts from the specified stage.
+stop_stage=11     # Processes is stopped at the specified stage.
 skip_data_prep=false # Skip data preparation stages.
 skip_train=false     # Skip training stages.
 skip_eval=false      # Skip decoding and evaluation stages.
@@ -990,8 +990,8 @@ if ! "${skip_train}"; then
         fi
 
         # FIXME(j-pong): Hard coding for instance task
-        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860/${_scp},speech,${_type} "
-        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860/text,text,text "
+        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860_pseudo/${_scp},speech,${_type} "
+        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860_pseudo/text,text,text "
         _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/speech_shape "
         _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/text_shape.${token_type} "
 
@@ -1032,7 +1032,6 @@ if ! "${skip_train}"; then
                 --fold_length "${asr_text_fold_length}" \
                 --output_dir "${asr_exp}" \
                 ${_opts} ${asr_args}
-
     fi
 else
     log "Skip the training stages"
@@ -1134,7 +1133,7 @@ if ! "${skip_eval}"; then
             log "Decoding started... log: '${_logdir}/asr_inference.*.log'"
             # shellcheck disable=SC2086
             ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/asr_inference.JOB.log \
-                ${python} -m espnet2.bin.asr_inference \
+                ${python} -m hynet.bin.asr_inference \
                     --ngpu "${_ngpu}" \
                     --data_path_and_name_and_type "${_data}/${_scp},speech,${_type}" \
                     --key_file "${_logdir}"/keys.JOB.scp \
