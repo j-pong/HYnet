@@ -9,7 +9,7 @@ train_set="train_clean_100"
 valid_set="dev"
 test_sets="test_clean test_other dev_clean dev_other"
 
-asr_config=conf/tuning/train_asr_rnn.yaml
+asr_config=conf/tuning/train_asr_w2v2_transformer.yaml
 lm_config=conf/tuning/train_lm_transformer2.yaml
 inference_config=conf/decode_asr.yaml
 
