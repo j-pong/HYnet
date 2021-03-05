@@ -1030,6 +1030,7 @@ if ! "${skip_train}"; then
         fi
 
         # shellcheck disable=SC2086
+#        --pretrain_step "${pretrain_step}" \
         ${python} -m espnet2.bin.launch \
             --cmd "${cuda_cmd} --name ${jobname}" \
             --log "${asr_exp}"/train.log \
@@ -1039,7 +1040,6 @@ if ! "${skip_train}"; then
             --multiprocessing_distributed true -- \
             ${python} -m hynet.bin.semi_asr_train \
                 --use_preprocessor true \
-                --pretrain_step "${pretrain_step}" \
                 --bpemodel "${bpemodel}" \
                 --token_type "${token_type}" \
                 --token_list "${token_list}" \

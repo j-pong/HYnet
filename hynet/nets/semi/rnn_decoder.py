@@ -83,7 +83,7 @@ def build_attention_list(
     return att_list
 
 
-class BeamRNNDecoder(AbsDecoder):
+class RNNDecoder(AbsDecoder):
     def __init__(
         self,
         vocab_size: int,
@@ -168,226 +168,279 @@ class BeamRNNDecoder(AbsDecoder):
                 )
         return z_list, c_list
 
-    def forward(self, hs_pad, hlens, ys_in_pad, ys_in_lens, beam_width=0, beam_length=5, th_beta=0.0, strm_idx=0):
-        if beam_width == 0:
-            # to support mutiple encoder asr mode, in single encoder mode,
-            # convert torch.Tensor to List of torch.Tensor
-            if self.num_encs == 1:
-                hs_pad = [hs_pad]
-                hlens = [hlens]
+    def forward(self, hs_pad, hlens, ys_in_pad, ys_in_lens, ys_out_pad=None, mode='train', th_beta=0.0, ignore_id=-1, strm_idx=0):
 
-            # attention index for the attention module
-            # in SPA (speaker parallel attention),
-            # att_idx is used to select attention module. In other cases, it is 0.
-            att_idx = min(strm_idx, len(self.att_list) - 1)
-
-            # hlens should be list of list of integer
-            hlens = [list(map(int, hlens[idx])) for idx in range(self.num_encs)]
-
-            # get dim, length info
-            olength = ys_in_pad.size(1)
-
-            # initialization
-            c_list = [self.zero_state(hs_pad[0])]
-            z_list = [self.zero_state(hs_pad[0])]
-            for _ in range(1, self.dlayers):
-                c_list.append(self.zero_state(hs_pad[0]))
-                z_list.append(self.zero_state(hs_pad[0]))
-            z_all = []
-            if self.num_encs == 1:
-                att_w = None
-                self.att_list[att_idx].reset()  # reset pre-computation of h
-            else:
-                att_w_list = [None] * (self.num_encs + 1)  # atts + han
-                att_c_list = [None] * self.num_encs  # atts
-                for idx in range(self.num_encs + 1):
-                    # reset pre-computation of h in atts and han
-                    self.att_list[idx].reset()
-
-            # pre-computation of embedding
-            eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
-
-            # loop for an output sequence
-            for i in range(olength):
-                if self.num_encs == 1:
-                    att_c, att_w = self.att_list[att_idx](
-                        hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
-                    )
-                else:
-                    for idx in range(self.num_encs):
-                        att_c_list[idx], att_w_list[idx] = self.att_list[idx](
-                            hs_pad[idx],
-                            hlens[idx],
-                            self.dropout_dec[0](z_list[0]),
-                            att_w_list[idx],
-                        )
-                    hs_pad_han = torch.stack(att_c_list, dim=1)
-                    hlens_han = [self.num_encs] * len(ys_in_pad)
-                    att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
-                        hs_pad_han,
-                        hlens_han,
-                        self.dropout_dec[0](z_list[0]),
-                        att_w_list[self.num_encs],
-                    )
-                if i > 0 and random.random() < self.sampling_probability:
-                    z_out = self.output(z_all[-1])
-                    z_out = np.argmax(z_out.detach().cpu(), axis=1)
-                    z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
-                    ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
-                else:
-                    # utt x (zdim + hdim)
-                    ey = torch.cat((eys[:, i, :], att_c), dim=1)
-                z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-                if self.context_residual:
-                    z_all.append(
-                        torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
-                    )  # utt x (zdim + hdim)
-                else:
-                    z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
-
-        else:
-            # attention index for the attention module
-            # in SPA (speaker parallel attention),
-            # att_idx is used to select attention module. In other cases, it is 0.
+        # to support mutiple encoder asr mode, in single encoder mode,
+        # convert torch.Tensor to List of torch.Tensor
+        if self.num_encs == 1:
             hs_pad = [hs_pad]
             hlens = [hlens]
 
-            att_idx = min(strm_idx, len(self.att_list) - 1)
+        # attention index for the attention module
+        # in SPA (speaker parallel attention),
+        # att_idx is used to select attention module. In other cases, it is 0.
+        att_idx = min(strm_idx, len(self.att_list) - 1)
 
-            # hlens should be list of list of integer
-            hlens = [list(map(int, hlens[idx])) for idx in range(self.num_encs)]
+        # hlens should be list of list of integer
+        hlens = [list(map(int, hlens[idx])) for idx in range(self.num_encs)]
 
-            # get dim, length info
-            olength = ys_in_pad.size(1)
+        # get dim, length info
+        olength = ys_in_pad.size(1)
 
-            # initialization
-            c_list = [self.zero_state(hs_pad[0])]
-            z_list = [self.zero_state(hs_pad[0])]
-            for _ in range(1, self.dlayers):
-                c_list.append(self.zero_state(hs_pad[0]))
-                z_list.append(self.zero_state(hs_pad[0]))
-            z_all = []
-
+        # initialization
+        c_list = [self.zero_state(hs_pad[0])]
+        z_list = [self.zero_state(hs_pad[0])]
+        for _ in range(1, self.dlayers):
+            c_list.append(self.zero_state(hs_pad[0]))
+            z_list.append(self.zero_state(hs_pad[0]))
+        z_all = []
+        if self.num_encs == 1:
             att_w = None
             self.att_list[att_idx].reset()  # reset pre-computation of h
+        else:
+            att_w_list = [None] * (self.num_encs + 1)  # atts + han
+            att_c_list = [None] * self.num_encs  # atts
+            for idx in range(self.num_encs + 1):
+                # reset pre-computation of h in atts and han
+                self.att_list[idx].reset()
 
-            # pre-computation of embedding
-            eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
+        ### Normal / Gradient Masking ###
+        # # pre-computation of embedding
+        # eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
+        #
+        # # loop for an output sequence
+        # for i in range(olength):
+        #     if self.num_encs == 1:
+        #         att_c, att_w = self.att_list[att_idx](
+        #             hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
+        #         )
+        #     else:
+        #         for idx in range(self.num_encs):
+        #             att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+        #                 hs_pad[idx],
+        #                 hlens[idx],
+        #                 self.dropout_dec[0](z_list[0]),
+        #                 att_w_list[idx],
+        #             )
+        #         hs_pad_han = torch.stack(att_c_list, dim=1)
+        #         hlens_han = [self.num_encs] * len(ys_in_pad)
+        #         att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+        #             hs_pad_han,
+        #             hlens_han,
+        #             self.dropout_dec[0](z_list[0]),
+        #             att_w_list[self.num_encs],
+        #         )
+        #     if i > 0 and random.random() < self.sampling_probability:
+        #         z_out = self.output(z_all[-1])
+        #         z_out = np.argmax(z_out.detach().cpu(), axis=1)
+        #         z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
+        #         ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
+        #     else:
+        #         # utt x (zdim + hdim)
+        #         ey = torch.cat((eys[:, i, :], att_c), dim=1)
+        #     z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+        #     if self.context_residual:
+        #         z_all.append(
+        #             torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+        #         )  # utt x (zdim + hdim)
+        #     else:
+        #         z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+        #
+        # z_all = torch.stack(z_all, dim=1)
+        # z_all = self.output(z_all)
+        # z_all.masked_fill_(
+        #     make_pad_mask(ys_in_lens, z_all, 1),
+        #     0,
+        # )
 
-            # loop for an output sequence
-            current_beam_length = np.zeros(hs_pad[0].size(0), int)  # batch-wise beam length status
-            beam_processed_idx = [[None]]*hs_pad[0].size(0)     # (B, ?, 2(tuple)) Index ranges where beam search have been processed
-            # batch_range dict(B, ?, 2(tuple)) Beam-batchfied beam batch range
-            # best_batch_idx dict(B, ?, 1(int)) Batch index of the best beam path
-            one_bests = {"batch_range": [[None]]*hs_pad[0].size(0), "best_batch_idx": [[None]]*hs_pad[0].size(0)}
-            score = torch.zeros(hs_pad[0].size(0))  # beam search score
-            ended_hyps = torch.zeros(hs_pad[0].size(0))  # hyps met <eos>
-            skip = []
-            for i in range(olength):
+        ### sample iteration ###
+        # if mode == 'pseudo':
+        #     # loop for an output sequence
+        #     for i in range(olength):
+        #         if self.num_encs == 1:
+        #             att_c, att_w = self.att_list[att_idx](
+        #                 hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
+        #             )
+        #         else:
+        #             for idx in range(self.num_encs):
+        #                 att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+        #                     hs_pad[idx],
+        #                     hlens[idx],
+        #                     self.dropout_dec[0](z_list[0]),
+        #                     att_w_list[idx],
+        #                 )
+        #             hs_pad_han = torch.stack(att_c_list, dim=1)
+        #             hlens_han = [self.num_encs] * len(ys_in_pad)
+        #             att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+        #                 hs_pad_han,
+        #                 hlens_han,
+        #                 self.dropout_dec[0](z_list[0]),
+        #                 att_w_list[self.num_encs],
+        #             )
+        #
+        #         repl_masks = []
+        #         with torch.no_grad():
+        #             z_all_temp = z_all[:]
+        #             # utt x (zdim + hdim)
+        #             ey = self.dropout_emb(self.embed(ys_in_pad[:, i]))
+        #             ey = torch.cat((ey, att_c), dim=1)
+        #
+        #             z_list_temp, _ = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+        #             if self.context_residual:
+        #                 z_all_temp.append(
+        #                     torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+        #                 )  # utt x (zdim + hdim)
+        #             else:
+        #                 z_all_temp.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+        #             z_out = self.output(z_all_temp[-1])
+        #
+        #             bsz, tsz = ys_in_pad.size()
+        #
+        #             pred_dist = torch.softmax(z_out.detach().cpu(), dim=-1) # (B, O)
+        #
+        #             # pick top k(3) confidences
+        #             topk_value, topk_idx = torch.topk(pred_dist, 3, axis=-1)
+        #             repl_tokens = []
+        #             for batch_idx, nomial_idx in enumerate(torch.multinomial(topk_value.float(), 1).view(-1)):
+        #                 repl_tokens.append(topk_idx[batch_idx, nomial_idx])
+        #             repl_tokens = torch.tensor(repl_tokens).view(bsz)
+        #
+        #             unk = torch.tensor([2]*int(bsz)).view(bsz)
+        #             pred_prob = pred_dist.view(bsz, -1)[torch.arange(bsz),
+        #                                                 ys_out_pad[:, i].view(
+        #                                                     bsz)]  # pseudo label confidence
+        #
+        #             repl_mask = pred_prob < th_beta.cpu()  # replace low confidence token with <unk> token
+        #             repl_mask = repl_mask.view(bsz)
+        #
+        #             repl_masks.append(repl_mask)
+        #             repl_mask_mask = ys_out_pad[:, i] != ignore_id
+        #             repl_mask = repl_mask * repl_mask_mask.cpu()
+        #
+        #             if i != olength - 1:
+        #                 ys_in_pad[:, i + 1][repl_mask] = to_device(self, unk).view(bsz)[repl_mask]
+        #             ys_out_pad[:, i][repl_mask] = to_device(self, repl_tokens).view(bsz)[repl_mask]
+        #
+        #         ey = torch.cat((self.dropout_emb(self.embed(ys_in_pad[:, i].clone().detach())), att_c),
+        #                        dim=1)
+        #         z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+        #
+        #         if self.context_residual:
+        #             z_all.append(
+        #                 torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+        #             )  # utt x (zdim + hdim)
+        #         else:
+        #             z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+        #
+        #     z_all = torch.stack(z_all, dim=1)
+        #     z_all = self.output(z_all)
+        #     z_all.masked_fill_(
+        #         make_pad_mask(ys_in_lens, z_all, 1),
+        #         0,
+        #     )
+        #
+        #     repl_masks = torch.stack(repl_masks, dim=1)
+        #     return z_all, ys_in_lens, ys_in_pad, ys_out_pad.clone().detach(), repl_masks
+        #
+        # else:
+        # pre-computation of embedding
+        #     eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
+        #
+        #     # loop for an output sequence
+        #     for i in range(olength):
+        #         if self.num_encs == 1:
+        #             att_c, att_w = self.att_list[att_idx](
+        #                 hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
+        #             )
+        #         else:
+        #             for idx in range(self.num_encs):
+        #                 att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+        #                     hs_pad[idx],
+        #                     hlens[idx],
+        #                     self.dropout_dec[0](z_list[0]),
+        #                     att_w_list[idx],
+        #                 )
+        #             hs_pad_han = torch.stack(att_c_list, dim=1)
+        #             hlens_han = [self.num_encs] * len(ys_in_pad)
+        #             att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+        #                 hs_pad_han,
+        #                 hlens_han,
+        #                 self.dropout_dec[0](z_list[0]),
+        #                 att_w_list[self.num_encs],
+        #             )
+        #         if i > 0 and random.random() < self.sampling_probability:
+        #             z_out = self.output(z_all[-1])
+        #             z_out = np.argmax(z_out.detach().cpu(), axis=1)
+        #             z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
+        #             ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
+        #         else:
+        #             # utt x (zdim + hdim)
+        #             ey = torch.cat((eys[:, i, :], att_c), dim=1)
+        #         z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+        #         if self.context_residual:
+        #             z_all.append(
+        #                 torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+        #             )  # utt x (zdim + hdim)
+        #         else:
+        #             z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+        #
+        #     z_all = torch.stack(z_all, dim=1)
+        #     z_all = self.output(z_all)
+        #     z_all.masked_fill_(
+        #         make_pad_mask(ys_in_lens, z_all, 1),
+        #         0,
+        #     )
 
+        ### Label Refurbishment ###
+        # pre-computation of embedding
+        eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
+
+        # loop for an output sequence
+        for i in range(olength):
+            if self.num_encs == 1:
                 att_c, att_w = self.att_list[att_idx](
-                    hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w, beam=True
+                    hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
                 )
-                ####### Beam Search #########
-                # if i > 0:
-                #     z_out = self.output(z_all[-1])
-                #
-                #     z_out, score, z_list, c_list, ys_in_pad, hs_pad, hlens, att_w, att_c, skip, beam_processed_idx = make_beamset(
-                #         z_out, score, z_list, c_list, ys_in_pad, hs_pad, hlens, att_w, att_c, th_beta, skip, i, beam_processed_idx, beam_width)
-                #     z_out = to_device(self, z_out)
-                #     th_beta = to_device(self, th_beta)
-                #     for z in range(len(z_list)):
-                #         z_list[z] = to_device(self, z_list[z])
-                #
-                #     z_out = self.dropout_emb(self.embed(z_out))
-                #     ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
-                # else:
-                #     # utt x (zdim + hdim)
-                #     ey = torch.cat((eys[:, i, :], att_c), dim=1)
-                #
-                # z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-                #
-                # z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
-                
-                ########### Partial Beam Search ###################
-                if i > 0:
-                    z_out = self.output(z_all[-1])
-                    z_out, score, z_list, c_list, ys_in_pad, hs_pad, hlens, att_w, att_c, skip, beam_processed_idx, current_beam_length, one_bests = make_partial_beamset(
-                        z_out, score, z_list, c_list, ys_in_pad, hs_pad, hlens, att_w, att_c, olength, th_beta, skip, i,
-                        beam_processed_idx, current_beam_length, beam_width, beam_length, one_bests)
-                    z_out = to_device(self, z_out)
-                    th_beta = to_device(self, th_beta)
-                    for z in range(len(z_list)):
-                        z_list[z] = to_device(self, z_list[z])
-
-                    z_out = self.dropout_emb(self.embed(z_out))
-                    ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
-                else:
-                    # utt x (zdim + hdim)
-                    ey = torch.cat((eys[:, i, :], att_c), dim=1)
-
-                z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-
-                if i == olength - 1 and True in current_beam_length.astype(bool):
-                    beam_processing_idx = current_beam_length.nonzero()[0]
-                    for bpidx, f_l in enumerate(skip):
-                        f, l = f_l
-                        f = f - bpidx * beam_width
-                        l = l - bpidx * beam_width
-                        z_out, score, one_best = pick_one_best(z_out, (f, l), score)
-                        one_bests = update_one_bests(one_best, (f, l), beam_processing_idx[bpidx], one_bests)
-
+            else:
+                for idx in range(self.num_encs):
+                    att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+                        hs_pad[idx],
+                        hlens[idx],
+                        self.dropout_dec[0](z_list[0]),
+                        att_w_list[idx],
+                    )
+                hs_pad_han = torch.stack(att_c_list, dim=1)
+                hlens_han = [self.num_encs] * len(ys_in_pad)
+                att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+                    hs_pad_han,
+                    hlens_han,
+                    self.dropout_dec[0](z_list[0]),
+                    att_w_list[self.num_encs],
+                )
+            if i > 0 and (random.random() < self.sampling_probability or mode == "refurbish"):
+                z_out = self.output(z_all[-1])
+                z_out = np.argmax(z_out.detach().cpu(), axis=1)
+                z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
+                ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
+            else:
+                # utt x (zdim + hdim)
+                ey = torch.cat((eys[:, i, :], att_c), dim=1)
+            z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+            if self.context_residual:
+                z_all.append(
+                    torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+                )  # utt x (zdim + hdim)
+            else:
                 z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
 
-        if beam_width == 0:
-            z_all = torch.stack(z_all, dim=1)
-            z_all = self.output(z_all)
-            z_all.masked_fill_(
-                make_pad_mask(ys_in_lens, z_all, 1),
-                0,
-            )
-            return z_all, None
+        z_all = torch.stack(z_all, dim=1)
+        z_all = self.output(z_all)
+        z_all.masked_fill_(
+            make_pad_mask(ys_in_lens, z_all, 1),
+            0,
+        )
 
-        else:
-            ### Beam Search ###
-            # score normalization concerned with eos
-            # for batch_idx, beam_processed in enumerate(beam_processed_idx):
-            #     if beam_processed[0] is None:
-            #         continue
-            #     # score normalization
-            #     score[batch_idx:batch_idx + beam_width] = score[batch_idx:batch_idx + beam_width] / (olength - beam_processed[0])
-            #     # filter z_all
-            #     z_all[beam_processed[0]:], score, one_best = pick_one_best(z_all[beam_processed[0]:], (batch_idx, batch_idx + beam_width), score)
-            # z_all = torch.stack(z_all, dim=1)
-            # z_all = self.output(z_all)
-            # z_all.masked_fill_(
-            #     make_pad_mask(ys_in_lens, z_all, 1),
-            #     0,
-            # )
-
-            ### Partial beam search ###
-            # filter z_all to one best path
-            # z_all: (T, Dynamic_beam_batch, dunits)
-            for batch_idx, beam_processed_f_l in enumerate(beam_processed_idx):
-                if beam_processed_f_l[0] is None:
-                    continue
-                one_best = one_bests["best_batch_idx"][batch_idx]
-                for nth_processed_idx, f_l in enumerate(beam_processed_f_l):
-                    best_batch_idx = one_best[nth_processed_idx]
-                    f, l = f_l
-                    temp = z_all[f:l].copy()    # (beam_length, dynamic_beam_batch, dunits)
-                    for temp_idx, z in enumerate(temp):
-                        z = torch.cat((z[:batch_idx], z[batch_idx + best_batch_idx].unsqueeze(0), z[batch_idx + beam_width:]), 0)
-                        temp[temp_idx] = z
-                    z_all[f:l] = temp
-
-            z_all = torch.stack(z_all, dim=1)
-            z_all = self.output(z_all)
-            z_all.masked_fill_(
-                make_pad_mask(ys_in_lens, z_all, 1),
-                0,
-            )
-            return z_all, beam_processed_idx
+        return z_all, ys_in_lens
 
     def init_state(self, x):
         # to support mutiple encoder asr mode, in single encoder mode,

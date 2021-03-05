@@ -48,7 +48,7 @@ run:
 		-v /DB:/DB \
 		-v /etc/timezone:/etc/timezone \
 		-v /etc/localtime:/etc/localtime \
-		--runtime=nvidia \
+		--gpus all \
 		$(ARG_IMAGE_NAME)
 
 start:
