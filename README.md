@@ -1,7 +1,7 @@
 # HYnet
 Fully Unsupervised Learning for Continual Sequence when High Local Correlation
 
-## Installation
+## Installation Guide for SL
 
 
 ### 1. Installaion of docker for ssh env
