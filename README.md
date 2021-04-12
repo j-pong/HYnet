@@ -3,14 +3,17 @@ Fully Unsupervised Learning for Continual Sequence when High Local Correlation
 
 ## Installation Guide for SL
 
-
 ### 1. Installaion of docker for ssh env
 - Basic of docker installation
-https://colab.research.google.com/drive/1YhIBX9i59RN_9HEMihJX6TnFm9G5a7UL?authuser=1#scrollTo=swQ7g70S9O4J
 
 - Docker for HYnet
 ```bash
 cd docker
+
+CUDA_VERSION=10 # if cuda version is 10.x
+CUDA_VERSION=11 # if cuda version is 11.x
+
+. cuda_img_name.sh $CUDA_VERSION
 
 make _build
 
@@ -19,6 +22,9 @@ make run
 
 ### 2. Installaion of kaldi for speech
 ```bash
+ssh jpong@192.168.0.104 -p 32770
+
+cd /path/to/HYnet/tools
 git clone https://github.com/kaldi-asr/kaldi kaldi
 
 cd kaldi/tools
@@ -35,7 +41,7 @@ make -j 28
 
 ### 3. Installaion of espnet for input pipelines
 ```bash
-cd tools
+cd ../../tools
 
 ./meta_installers/install_espnet.sh
 ```
