@@ -1,7 +1,7 @@
 batch_type: numel
-batch_bins: 20000000
+batch_bins: 44000000
 accum_grad: 1
-max_epoch: 80
+max_epoch: 24
 patience: 100
 # The initialization method for model parameters
 init: chainer
@@ -45,9 +45,6 @@ optim_conf:
     rho: 0.95
     eps: 1.0e-08
     weight_decay: 0
-# scheduler: warmuplr
-# scheduler_conf:
-#     warmup_steps: 25000
 
 specaug: specaug
 specaug_conf:
@@ -64,3 +61,7 @@ specaug_conf:
     - 0
     - 40
     num_time_mask: 2
+
+# Label Refurbishment Mode Selection
+# Choices: [pseudo, gradient_masking, recursive_gradient_masking, bootstrap]
+semi_mode: confidence_filtering

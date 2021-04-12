@@ -413,32 +413,12 @@ if ! "${skip_data_prep}"; then
             # If nothing is need, then format_wav_scp.sh does nothing:
             # i.e. the input file format and rate is same as the output.
 
-#            for dset in "${train_set}" "${pseudo_set}" "${valid_set}" ${test_sets}; do
-#                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-#                    _suf="/org"
-#                else
-#                    _suf=""
-#                fi
-#                utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
-#                rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
-#                _opts=
-#                if [ -e data/"${dset}"/segments ]; then
-#                    # "segments" is used for splitting wav files which are written in "wav".scp
-#                    # into utterances. The file format of segments:
-#                    #   <segment_id> <record_id> <start_time> <end_time>
-#                    #   "e.g. call-861225-A-0050-0065 call-861225-A 5.0 6.5"
-#                    # Where the time is written in seconds.
-#                    _opts+="--segments data/${dset}/segments "
-#                fi
-#                # shellcheck disable=SC2086
-#                scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
-#                    --audio-format "${audio_format}" --fs "${fs}" ${_opts} \
-#                    "data/${dset}/wav.scp" "${data_feats}${_suf}/${dset}"
-#
-#                echo "${feats_type}" > "${data_feats}${_suf}/${dset}/feats_type"
-#            done
-            for dset in ${train_set}; do
-                _suf="/org"
+            for dset in "${train_set}" "${pseudo_set}" "${valid_set}" ${test_sets}; do
+                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
+                    _suf="/org"
+                else
+                    _suf=""
+                fi
                 utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
                 rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
                 _opts=
@@ -842,6 +822,7 @@ if ! "${skip_train}"; then
 
     if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
         _asr_train_dir="${data_feats}/${train_set}"
+        _asr_pseudo_dir="${data_feats}/${pseudo_set}"
         _asr_valid_dir="${data_feats}/${valid_set}"
         log "Stage 9: ASR collect stats: train_set=${_asr_train_dir}, valid_set=${_asr_valid_dir}"
 
@@ -901,6 +882,45 @@ if ! "${skip_train}"; then
 
         # NOTE: --*_shape_file doesn't require length information if --batch_type=unsorted,
         #       but it's used only for deciding the sample ids.
+
+        # shellcheck disable=SC2086
+        ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
+            ${python} -m espnet2.bin.asr_train \
+                --collect_stats true \
+                --use_preprocessor true \
+                --bpemodel "${bpemodel}" \
+                --token_type "${token_type}" \
+                --token_list "${token_list}" \
+                --non_linguistic_symbols "${nlsyms_txt}" \
+                --cleaner "${cleaner}" \
+                --g2p "${g2p}" \
+                --train_data_path_and_name_and_type "${_asr_pseudo_dir}/${_scp},speech,${_type}" \
+                --train_data_path_and_name_and_type "${_asr_pseudo_dir}/text,text,text" \
+                --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
+                --valid_data_path_and_name_and_type "${_asr_valid_dir}/text,text,text" \
+                --train_shape_file "${_logdir}/train.JOB.scp" \
+                --valid_shape_file "${_logdir}/valid.JOB.scp" \
+                --output_dir "${_logdir}/stats.JOB" \
+                ${_opts} ${asr_args} || { cat "${_logdir}"/stats.1.log; exit 1; }
+
+        # 4. Aggregate shape files
+        _opts=
+        for i in $(seq "${_nj}"); do
+            _opts+="--input_dir ${_logdir}/stats.${i} "
+        done
+        # shellcheck disable=SC2086
+        ${python} -m espnet2.bin.aggregate_stats_dirs ${_opts} --output_dir "${asr_stats_dir}"
+
+        # Append the num-tokens at the last dimensions. This is used for batch-bins count
+        <"${asr_stats_dir}/train/text_shape" \
+            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
+            >"${asr_stats_dir}/train/text_shape.${token_type}"
+
+        <"${asr_stats_dir}/valid/text_shape" \
+            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
+            >"${asr_stats_dir}/valid/text_shape.${token_type}"
+
+        mv ${asr_stats_dir}/train ${asr_stats_dir}/semi
 
         # shellcheck disable=SC2086
         ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
@@ -1030,7 +1050,6 @@ if ! "${skip_train}"; then
         fi
 
         # shellcheck disable=SC2086
-#        --pretrain_step "${pretrain_step}" \
         ${python} -m espnet2.bin.launch \
             --cmd "${cuda_cmd} --name ${jobname}" \
             --log "${asr_exp}"/train.log \

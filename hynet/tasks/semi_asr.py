@@ -733,6 +733,7 @@ class ASRTask(AbsTask):
                 trainer_options=trainer_options,
                 distributed_option=distributed_option,
                 find_unused_parameters=args.unused_parameters,
+                mode=args.semi_mode
             )
 
             if not distributed_option.distributed or distributed_option.dist_rank == 0:

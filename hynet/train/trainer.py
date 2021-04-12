@@ -24,6 +24,7 @@ class PseudoTrainer(Trainer):
         trainer_options,
         distributed_option: DistributedOption,
         find_unused_parameters: bool = False,
+        mode: str = "train",
     ) -> None:
         """Perform training. This method performs the main process of training."""
         assert check_argument_types()
@@ -290,7 +291,7 @@ class PseudoTrainer(Trainer):
             with autocast(scaler is not None):
                 with reporter.measure_time("forward_time"):
                     loss, stats, weight = model(**batch)
-                    loss_pseudo, stats_pseudo, weight_pseudo = model(**pseudo_batch, mode='pseudo', iepoch=iepoch)
+                    loss_pseudo, stats_pseudo, weight_pseudo = model(**pseudo_batch, mode=mode, iepoch=iepoch)
 
                 stats_temp = {}
                 for k, v in stats.items():
