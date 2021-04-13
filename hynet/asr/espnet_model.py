@@ -282,7 +282,17 @@ class ESPnetASRModel(AbsESPnetModel):
                 encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, mode=mode
             )
 
+            # Calculate pred dist
+            pred_dist = torch.softmax(decoder_out, dim=-1)
+            bsz, tsz = ys_out_pad.size()
+
+            # Select target label probability from pred_dist
+            pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz),
+                                                      ys_out_pad.view(bsz * tsz)]
+            pred_prob = pred_prob.view(bsz, tsz)
+            
             # check errors
+            repl_mask = pred_prob < self.th_beta
             repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
             err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
 
@@ -338,6 +348,7 @@ class ESPnetASRModel(AbsESPnetModel):
 
                 # Wrong labels position with confidence filtering
                 repl_mask = repl_masks
+                repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
                 err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
 
             _sos = ys_pad.new([self.sos])
@@ -357,19 +368,19 @@ class ESPnetASRModel(AbsESPnetModel):
             ys_in_pad = pad_list(ys_in, self.eos)
             ys_out_pad = pad_list(ys_out, self.ignore_id)
 
-            decoder_out, _ = self.decoder(
+            decoder_out, _, _ = self.decoder(
                 encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
             )
 
         elif mode == 'bootstrap':
-        ### Bootstrapping ###
+            ### Bootstrapping ###
             with torch.no_grad():
-                decoder_out, _ = self.decoder(
+                decoder_out, _, _ = self.decoder(
                     encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, ys_out_pad=ys_out_pad, mode=None,
                     th_beta=self.th_beta, ignore_id=self.ignore_id
                 )
 
-                decoder_out_noisy, _ = self.decoder(
+                decoder_out_noisy, _, _ = self.decoder(
                     encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, ys_out_pad=ys_out_pad, mode=mode,
                     th_beta=self.th_beta, ignore_id=self.ignore_id
                 )
@@ -448,9 +459,9 @@ class ESPnetASRModel(AbsESPnetModel):
             ys_in_refurbished_pad = pad_list(ys_refurbished_in, self.eos).to(ys_out_refurbished_pad.device)
             ys_out_refurbished_pad = pad_list(ys_refurbished_out, self.ignore_id).to(ys_in_refurbished_pad.device)
 
-            decoder_out, _ = self.decoder(
+            decoder_out, _, _ = self.decoder(
                     encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens)
-            decoder_out_noisy, _ = self.decoder(
+            decoder_out_noisy, _, _ = self.decoder(
                 encoder_out, encoder_out_lens, ys_in_refurbished_pad, ys_in_refurbished_lengths)
 
         else:
@@ -473,12 +484,7 @@ class ESPnetASRModel(AbsESPnetModel):
         # according to bootstrap paper, beta=0.8 worked well for hard bootstrapping
         # beta = 0.8
         if self.iepoch is not None:
-            if self.iepoch < 30:
-                beta = 1.0
-            elif (self.iepoch >= 30 and self.iepoch < 40):
-                beta = 1.0 - 0.4 * (self.iepoch - 30) / 10
-            else:
-                beta = 0.6
+            beta = 0.8
         else:
             beta = 1.0
         loss_att = beta * loss_att + (1 - beta) * loss_att_refurbished

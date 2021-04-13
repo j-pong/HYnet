@@ -3,62 +3,94 @@ from espnet2.train.trainer import *
 class PseudoTrainer(Trainer):
     @classmethod
     def run(
-        cls,
-        model: AbsESPnetModel,
-        optimizers: Sequence[torch.optim.Optimizer],
-        schedulers: Sequence[Optional[AbsScheduler]],
-        train_iter_factory: AbsIterFactory,
-        train_pseudo_iter_factory: AbsIterFactory,
-        valid_iter_factory: AbsIterFactory,
-        plot_attention_iter_factory: Optional[AbsIterFactory],
-        reporter: Reporter,
-        scaler: Optional[GradScaler],
-        output_dir: Path,
-        max_epoch: int,
-        seed: int,
-        patience: Optional[int],
-        keep_nbest_models: int,
-        early_stopping_criterion: Sequence[str],
-        best_model_criterion: Sequence[Sequence[str]],
-        val_scheduler_criterion: Sequence[str],
-        trainer_options,
-        distributed_option: DistributedOption,
-        find_unused_parameters: bool = False,
-        mode: str = "train",
+            cls,
+            model: AbsESPnetModel,
+            optimizers: Sequence[torch.optim.Optimizer],
+            schedulers: Sequence[Optional[AbsScheduler]],
+            train_iter_factory: AbsIterFactory,
+            train_pseudo_iter_factory: AbsIterFactory,
+            valid_iter_factory: AbsIterFactory,
+            plot_attention_iter_factory: Optional[AbsIterFactory],
+            trainer_options,
+            distributed_option: DistributedOption,
+            mode=None,
     ) -> None:
         """Perform training. This method performs the main process of training."""
         assert check_argument_types()
         # NOTE(kamo): Don't check the type more strictly as far trainer_options
         assert is_dataclass(trainer_options), type(trainer_options)
+        assert len(optimizers) == len(schedulers), (len(optimizers), len(schedulers))
+
+        if isinstance(trainer_options.keep_nbest_models, int):
+            keep_nbest_models = trainer_options.keep_nbest_models
+        else:
+            if len(trainer_options.keep_nbest_models) == 0:
+                logging.warning("No keep_nbest_models is given. Change to [1]")
+                trainer_options.keep_nbest_models = [1]
+            keep_nbest_models = max(trainer_options.keep_nbest_models)
+
+        output_dir = Path(trainer_options.output_dir)
+        reporter = Reporter()
+        if trainer_options.use_amp:
+            if LooseVersion(torch.__version__) < LooseVersion("1.6.0"):
+                raise RuntimeError(
+                    "Require torch>=1.6.0 for  Automatic Mixed Precision"
+                )
+            if trainer_options.sharded_ddp:
+                if fairscale is None:
+                    raise RuntimeError(
+                        "Requiring fairscale. Do 'pip install fairscale'"
+                    )
+                scaler = fairscale.optim.grad_scaler.ShardedGradScaler()
+            else:
+                scaler = GradScaler()
+        else:
+            scaler = None
+
+        if trainer_options.resume and (output_dir / "checkpoint.pth").exists():
+            cls.resume(
+                checkpoint=output_dir / "checkpoint.pth",
+                model=model,
+                optimizers=optimizers,
+                schedulers=schedulers,
+                reporter=reporter,
+                scaler=scaler,
+                ngpu=trainer_options.ngpu,
+            )
 
         start_epoch = reporter.get_epoch() + 1
-        if start_epoch == max_epoch + 1:
+        if start_epoch == trainer_options.max_epoch + 1:
             logging.warning(
                 f"The training has already reached at max_epoch: {start_epoch}"
             )
 
         if distributed_option.distributed:
-            dp_model = torch.nn.parallel.DistributedDataParallel(
-                model,
-                device_ids=(
-                    # Perform multi-Process with multi-GPUs
-                    [torch.cuda.current_device()]
-                    if distributed_option.ngpu == 1
-                    # Perform single-Process with multi-GPUs
-                    else None
-                ),
-                output_device=(
-                    torch.cuda.current_device()
-                    if distributed_option.ngpu == 1
-                    else None
-                ),
-                find_unused_parameters=find_unused_parameters,
-            )
+            if trainer_options.sharded_ddp:
+                dp_model = fairscale.nn.data_parallel.ShardedDataParallel(
+                    module=model,
+                    sharded_optimizer=optimizers,
+                )
+            else:
+                dp_model = torch.nn.parallel.DistributedDataParallel(
+                    model,
+                    device_ids=(
+                        # Perform multi-Process with multi-GPUs
+                        [torch.cuda.current_device()]
+                        if distributed_option.ngpu == 1
+                        # Perform single-Process with multi-GPUs
+                        else None
+                    ),
+                    output_device=(
+                        torch.cuda.current_device()
+                        if distributed_option.ngpu == 1
+                        else None
+                    ),
+                    find_unused_parameters=trainer_options.unused_parameters,
+                )
         elif distributed_option.ngpu > 1:
             dp_model = torch.nn.parallel.DataParallel(
                 model,
                 device_ids=list(range(distributed_option.ngpu)),
-                find_unused_parameters=find_unused_parameters,
             )
         else:
             # NOTE(kamo): DataParallel also should work with ngpu=1,
@@ -66,30 +98,29 @@ class PseudoTrainer(Trainer):
             dp_model = model
 
         if trainer_options.use_tensorboard and (
-            not distributed_option.distributed or distributed_option.dist_rank == 0
+                not distributed_option.distributed or distributed_option.dist_rank == 0
         ):
             summary_writer = SummaryWriter(str(output_dir / "tensorboard"))
         else:
             summary_writer = None
 
-        cls.pseudo_iterator_ = None
         start_time = time.perf_counter()
-        for iepoch in range(start_epoch, max_epoch + 1):
+        for iepoch in range(start_epoch, trainer_options.max_epoch + 1):
             if iepoch != start_epoch:
                 logging.info(
                     "{}/{}epoch started. Estimated time to finish: {}".format(
                         iepoch,
-                        max_epoch,
+                        trainer_options.max_epoch,
                         humanfriendly.format_timespan(
                             (time.perf_counter() - start_time)
                             / (iepoch - start_epoch)
-                            * (max_epoch - iepoch + 1)
+                            * (trainer_options.max_epoch - iepoch + 1)
                         ),
                     )
                 )
             else:
-                logging.info(f"{iepoch}/{max_epoch}epoch started")
-            set_all_random_seed(seed + iepoch)
+                logging.info(f"{iepoch}/{trainer_options.max_epoch}epoch started")
+            set_all_random_seed(trainer_options.seed + iepoch)
 
             reporter.set_epoch(iepoch)
             # 1. Train and validation for one-epoch
@@ -104,7 +135,9 @@ class PseudoTrainer(Trainer):
                     scaler=scaler,
                     summary_writer=summary_writer,
                     options=trainer_options,
-                    iepoch=iepoch
+                    distributed_option=distributed_option,
+                    iepoch=iepoch,
+                    mode=mode,
                 )
 
             with reporter.observe("valid") as sub_reporter:
@@ -113,6 +146,7 @@ class PseudoTrainer(Trainer):
                     iterator=valid_iter_factory.build_iter(iepoch),
                     reporter=sub_reporter,
                     options=trainer_options,
+                    distributed_option=distributed_option,
                 )
 
             if not distributed_option.distributed or distributed_option.dist_rank == 0:
@@ -131,10 +165,15 @@ class PseudoTrainer(Trainer):
             # 2. LR Scheduler step
             for scheduler in schedulers:
                 if isinstance(scheduler, AbsValEpochStepScheduler):
-                    scheduler.step(reporter.get_value(*val_scheduler_criterion))
+                    scheduler.step(
+                        reporter.get_value(*trainer_options.val_scheduler_criterion)
+                    )
                 elif isinstance(scheduler, AbsEpochStepScheduler):
                     scheduler.step()
-            model.th_beta = model.th_beta.new([float((iepoch-24) / ((max_epoch-24) / 2) * 0.2)])
+            if trainer_options.sharded_ddp:
+                for optimizer in optimizers:
+                    if isinstance(optimizer, fairscale.optim.oss.OSS):
+                        optimizer.consolidate_state_dict()
 
             if not distributed_option.distributed or distributed_option.dist_rank == 0:
                 # 3. Report the results
@@ -170,7 +209,7 @@ class PseudoTrainer(Trainer):
                 p.symlink_to(f"{iepoch}epoch.pth")
 
                 _improved = []
-                for _phase, k, _mode in best_model_criterion:
+                for _phase, k, _mode in trainer_options.best_model_criterion:
                     # e.g. _phase, k, _mode = "train", "loss", "min"
                     if reporter.has(_phase, k):
                         best_epoch = reporter.get_best_epoch(_phase, k, _mode)
@@ -194,7 +233,7 @@ class PseudoTrainer(Trainer):
                 nbests = set().union(
                     *[
                         set(reporter.sort_epochs(ph, k, m)[:keep_nbest_models])
-                        for ph, k, m in best_model_criterion
+                        for ph, k, m in trainer_options.best_model_criterion
                         if reporter.has(ph, k)
                     ]
                 )
@@ -215,34 +254,43 @@ class PseudoTrainer(Trainer):
                 break
 
             # 8. Check early stopping
-            if patience is not None:
-                if reporter.check_early_stopping(patience, *early_stopping_criterion):
+            if trainer_options.patience is not None:
+                if reporter.check_early_stopping(
+                        trainer_options.patience, *trainer_options.early_stopping_criterion
+                ):
                     break
 
         else:
-            logging.info(f"The training was finished at {max_epoch} epochs ")
+            logging.info(
+                f"The training was finished at {trainer_options.max_epoch} epochs "
+            )
+
+        if not distributed_option.distributed or distributed_option.dist_rank == 0:
+            # Generated n-best averaged model
+            average_nbest_models(
+                reporter=reporter,
+                output_dir=output_dir,
+                best_model_criterion=trainer_options.best_model_criterion,
+                nbest=keep_nbest_models,
+            )
 
     @classmethod
     def train_one_epoch(
-        cls,
-        model: torch.nn.Module,
-        iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
-        pseudo_iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
-        optimizers: Sequence[torch.optim.Optimizer],
-        schedulers: Sequence[Optional[AbsScheduler]],
-        scaler: Optional[GradScaler],
-        reporter: SubReporter,
-        summary_writer: Optional[SummaryWriter],
-        options: TrainerOptions,
-        iepoch=None,
+            cls,
+            model: torch.nn.Module,
+            iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
+            pseudo_iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
+            optimizers: Sequence[torch.optim.Optimizer],
+            schedulers: Sequence[Optional[AbsScheduler]],
+            scaler: Optional[GradScaler],
+            reporter: SubReporter,
+            summary_writer: Optional[SummaryWriter],
+            options: TrainerOptions,
+            distributed_option: DistributedOption,
+            iepoch=None,
+            mode=None,
     ) -> bool:
         assert check_argument_types()
-
-        # Note(kamo): assumes one optimizer
-        assert cls.num_optimizers == 1, cls.num_optimizers
-        assert len(optimizers) == 1, len(optimizers)
-        optimizer = optimizers[0]
-        scheduler = schedulers[0]
 
         grad_noise = options.grad_noise
         accum_grad = options.accum_grad
@@ -252,7 +300,7 @@ class PseudoTrainer(Trainer):
         no_forward_run = options.no_forward_run
         ngpu = options.ngpu
         use_wandb = options.use_wandb
-        distributed = isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        distributed = distributed_option.distributed
 
         if log_interval is None:
             try:
@@ -268,7 +316,6 @@ class PseudoTrainer(Trainer):
         pseudo_iterator = iter(pseudo_iterator)
 
         start_time = time.perf_counter()
-
         for iiter, (_, batch) in enumerate(
                 reporter.measure_iter_time(iterator, "iter_time"), 1
         ):
@@ -276,7 +323,7 @@ class PseudoTrainer(Trainer):
             _, pseudo_batch = pseudo_iterator.next()
 
             assert isinstance(batch, dict), type(batch)
-            
+
             if distributed:
                 torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)
                 if iterator_stop > 0:
@@ -291,7 +338,10 @@ class PseudoTrainer(Trainer):
             with autocast(scaler is not None):
                 with reporter.measure_time("forward_time"):
                     loss, stats, weight = model(**batch)
-                    loss_pseudo, stats_pseudo, weight_pseudo = model(**pseudo_batch, mode=mode, iepoch=iepoch)
+                    if mode == "bootstrap":
+                        loss_pseudo, stats_pseudo, weight_pseudo = model(**pseudo_batch, mode=mode, iepoch=iepoch)
+                    else:
+                        loss_pseudo, stats_pseudo, weight_pseudo = model(**pseudo_batch, mode=mode)
 
                 stats_temp = {}
                 for k, v in stats.items():
@@ -333,10 +383,14 @@ class PseudoTrainer(Trainer):
                 else:
                     loss.backward()
 
+            optim_idx = None
             if iiter % accum_grad == 0:
                 if scaler is not None:
                     # Unscales the gradients of optimizer's assigned params in-place
-                    scaler.unscale_(optimizer)
+                    for iopt, optimizer in enumerate(optimizers):
+                        if optim_idx is not None and iopt != optim_idx:
+                            continue
+                        scaler.unscale_(optimizer)
 
                 # gradient noise injection
                 if grad_noise:
@@ -370,31 +424,40 @@ class PseudoTrainer(Trainer):
                     # Note that if the gradient has inf/nan values,
                     # scaler.step skips optimizer.step().
                     if scaler is not None:
-                        scaler.step(optimizer)
-                        scaler.update()
+                        for iopt, optimizer in enumerate(optimizers):
+                            if optim_idx is not None and iopt != optim_idx:
+                                continue
+                            scaler.step(optimizer)
+                            scaler.update()
 
                 else:
                     all_steps_are_invalid = False
                     with reporter.measure_time("optim_step_time"):
-                        if scaler is not None:
-                            # scaler.step() first unscales the gradients of
-                            # the optimizer's assigned params.
-                            scaler.step(optimizer)
-                            # Updates the scale for next iteration.
-                            scaler.update()
-                        else:
-                            optimizer.step()
-                    if isinstance(scheduler, AbsBatchStepScheduler):
-                        scheduler.step()
-                optimizer.zero_grad()
+                        for iopt, (optimizer, scheduler) in enumerate(
+                                zip(optimizers, schedulers)
+                        ):
+                            if optim_idx is not None and iopt != optim_idx:
+                                continue
+                            if scaler is not None:
+                                # scaler.step() first unscales the gradients of
+                                # the optimizer's assigned params.
+                                scaler.step(optimizer)
+                                # Updates the scale for next iteration.
+                                scaler.update()
+                            else:
+                                optimizer.step()
+                            if isinstance(scheduler, AbsBatchStepScheduler):
+                                scheduler.step()
+                            optimizer.zero_grad()
 
                 # Register lr and train/load time[sec/step],
                 # where step refers to accum_grad * mini-batch
                 reporter.register(
                     dict(
                         {
-                            f"lr_{i}": pg["lr"]
-                            for i, pg in enumerate(optimizer.param_groups)
+                            f"optim{i}_lr{j}": pg["lr"]
+                            for i, optimizer in enumerate(optimizers)
+                            for j, pg in enumerate(optimizer.param_groups)
                             if "lr" in pg
                         },
                         train_time=time.perf_counter() - start_time,
@@ -417,4 +480,3 @@ class PseudoTrainer(Trainer):
                 torch.distributed.all_reduce(iterator_stop, ReduceOp.SUM)
 
         return all_steps_are_invalid
-

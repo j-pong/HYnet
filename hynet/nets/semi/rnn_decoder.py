@@ -168,7 +168,7 @@ class RNNDecoder(AbsDecoder):
                 )
         return z_list, c_list
 
-    def forward(self, hs_pad, hlens, ys_in_pad, ys_in_lens, ys_out_pad=None, mode='train', th_beta=0.0, ignore_id=-1, strm_idx=0):
+    def forward(self, hs_pad, hlens, ys_in_pad, ys_in_lens, ys_out_pad=None, mode=None, th_beta=0.0, ignore_id=-1, strm_idx=0):
         repl_masks = None
 
         # to support mutiple encoder asr mode, in single encoder mode,
@@ -258,7 +258,9 @@ class RNNDecoder(AbsDecoder):
 
         elif mode == "recursive_gradient_masking":
             ### recursive_gradient_masking ###
+
             # loop for an output sequence
+            repl_masks = []
             for i in range(olength):
                 if self.num_encs == 1:
                     att_c, att_w = self.att_list[att_idx](
@@ -281,7 +283,6 @@ class RNNDecoder(AbsDecoder):
                         att_w_list[self.num_encs],
                     )
 
-                repl_masks = []
                 with torch.no_grad():
                     z_all_temp = z_all[:]
                     # utt x (zdim + hdim)
@@ -308,7 +309,7 @@ class RNNDecoder(AbsDecoder):
                         repl_tokens.append(topk_idx[batch_idx, nomial_idx])
                     repl_tokens = torch.tensor(repl_tokens).view(bsz)
 
-                    unk = torch.tensor([2]*int(bsz)).view(bsz)
+                    unk = torch.tensor([1]*int(bsz)).view(bsz)
                     pred_prob = pred_dist.view(bsz, -1)[torch.arange(bsz),
                                                         ys_out_pad[:, i].view(
                                                             bsz)]  # pseudo label confidence
@@ -346,6 +347,7 @@ class RNNDecoder(AbsDecoder):
 
         elif mode == "bootstrap":
             ### Label Refurbishment ###
+
             # pre-computation of embedding
             eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
 
