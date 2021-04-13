@@ -66,4 +66,4 @@ specaug_conf:
 
 # Label Refurbishment Mode Selection
 # Choices: [pseudo, gradient_masking, recursive_gradient_masking, bootstrap]
-semi_mode: recursive_gradient_masking
+semi_mode: pseudo
