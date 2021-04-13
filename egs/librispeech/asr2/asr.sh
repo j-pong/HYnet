@@ -824,7 +824,104 @@ if ! "${skip_train}"; then
         _asr_train_dir="${data_feats}/${train_set}"
         _asr_pseudo_dir="${data_feats}/${pseudo_set}"
         _asr_valid_dir="${data_feats}/${valid_set}"
-        log "Stage 9: ASR collect stats: train_set=${_asr_train_dir}, valid_set=${_asr_valid_dir}"
+        log "Stage 9: ASR collect stats: train_set=${_asr_train_dir}, pseudo_set=${_asr_pseudo_dir} valid_set=${_asr_valid_dir}"
+
+        _opts=
+        if [ -n "${asr_config}" ]; then
+            # To generate the config file: e.g.
+            #   % python3 -m espnet2.bin.asr_train --print_config --optim adam
+            _opts+="--config ${asr_config} "
+        fi
+
+        _feats_type="$(<${_asr_pseudo_dir}/feats_type)"
+        if [ "${_feats_type}" = raw ]; then
+            _scp=wav.scp
+            if [[ "${audio_format}" == *ark* ]]; then
+                _type=kaldi_ark
+            else
+                # "sound" supports "wav", "flac", etc.
+                _type=sound
+            fi
+            _opts+="--frontend_conf fs=${fs} "
+        else
+            _scp=feats.scp
+            _type=kaldi_ark
+            _input_size="$(<${_asr_pseudo_dir}/feats_dim)"
+            _opts+="--input_size=${_input_size} "
+        fi
+
+        # 1. Split the key file
+        _logdir="${asr_stats_dir}/logdir"
+        mkdir -p "${_logdir}"
+
+        # Get the minimum number among ${nj} and the number lines of input files
+        _nj=$(min "${nj}" "$(<${_asr_pseudo_dir}/${_scp} wc -l)" "$(<${_asr_valid_dir}/${_scp} wc -l)")
+
+        key_file="${_asr_pseudo_dir}/${_scp}"
+        split_scps=""
+        for n in $(seq "${_nj}"); do
+            split_scps+=" ${_logdir}/train.${n}.scp"
+        done
+        # shellcheck disable=SC2086
+        utils/split_scp.pl "${key_file}" ${split_scps}
+
+        key_file="${_asr_valid_dir}/${_scp}"
+        split_scps=""
+        for n in $(seq "${_nj}"); do
+            split_scps+=" ${_logdir}/valid.${n}.scp"
+        done
+        # shellcheck disable=SC2086
+        utils/split_scp.pl "${key_file}" ${split_scps}
+
+        # 2. Generate run.sh
+        log "Generate '${asr_stats_dir}/run.sh'. You can resume the process from stage 9 using this script"
+        mkdir -p "${asr_stats_dir}"; echo "${run_args} --stage 9 \"\$@\"; exit \$?" > "${asr_stats_dir}/run.sh"; chmod +x "${asr_stats_dir}/run.sh"
+
+        # 3. Submit jobs
+        log "ASR collect-stats started... log: '${_logdir}/stats.*.log'"
+
+        # NOTE: --*_shape_file doesn't require length information if --batch_type=unsorted,
+        #       but it's used only for deciding the sample ids.
+
+        # shellcheck disable=SC2086
+        ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
+            ${python} -m hynet.bin.semi_asr_train \
+                --collect_stats true \
+                --use_preprocessor true \
+                --bpemodel "${bpemodel}" \
+                --token_type "${token_type}" \
+                --token_list "${token_list}" \
+                --non_linguistic_symbols "${nlsyms_txt}" \
+                --cleaner "${cleaner}" \
+                --g2p "${g2p}" \
+                --train_data_path_and_name_and_type "${_asr_pseudo_dir}/${_scp},speech,${_type}" \
+                --train_data_path_and_name_and_type "${_asr_pseudo_dir}/text,text,text" \
+                --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
+                --valid_data_path_and_name_and_type "${_asr_valid_dir}/text,text,text" \
+                --train_shape_file "${_logdir}/train.JOB.scp" \
+                --valid_shape_file "${_logdir}/valid.JOB.scp" \
+                --output_dir "${_logdir}/stats.JOB" \
+                ${_opts} ${asr_args} || { cat "${_logdir}"/stats.1.log; exit 1; }
+
+        # 4. Aggregate shape files
+        _opts=
+        for i in $(seq "${_nj}"); do
+            _opts+="--input_dir ${_logdir}/stats.${i} "
+        done
+        # shellcheck disable=SC2086
+        ${python} -m espnet2.bin.aggregate_stats_dirs ${_opts} --output_dir "${asr_stats_dir}"
+
+        # Append the num-tokens at the last dimensions. This is used for batch-bins count
+        <"${asr_stats_dir}/train/text_shape" \
+            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
+            >"${asr_stats_dir}/train/text_shape.${token_type}"
+
+        <"${asr_stats_dir}/valid/text_shape" \
+            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
+            >"${asr_stats_dir}/valid/text_shape.${token_type}"
+
+        mv ${asr_stats_dir}/train ${asr_stats_dir}/semi
+        echo "ASR pseudo data collect-stats finished"
 
         _opts=
         if [ -n "${asr_config}" ]; then
@@ -877,54 +974,9 @@ if ! "${skip_train}"; then
         log "Generate '${asr_stats_dir}/run.sh'. You can resume the process from stage 9 using this script"
         mkdir -p "${asr_stats_dir}"; echo "${run_args} --stage 9 \"\$@\"; exit \$?" > "${asr_stats_dir}/run.sh"; chmod +x "${asr_stats_dir}/run.sh"
 
-        # 3. Submit jobs
-        log "ASR collect-stats started... log: '${_logdir}/stats.*.log'"
-
-        # NOTE: --*_shape_file doesn't require length information if --batch_type=unsorted,
-        #       but it's used only for deciding the sample ids.
-
         # shellcheck disable=SC2086
         ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
-            ${python} -m espnet2.bin.asr_train \
-                --collect_stats true \
-                --use_preprocessor true \
-                --bpemodel "${bpemodel}" \
-                --token_type "${token_type}" \
-                --token_list "${token_list}" \
-                --non_linguistic_symbols "${nlsyms_txt}" \
-                --cleaner "${cleaner}" \
-                --g2p "${g2p}" \
-                --train_data_path_and_name_and_type "${_asr_pseudo_dir}/${_scp},speech,${_type}" \
-                --train_data_path_and_name_and_type "${_asr_pseudo_dir}/text,text,text" \
-                --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
-                --valid_data_path_and_name_and_type "${_asr_valid_dir}/text,text,text" \
-                --train_shape_file "${_logdir}/train.JOB.scp" \
-                --valid_shape_file "${_logdir}/valid.JOB.scp" \
-                --output_dir "${_logdir}/stats.JOB" \
-                ${_opts} ${asr_args} || { cat "${_logdir}"/stats.1.log; exit 1; }
-
-        # 4. Aggregate shape files
-        _opts=
-        for i in $(seq "${_nj}"); do
-            _opts+="--input_dir ${_logdir}/stats.${i} "
-        done
-        # shellcheck disable=SC2086
-        ${python} -m espnet2.bin.aggregate_stats_dirs ${_opts} --output_dir "${asr_stats_dir}"
-
-        # Append the num-tokens at the last dimensions. This is used for batch-bins count
-        <"${asr_stats_dir}/train/text_shape" \
-            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
-            >"${asr_stats_dir}/train/text_shape.${token_type}"
-
-        <"${asr_stats_dir}/valid/text_shape" \
-            awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
-            >"${asr_stats_dir}/valid/text_shape.${token_type}"
-
-        mv ${asr_stats_dir}/train ${asr_stats_dir}/semi
-
-        # shellcheck disable=SC2086
-        ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
-            ${python} -m espnet2.bin.asr_train \
+            ${python} -m hynet.bin.semi_asr_train \
                 --collect_stats true \
                 --use_preprocessor true \
                 --bpemodel "${bpemodel}" \
@@ -958,6 +1010,8 @@ if ! "${skip_train}"; then
         <"${asr_stats_dir}/valid/text_shape" \
             awk -v N="$(<${token_list} wc -l)" '{ print $0 "," N }' \
             >"${asr_stats_dir}/valid/text_shape.${token_type}"
+
+        echo "ASR train data collect-stats finished"
     fi
 
 

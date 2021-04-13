@@ -10,7 +10,7 @@ pseudo_set="train_860_pseudo"
 valid_set="dev"
 test_sets="test_clean test_other dev_clean dev_other"
 
-asr_config=conf/tuning/train_asr_rnn_3090.yaml
+asr_config=conf/tuning/train_asr_semi_2080.yaml
 lm_config=conf/tuning/train_lm_adam.yaml
 inference_config=conf/decode_asr.yaml
 
