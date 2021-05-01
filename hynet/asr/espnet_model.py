@@ -103,6 +103,7 @@ class ESPnetASRModel(AbsESPnetModel):
         text: torch.Tensor,
         text_lengths: torch.Tensor,
         mode=None,
+        iepoch=None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         """Frontend + Encoder + Decoder + Calc loss
 
@@ -125,14 +126,35 @@ class ESPnetASRModel(AbsESPnetModel):
         # for data-parallel
         text = text[:, : text_lengths.max()]
 
+        # for bootstrapping beta
+        self.iepoch = iepoch
+
         # 1. Encoder
         encoder_out, encoder_out_lens = self.encode(speech, speech_lengths)
 
+        ### Original ###
+        # # 2a. Attention-decoder branch
+        # if self.ctc_weight == 1.0:
+        #     loss_att, acc_att, cer_att, wer_att, err_pred = None, None, None, None, None
+        # else:
+        #     loss_att, acc_att, cer_att, wer_att, err_pred = self._calc_att_loss(
+        #         encoder_out, encoder_out_lens, text, text_lengths, mode
+        #     )
+        #
+        # # 2b. CTC branch
+        # if self.ctc_weight == 0.0:
+        #     loss_ctc, cer_ctc = None, None
+        # else:
+        #     loss_ctc, cer_ctc = self._calc_ctc_loss(
+        #         encoder_out, encoder_out_lens, text, text_lengths
+        #     )
+
+        ### Label Refurbishment ###
         # 2a. Attention-decoder branch
         if self.ctc_weight == 1.0:
-            loss_att, acc_att, cer_att, wer_att, err_pred = None, None, None, None, None
+            loss_att, acc_att, cer_att, wer_att, err_pred, beta, text_refurbished, text_refurbished_lengths = None, None, None, None, None, None, None, None
         else:
-            loss_att, acc_att, cer_att, wer_att, err_pred = self._calc_att_loss(
+            loss_att, acc_att, cer_att, wer_att, err_pred, beta, text_refurbished, text_refurbished_lengths = self._calc_att_loss(
                 encoder_out, encoder_out_lens, text, text_lengths, mode
             )
 
@@ -143,6 +165,11 @@ class ESPnetASRModel(AbsESPnetModel):
             loss_ctc, cer_ctc = self._calc_ctc_loss(
                 encoder_out, encoder_out_lens, text, text_lengths
             )
+            if text_refurbished is not None:
+                loss_ctc_refurbished, cer_ctc_refurbished = self._calc_ctc_loss(
+                    encoder_out, encoder_out_lens, text_refurbished, text_refurbished_lengths
+                )
+                loss_ctc = beta * loss_ctc + (1 - beta) * loss_ctc_refurbished
 
         # 2c. RNN-T branch
         if self.rnnt_decoder is not None:
@@ -270,75 +297,187 @@ class ESPnetASRModel(AbsESPnetModel):
 
         # 1. Forward decoder
         err_pred = 0.0
+        ys_out_refurbished_pad = None
+        ys_out_refurbished_lengths = None
         if mode is None:
             decoder_out, _ = self.decoder(
                 encoder_out, encoder_out_lens, ys_in_pad, ys_out_pad, ys_in_lens
             )
         elif mode == 'pseudo':
-            #with torch.no_grad():
-            decoder_out, _, ys_in_pad, ys_out_pad, repl_mask = self.decoder(
-                encoder_out, encoder_out_lens, ys_in_pad, ys_out_pad, ys_in_lens, ignore_id=self.ignore_id, mode="conf_test", th_beta=self.th_beta)
+        ### token masking ###
+        #     decoder_out, _, ys_in_pad, ys_out_pad, repl_mask = self.decoder(
+        #             encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, ys_out_pad=ys_out_pad, mode=mode,
+        #             th_beta=self.th_beta, ignore_id=self.ignore_id
+        #         )
+        #
+        #     # Wrong labels position with confidence filtering
+        #     repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
+        #     err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
+        #
+        # else:
+        #     raise AttributeError("{} mode is not supported!".format(mode))
+        #
+        ## 2. Compute attention loss
+        # loss_att = self.criterion_att(decoder_out, ys_out_pad)
+        # acc_att = th_accuracy(
+        #     decoder_out.view(-1, self.vocab_size),
+        #     ys_out_pad,
+        #     ignore_label=self.ignore_id,
+        # )
+        #
+        ## Compute cer/wer using attention-decoder
+        # if self.training or self.error_calculator is None:
+        #     cer_att, wer_att = None, None
+        # else:
+        #     ys_hat = decoder_out.argmax(dim=-1)
+        #     cer_att, wer_att = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
+
+        ### Gradient Masking ###
+        #     with torch.no_grad():
+        #         decoder_out, _ = self.decoder(
+        #             encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, ys_out_pad=ys_out_pad, mode=None,
+        #             th_beta=self.th_beta, ignore_id=self.ignore_id
+        #         )
+        #         # Calculate pred dist
+        #         pred_dist = torch.softmax(decoder_out, dim=-1)
+        #
+        #         bsz, tsz = ys_out_pad.size()
+        #
+        #         # Select target label probability from pred_dist
+        #         pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz),
+        #                                                   ys_out_pad.view(bsz * tsz)]
+        #         pred_prob = pred_prob.view(bsz, tsz)
+        #
+        #         # # Samplling labels
+        #         # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
+        #         # sampled_labels = sampler.sample()
+        #         # sampled_labels = sampled_labels.view(bsz, tsz)
+        #
+        #         # Wrong labels position with confidence filtering
+        #         repl_mask = pred_prob < self.th_beta
+        #         repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
+        #         err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
+        #
+        #     _sos = ys_pad.new([self.sos])
+        #     _ignore = ys_pad.new([self.ignore_id])
+        #
+        #     ys_in = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
+        #     ys_out = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
+        #
+        #     for rm, y in zip(repl_mask, ys_in):
+        #         y[rm] = 2
+        #     for rm, y in zip(repl_mask, ys_out):
+        #         y[rm] = self.ignore_id
+        #
+        #     ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
+        #     ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
+        #
+        #     ys_in_pad = pad_list(ys_in, self.eos)
+        #     ys_out_pad = pad_list(ys_out, self.ignore_id)
+        #
+        #     decoder_out, _ = self.decoder(
+        #             encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
+        #         )
+        #
+        # else:
+        #     raise AttributeError("{} mode is not supported!".format(mode))
+        #
+        # # 2. Compute attention loss
+        # loss_att = self.criterion_att(decoder_out, ys_out_pad)
+        # acc_att = th_accuracy(
+        #     decoder_out.view(-1, self.vocab_size),
+        #     ys_out_pad,
+        #     ignore_label=self.ignore_id,
+        # )
+        #
+        # # Compute cer/wer using attention-decoder
+        # if self.training or self.error_calculator is None:
+        #     cer_att, wer_att = None, None
+        # else:
+        #     ys_hat = decoder_out.argmax(dim=-1)
+        #     cer_att, wer_att = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
+
+        ### Label Refurbishment ###
+            decoder_out, _ = self.decoder(
+                encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, ys_out_pad=ys_out_pad, mode=None,
+                th_beta=self.th_beta, ignore_id=self.ignore_id
+            )
+
+            decoder_out_noisy, _ = self.decoder(
+                encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens, ys_out_pad=ys_out_pad, mode="refurbish",
+                th_beta=self.th_beta, ignore_id=self.ignore_id
+            )
             
-            '''# Calculate pred dist
+            # self-prediction label for entropy minimization
+            ys_out_refurbished_pad = torch.argmax(decoder_out_noisy.clone().detach(), -1)
+            ys_out_refurbished_lengths = []
+            # TODO: maybe find eos?
+            for batch_idx, y in enumerate(ys_out_refurbished_pad):
+                if self.eos in y:
+                    ys_out_refurbished_pad[batch_idx, torch.where(y == self.eos)[0][0]:] = self.ignore_id
+                    ys_out_refurbished_lengths.append(torch.where(y == self.ignore_id)[0][0])
+                elif 0 in y:
+                    ys_out_refurbished_pad[batch_idx, torch.where(y == 0)[0][0]:] = self.ignore_id
+                    ys_out_refurbished_lengths.append(torch.where(y == self.ignore_id)[0][0])
+                else:
+                    ys_out_refurbished_lengths.append(len(y))
+            ys_out_refurbished_lengths = torch.tensor(ys_out_refurbished_lengths).to(ys_out_refurbished_pad.device)
+
+            # Calculate pred dist
             pred_dist = torch.softmax(decoder_out, dim=-1)
+            pred_dist_noisy = torch.softmax(decoder_out_noisy, dim=-1)
 
             bsz, tsz = ys_out_pad.size()
 
             # Select target label probability from pred_dist
-            pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz), 
-                                                        ys_out_pad.view(bsz * tsz)]
-            pred_prob = pred_prob.view(bsz, tsz)'''
-
-            # # Samplling labels
-            # sampler = torch.distributions.categorical.Categorical(pred_dist.view(bsz * tsz, -1))
-            # sampled_labels = sampler.sample()
-            # sampled_labels = sampled_labels.view(bsz, tsz)
+            pred_prob = pred_dist.view(bsz * tsz, -1)[torch.arange(bsz * tsz),
+                                                      ys_out_pad.view(bsz * tsz)]
+            pred_prob = pred_prob.view(bsz, tsz)
+            pred_prob_noisy = pred_dist_noisy.view(bsz * tsz, -1)[torch.arange(bsz * tsz),
+                                                      ys_out_pad.view(bsz * tsz)]
+            pred_prob_noisy = pred_prob_noisy.view(bsz, tsz)
 
             # Wrong labels position with confidence filtering
-            '''repl_mask = pred_prob < self.th_beta'''
-            repl_mask = [rm[:l] for rm, l in zip(repl_mask, ys_pad_lens)]
-            err_pred = float(torch.tensor([rm.float().mean() for rm in repl_mask]).mean())
-
-            '''_sos = ys_pad.new([self.sos])
-            _ignore = ys_pad.new([self.ignore_id])
-            
-            ys_in = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
-            ys_out = [y[y != self.ignore_id] for y in ys_pad.clone().detach()]
-
-            for rm, y in zip(repl_mask, ys_in):
-                y[rm] = 2
-            for rm, y in zip(repl_mask, ys_out):
-                y[rm] = 2
-
-            ys_in = [torch.cat([_sos, y], dim=0) for y in ys_in]
-            ys_out = [torch.cat([y, _ignore], dim=0) for y in ys_out]
-
-            ys_in_pad = pad_list(ys_in, self.eos)
-            ys_out_pad = pad_list(ys_out, self.ignore_id)
-                
-            decoder_out, _ = self.decoder(
-                    encoder_out, encoder_out_lens, ys_in_pad, ys_in_lens
-                )'''
+            err_pred = pred_prob != pred_prob_noisy
+            err_pred = err_pred.float().mean()
 
         else:
             raise AttributeError("{} mode is not supported!".format(mode))
 
         # 2. Compute attention loss
+        # TODO: maybe length normalization?
         loss_att = self.criterion_att(decoder_out, ys_out_pad)
-        acc_att = th_accuracy(
-            decoder_out.view(-1, self.vocab_size),
-            ys_out_pad,
-            ignore_label=self.ignore_id,
-        )
+        if mode is not "pseudo":
+            acc_att = th_accuracy(
+                decoder_out.view(-1, self.vocab_size),
+                ys_out_pad,
+                ignore_label=self.ignore_id,
+            )
+            loss_att_refurbished = torch.tensor(0.0).to(decoder_out.device)
+        else:
+            acc_att = torch.tensor(0.0).to(decoder_out.device)
+            loss_att_refurbished = self.criterion_att(decoder_out_noisy, ys_out_refurbished_pad)
+
+        # mixup ratio
+        # according to bootstrap paper, beta=0.8 worked well for hard bootstrapping
+        # beta = 0.8
+        if self.iepoch is not None:
+            if self.iepoch < 34:
+                beta = 1.0 - 0.2 * (self.iepoch - 24) / 10
+            else:
+                beta = 0.8
+        else:
+            beta = 1.0
+        loss_att = beta * loss_att + (1 - beta) * loss_att_refurbished
 
         # Compute cer/wer using attention-decoder
-        if self.training or self.error_calculator is None:
+        if self.training or self.error_calculator is None or mode == "pseudo":
             cer_att, wer_att = None, None
         else:
             ys_hat = decoder_out.argmax(dim=-1)
             cer_att, wer_att = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
 
-        return loss_att, acc_att, cer_att, wer_att, err_pred
+        return loss_att, acc_att, cer_att, wer_att, err_pred, beta, ys_out_refurbished_pad, ys_out_refurbished_lengths
 
     def _calc_ctc_loss(
         self,

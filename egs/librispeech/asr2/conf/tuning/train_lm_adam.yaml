@@ -5,8 +5,8 @@ optim: adam
 optim_conf:
     lr: 0.001
 batch_type: folded
-batch_size: 400   # batch size in LM training
-max_epoch: 20     # if the data size is large, we can reduce this
+batch_size: 300   # batch size in LM training
+max_epoch: 7     # if the data size is large, we can reduce this
 patience: 3
 
 best_model_criterion:

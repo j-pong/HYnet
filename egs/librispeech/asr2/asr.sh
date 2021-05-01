@@ -103,6 +103,7 @@ download_model= # Download a model from Model Zoo and use it for decoding.
 
 # [Task dependent] Set the datadir name created by local/data.sh
 train_set=       # Name of training set.
+pseudo_set=      # Name of pseudo set.
 valid_set=       # Name of validation set used for monitoring/tuning network training.
 test_sets=       # Names of test sets. Multiple items (e.g., both dev and eval sets) can be specified.
 bpe_train_text=  # Text file path of bpe training set.
@@ -116,6 +117,7 @@ lang=noinfo      # The language type of corpus.
 asr_speech_fold_length=800 # fold_length for speech data during ASR training.
 asr_text_fold_length=150   # fold_length for text data during ASR training.
 lm_fold_length=150         # fold_length for LM training.
+pretrain_step=20           # pretrain epochs with labeled datasets
 
 help_message=$(cat << EOF
 Usage: $0 --train-set "<train_set_name>" --valid-set "<valid_set_name>" --test_sets "<test_set_names>"
@@ -411,12 +413,32 @@ if ! "${skip_data_prep}"; then
             # If nothing is need, then format_wav_scp.sh does nothing:
             # i.e. the input file format and rate is same as the output.
 
-            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
-                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-                    _suf="/org"
-                else
-                    _suf=""
-                fi
+#            for dset in "${train_set}" "${pseudo_set}" "${valid_set}" ${test_sets}; do
+#                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
+#                    _suf="/org"
+#                else
+#                    _suf=""
+#                fi
+#                utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
+#                rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
+#                _opts=
+#                if [ -e data/"${dset}"/segments ]; then
+#                    # "segments" is used for splitting wav files which are written in "wav".scp
+#                    # into utterances. The file format of segments:
+#                    #   <segment_id> <record_id> <start_time> <end_time>
+#                    #   "e.g. call-861225-A-0050-0065 call-861225-A 5.0 6.5"
+#                    # Where the time is written in seconds.
+#                    _opts+="--segments data/${dset}/segments "
+#                fi
+#                # shellcheck disable=SC2086
+#                scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
+#                    --audio-format "${audio_format}" --fs "${fs}" ${_opts} \
+#                    "data/${dset}/wav.scp" "${data_feats}${_suf}/${dset}"
+#
+#                echo "${feats_type}" > "${data_feats}${_suf}/${dset}/feats_type"
+#            done
+            for dset in ${train_set}; do
+                _suf="/org"
                 utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
                 rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
                 _opts=
@@ -439,7 +461,7 @@ if ! "${skip_data_prep}"; then
         elif [ "${feats_type}" = fbank_pitch ]; then
             log "[Require Kaldi] Stage 3: ${feats_type} extract: data/ -> ${data_feats}"
 
-            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+            for dset in "${train_set}" "${pseudo_set}" "${valid_set}" ${test_sets}; do
                 if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
                     _suf="/org"
                 else
@@ -474,7 +496,7 @@ if ! "${skip_data_prep}"; then
             log "Stage 3: ${feats_type} extract: data/ -> ${data_feats}"
             # Assumming you don't have wav.scp, but feats.scp is created by local/data.sh instead.
 
-            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+            for dset in "${train_set}" "${pseudo_set}" "${valid_set}" ${test_sets}; do
                 if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
                     _suf="/org"
                 else
@@ -990,8 +1012,13 @@ if ! "${skip_train}"; then
         fi
 
         # FIXME(j-pong): Hard coding for instance task
+<<<<<<< HEAD
         _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860_pseudo/${_scp},speech,${_type} "
         _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860_pseudo/text,text,text "
+=======
+        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/${pseudo_set}/${_scp},speech,${_type} "
+        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/${pseudo_set}/text,text,text "
+>>>>>>> ff54e2c5e197c9f124e1ff12a81ef23efda6a8bb
         _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/speech_shape "
         _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/text_shape.${token_type} "
 
@@ -1008,6 +1035,7 @@ if ! "${skip_train}"; then
         fi
 
         # shellcheck disable=SC2086
+#        --pretrain_step "${pretrain_step}" \
         ${python} -m espnet2.bin.launch \
             --cmd "${cuda_cmd} --name ${jobname}" \
             --log "${asr_exp}"/train.log \
