@@ -1012,13 +1012,8 @@ if ! "${skip_train}"; then
         fi
 
         # FIXME(j-pong): Hard coding for instance task
-<<<<<<< HEAD
-        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860_pseudo/${_scp},speech,${_type} "
-        _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/train_860_pseudo/text,text,text "
-=======
         _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/${pseudo_set}/${_scp},speech,${_type} "
         _opts+="--train_pseudo_data_path_and_name_and_type ${data_feats}/${pseudo_set}/text,text,text "
->>>>>>> ff54e2c5e197c9f124e1ff12a81ef23efda6a8bb
         _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/speech_shape "
         _opts+="--train_pseudo_shape_file ${asr_stats_dir}/semi/text_shape.${token_type} "
 

@@ -6,10 +6,7 @@ set -u
 set -o pipefail
 
 train_set="train_clean_100"
-<<<<<<< HEAD
-=======
 pseudo_set="train_860_pseudo"
->>>>>>> ff54e2c5e197c9f124e1ff12a81ef23efda6a8bb
 valid_set="dev"
 test_sets="test_clean test_other dev_clean dev_other"
 resume="True"
@@ -31,10 +28,7 @@ inference_config=conf/decode_asr.yaml
     --stage 10 \
     --lang en \
     --ngpu 3 \
-<<<<<<< HEAD
-=======
     --inference_nj 72 \
->>>>>>> ff54e2c5e197c9f124e1ff12a81ef23efda6a8bb
     --nbpe 5000 \
     --max_wav_duration 30 \
     --asr_config "${asr_config}" \
