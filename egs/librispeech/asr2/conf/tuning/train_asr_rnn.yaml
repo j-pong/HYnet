@@ -1,11 +1,7 @@
 batch_type: numel
 batch_bins: 5500000
 accum_grad: 1
-<<<<<<< HEAD
-max_epoch: 140
-=======
 max_epoch: 80
->>>>>>> ff54e2c5e197c9f124e1ff12a81ef23efda6a8bb
 patience: 100
 # The initialization method for model parameters
 init: chainer
