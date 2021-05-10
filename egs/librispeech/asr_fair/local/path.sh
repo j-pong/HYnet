@@ -1,0 +1,1 @@
+fairpath=$PWD/../../../tools/fairseq

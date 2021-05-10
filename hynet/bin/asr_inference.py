@@ -23,6 +23,7 @@ from espnet.nets.scorers.length_bonus import LengthBonus
 from espnet.utils.cli_utils import get_commandline_args
 from espnet2.fileio.datadir_writer import DatadirWriter
 from espnet2.tasks.lm import LMTask
+from espnet2.tasks.asr import ASRTask
 from espnet2.text.build_tokenizer import build_tokenizer
 from espnet2.text.token_id_converter import TokenIDConverter
 from espnet2.torch_utils.device_funcs import to_device
@@ -31,8 +32,6 @@ from espnet2.utils import config_argparse
 from espnet2.utils.types import str2bool
 from espnet2.utils.types import str2triple_str
 from espnet2.utils.types import str_or_none
-
-from hynet.tasks.semi_asr import ASRTask
 
 class Speech2Text:
     """Speech2Text class
@@ -64,6 +63,7 @@ class Speech2Text:
         lm_weight: float = 1.0,
         penalty: float = 0.0,
         nbest: int = 1,
+        mode: str = "beam_search",
     ):
         assert check_argument_types()
 
@@ -90,44 +90,54 @@ class Speech2Text:
             )
             scorers["lm"] = lm.lm
 
-        # 3. Build BeamSearch object
+        # 3. Build Decoding object
         weights = dict(
             decoder=1.0 - ctc_weight,
             ctc=ctc_weight,
             lm=lm_weight,
             length_bonus=penalty,
         )
-        beam_search = BeamSearch(
-            beam_size=beam_size,
-            weights=weights,
-            scorers=scorers,
-            sos=asr_model.sos,
-            eos=asr_model.eos,
-            vocab_size=len(token_list),
-            token_list=token_list,
-            pre_beam_score_key=None if ctc_weight == 1.0 else "full",
-        )
-        # TODO(karita): make all scorers batchfied
-        if batch_size == 1:
-            non_batch = [
-                k
-                for k, v in beam_search.full_scorers.items()
-                if not isinstance(v, BatchScorerInterface)
-            ]
-            if len(non_batch) == 0:
-                beam_search.__class__ = BatchBeamSearch
-                logging.info("BatchBeamSearch implementation is selected.")
-            else:
-                logging.warning(
-                    f"As non-batch scorers {non_batch} are found, "
-                    f"fall back to non-batch implementation."
-                )
-        beam_search.to(device=device, dtype=getattr(torch, dtype)).eval()
-        for scorer in scorers.values():
-            if isinstance(scorer, torch.nn.Module):
-                scorer.to(device=device, dtype=getattr(torch, dtype)).eval()
-        logging.info(f"Beam_search: {beam_search}")
-        logging.info(f"Decoding device={device}, dtype={dtype}")
+        if mode == "beam_search":
+            # Beam Search object
+            search_method = BeamSearch(
+                beam_size=beam_size,
+                weights=weights,
+                scorers=scorers,
+                sos=asr_model.sos,
+                eos=asr_model.eos,
+                vocab_size=len(token_list),
+                token_list=token_list,
+                pre_beam_score_key=None if ctc_weight == 1.0 else "full",
+            )
+            # TODO(karita): make all scorers batchfied
+            if batch_size == 1:
+                non_batch = [
+                    k
+                    for k, v in search_method.full_scorers.items()
+                    if not isinstance(v, BatchScorerInterface)
+                ]
+                if len(non_batch) == 0:
+                    search_method.__class__ = BatchBeamSearch
+                    logging.info("BatchBeamSearch implementation is selected.")
+                else:
+                    logging.warning(
+                        f"As non-batch scorers {non_batch} are found, "
+                        f"fall back to non-batch implementation."
+                    )
+
+            for scorer in scorers.values():
+                if isinstance(scorer, torch.nn.Module):
+                    scorer.to(device=device, dtype=getattr(torch, dtype)).eval()
+            logging.info(f"Beam_search: {search_method}")
+            logging.info(f"Decoding device={device}, dtype={dtype}")
+            search_method.to(device=device, dtype=getattr(torch, dtype)).eval()
+
+        elif mode == "viterbi":
+            from hynet.nets.search_methods import W2lViterbiDecoder
+            search_method = W2lViterbiDecoder(nbest, token_list)
+            # Viterbi object
+            logging.info(f"Viterbi_search: {search_method}")
+            logging.info(f"Decoding device={device}, dtype={dtype}")
 
         # 4. [Optional] Build Text converter: e.g. bpe-sym -> Text
         if token_type is None:
@@ -151,12 +161,16 @@ class Speech2Text:
         self.asr_train_args = asr_train_args
         self.converter = converter
         self.tokenizer = tokenizer
-        self.beam_search = beam_search
+        self.search_method = search_method
         self.maxlenratio = maxlenratio
         self.minlenratio = minlenratio
         self.device = device
         self.dtype = dtype
         self.nbest = nbest
+        self.mode = mode
+        self.odim = len(token_list)
+        self.sos = asr_model.sos
+        self.eos = asr_model.eos
 
     @torch.no_grad()
     def __call__(
@@ -189,21 +203,40 @@ class Speech2Text:
         enc, _ = self.asr_model.encode(**batch)
         assert len(enc) == 1, len(enc)
 
-        # c. Passed the encoder result and the beam search
-        nbest_hyps = self.beam_search(
-            x=enc[0], maxlenratio=self.maxlenratio, minlenratio=self.minlenratio
-        )
-        nbest_hyps = nbest_hyps[: self.nbest]
+        if self.mode == "beam_search":
+            # c. Passed the encoder result and the beam search
+            nbest_hyps = self.search_method(
+                x=enc[0], maxlenratio=self.maxlenratio, minlenratio=self.minlenratio
+            )
+            nbest_hyps = nbest_hyps[: self.nbest]
 
-        results = []
-        for hyp in nbest_hyps:
-            assert isinstance(hyp, Hypothesis), type(hyp)
+            results = []
+            for hyp in nbest_hyps:
+                assert isinstance(hyp, Hypothesis), type(hyp)
 
-            # remove sos/eos and get results
-            token_int = hyp.yseq[1:-1].tolist()
+                # remove sos/eos and get results
+                token_int = hyp.yseq[1:-1].tolist()
 
-            # remove blank symbol id, which is assumed to be 0
-            token_int = list(filter(lambda x: x != 0, token_int))
+                # remove blank symbol id, which is assumed to be 0
+                token_int = list(filter(lambda x: x != 0, token_int))
+
+                # Change integer-ids to tokens
+                token = self.converter.ids2tokens(token_int)
+
+                if self.tokenizer is not None:
+                    text = self.tokenizer.tokens2text(token)
+                else:
+                    text = None
+                results.append((text, token, token_int, hyp))
+
+        elif self.mode == "viterbi":
+            # only ctc model is available currently
+            from espnet2.asr.ctc import CTC
+            results = []
+            x = self.asr_model.ctc.log_softmax(hs_pad=enc)
+            result = self.search_method.generate(x=x)
+            token_int = list(map(int, list(result[0][0]["tokens"])))
+            yseq = [self.sos] + token_int + [self.eos]
 
             # Change integer-ids to tokens
             token = self.converter.ids2tokens(token_int)
@@ -212,6 +245,13 @@ class Speech2Text:
                 text = self.tokenizer.tokens2text(token)
             else:
                 text = None
+
+            hyp = Hypothesis(
+                score=0.0,
+                scores=dict(),
+                states=dict(),
+                yseq=torch.tensor(yseq, device=x.device))
+
             results.append((text, token, token_int, hyp))
 
         assert check_return_type(results)
@@ -244,6 +284,7 @@ def inference(
     token_type: Optional[str],
     bpemodel: Optional[str],
     allow_variable_data_keys: bool,
+    decoding_mode: Optional[str],
 ):
     assert check_argument_types()
     if batch_size > 1:
@@ -283,7 +324,8 @@ def inference(
         lm_weight=lm_weight,
         penalty=penalty,
         nbest=nbest,
-    )
+        mode=decoding_mode,
+        )
 
     # 3. Build data-iterator
     loader = ASRTask.build_streaming_iterator(
@@ -362,6 +404,10 @@ def get_parser():
         default=1,
         help="The number of workers used for DataLoader",
     )
+    parser.add_argument(
+        "--decoding_mode",
+        type=str,
+        default="beam_search")
 
     group = parser.add_argument_group("Input data related")
     group.add_argument(

@@ -3,6 +3,7 @@ KALDI_ROOT=$MAIN_ROOT/tools/kaldi
 ESPNET_ROOT=$MAIN_ROOT/tools/espnet
 
 export PATH=$PWD/utils/:$KALDI_ROOT/tools/openfst/bin:$PATH
+export PATH=$KALDI_ROOT/tools/sctk/bin:$PATH
 [ ! -f $KALDI_ROOT/tools/config/common_path.sh ] && echo >&2 "The standard file $KALDI_ROOT/tools/config/common_path.sh is not present -> Exit!" && exit 1
 . $KALDI_ROOT/tools/config/common_path.sh
 export LC_ALL=C

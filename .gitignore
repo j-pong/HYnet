@@ -67,3 +67,10 @@ tools/sctk*
 tools/sph2pipe*
 tools/espnet
 tools/fairseq
+tools/flashlight/
+tools/vcpkg/
+tools/arrayfire/
+tools/ArrayFire*
+
+# gpgkey
+docker/gpgkey
