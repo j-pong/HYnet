@@ -168,7 +168,8 @@ class RNNDecoder(AbsDecoder):
                 )
         return z_list, c_list
 
-    def forward(self, hs_pad, hlens, ys_in_pad, ys_in_lens, ys_out_pad=None, mode='train', th_beta=0.0, ignore_id=-1, strm_idx=0):
+    def forward(self, hs_pad, hlens, ys_in_pad, ys_in_lens, ys_out_pad=None, mode=None, th_beta=0.0, ignore_id=-1, strm_idx=0):
+        repl_masks = None
 
         # to support mutiple encoder asr mode, in single encoder mode,
         # convert torch.Tensor to List of torch.Tensor
@@ -204,243 +205,198 @@ class RNNDecoder(AbsDecoder):
                 # reset pre-computation of h in atts and han
                 self.att_list[idx].reset()
 
-        ### Normal / Gradient Masking ###
-        # # pre-computation of embedding
-        # eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
-        #
-        # # loop for an output sequence
-        # for i in range(olength):
-        #     if self.num_encs == 1:
-        #         att_c, att_w = self.att_list[att_idx](
-        #             hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
-        #         )
-        #     else:
-        #         for idx in range(self.num_encs):
-        #             att_c_list[idx], att_w_list[idx] = self.att_list[idx](
-        #                 hs_pad[idx],
-        #                 hlens[idx],
-        #                 self.dropout_dec[0](z_list[0]),
-        #                 att_w_list[idx],
-        #             )
-        #         hs_pad_han = torch.stack(att_c_list, dim=1)
-        #         hlens_han = [self.num_encs] * len(ys_in_pad)
-        #         att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
-        #             hs_pad_han,
-        #             hlens_han,
-        #             self.dropout_dec[0](z_list[0]),
-        #             att_w_list[self.num_encs],
-        #         )
-        #     if i > 0 and random.random() < self.sampling_probability:
-        #         z_out = self.output(z_all[-1])
-        #         z_out = np.argmax(z_out.detach().cpu(), axis=1)
-        #         z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
-        #         ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
-        #     else:
-        #         # utt x (zdim + hdim)
-        #         ey = torch.cat((eys[:, i, :], att_c), dim=1)
-        #     z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-        #     if self.context_residual:
-        #         z_all.append(
-        #             torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
-        #         )  # utt x (zdim + hdim)
-        #     else:
-        #         z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
-        #
-        # z_all = torch.stack(z_all, dim=1)
-        # z_all = self.output(z_all)
-        # z_all.masked_fill_(
-        #     make_pad_mask(ys_in_lens, z_all, 1),
-        #     0,
-        # )
+        if mode == None or mode == "pseudo" or mode == "gradient_masking":
+            ### Normal / Gradient Masking ###
 
-        ### sample iteration ###
-        # if mode == 'pseudo':
-        #     # loop for an output sequence
-        #     for i in range(olength):
-        #         if self.num_encs == 1:
-        #             att_c, att_w = self.att_list[att_idx](
-        #                 hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
-        #             )
-        #         else:
-        #             for idx in range(self.num_encs):
-        #                 att_c_list[idx], att_w_list[idx] = self.att_list[idx](
-        #                     hs_pad[idx],
-        #                     hlens[idx],
-        #                     self.dropout_dec[0](z_list[0]),
-        #                     att_w_list[idx],
-        #                 )
-        #             hs_pad_han = torch.stack(att_c_list, dim=1)
-        #             hlens_han = [self.num_encs] * len(ys_in_pad)
-        #             att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
-        #                 hs_pad_han,
-        #                 hlens_han,
-        #                 self.dropout_dec[0](z_list[0]),
-        #                 att_w_list[self.num_encs],
-        #             )
-        #
-        #         repl_masks = []
-        #         with torch.no_grad():
-        #             z_all_temp = z_all[:]
-        #             # utt x (zdim + hdim)
-        #             ey = self.dropout_emb(self.embed(ys_in_pad[:, i]))
-        #             ey = torch.cat((ey, att_c), dim=1)
-        #
-        #             z_list_temp, _ = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-        #             if self.context_residual:
-        #                 z_all_temp.append(
-        #                     torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
-        #                 )  # utt x (zdim + hdim)
-        #             else:
-        #                 z_all_temp.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
-        #             z_out = self.output(z_all_temp[-1])
-        #
-        #             bsz, tsz = ys_in_pad.size()
-        #
-        #             pred_dist = torch.softmax(z_out.detach().cpu(), dim=-1) # (B, O)
-        #
-        #             # pick top k(3) confidences
-        #             topk_value, topk_idx = torch.topk(pred_dist, 3, axis=-1)
-        #             repl_tokens = []
-        #             for batch_idx, nomial_idx in enumerate(torch.multinomial(topk_value.float(), 1).view(-1)):
-        #                 repl_tokens.append(topk_idx[batch_idx, nomial_idx])
-        #             repl_tokens = torch.tensor(repl_tokens).view(bsz)
-        #
-        #             unk = torch.tensor([2]*int(bsz)).view(bsz)
-        #             pred_prob = pred_dist.view(bsz, -1)[torch.arange(bsz),
-        #                                                 ys_out_pad[:, i].view(
-        #                                                     bsz)]  # pseudo label confidence
-        #
-        #             repl_mask = pred_prob < th_beta.cpu()  # replace low confidence token with <unk> token
-        #             repl_mask = repl_mask.view(bsz)
-        #
-        #             repl_masks.append(repl_mask)
-        #             repl_mask_mask = ys_out_pad[:, i] != ignore_id
-        #             repl_mask = repl_mask * repl_mask_mask.cpu()
-        #
-        #             if i != olength - 1:
-        #                 ys_in_pad[:, i + 1][repl_mask] = to_device(self, unk).view(bsz)[repl_mask]
-        #             ys_out_pad[:, i][repl_mask] = to_device(self, repl_tokens).view(bsz)[repl_mask]
-        #
-        #         ey = torch.cat((self.dropout_emb(self.embed(ys_in_pad[:, i].clone().detach())), att_c),
-        #                        dim=1)
-        #         z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-        #
-        #         if self.context_residual:
-        #             z_all.append(
-        #                 torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
-        #             )  # utt x (zdim + hdim)
-        #         else:
-        #             z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
-        #
-        #     z_all = torch.stack(z_all, dim=1)
-        #     z_all = self.output(z_all)
-        #     z_all.masked_fill_(
-        #         make_pad_mask(ys_in_lens, z_all, 1),
-        #         0,
-        #     )
-        #
-        #     repl_masks = torch.stack(repl_masks, dim=1)
-        #     return z_all, ys_in_lens, ys_in_pad, ys_out_pad.clone().detach(), repl_masks
-        #
-        # else:
-        # pre-computation of embedding
-        #     eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
-        #
-        #     # loop for an output sequence
-        #     for i in range(olength):
-        #         if self.num_encs == 1:
-        #             att_c, att_w = self.att_list[att_idx](
-        #                 hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
-        #             )
-        #         else:
-        #             for idx in range(self.num_encs):
-        #                 att_c_list[idx], att_w_list[idx] = self.att_list[idx](
-        #                     hs_pad[idx],
-        #                     hlens[idx],
-        #                     self.dropout_dec[0](z_list[0]),
-        #                     att_w_list[idx],
-        #                 )
-        #             hs_pad_han = torch.stack(att_c_list, dim=1)
-        #             hlens_han = [self.num_encs] * len(ys_in_pad)
-        #             att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
-        #                 hs_pad_han,
-        #                 hlens_han,
-        #                 self.dropout_dec[0](z_list[0]),
-        #                 att_w_list[self.num_encs],
-        #             )
-        #         if i > 0 and random.random() < self.sampling_probability:
-        #             z_out = self.output(z_all[-1])
-        #             z_out = np.argmax(z_out.detach().cpu(), axis=1)
-        #             z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
-        #             ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
-        #         else:
-        #             # utt x (zdim + hdim)
-        #             ey = torch.cat((eys[:, i, :], att_c), dim=1)
-        #         z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-        #         if self.context_residual:
-        #             z_all.append(
-        #                 torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
-        #             )  # utt x (zdim + hdim)
-        #         else:
-        #             z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
-        #
-        #     z_all = torch.stack(z_all, dim=1)
-        #     z_all = self.output(z_all)
-        #     z_all.masked_fill_(
-        #         make_pad_mask(ys_in_lens, z_all, 1),
-        #         0,
-        #     )
+            # pre-computation of embedding
+            eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
 
-        ### Label Refurbishment ###
-        # pre-computation of embedding
-        eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
-
-        # loop for an output sequence
-        for i in range(olength):
-            if self.num_encs == 1:
-                att_c, att_w = self.att_list[att_idx](
-                    hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
-                )
-            else:
-                for idx in range(self.num_encs):
-                    att_c_list[idx], att_w_list[idx] = self.att_list[idx](
-                        hs_pad[idx],
-                        hlens[idx],
-                        self.dropout_dec[0](z_list[0]),
-                        att_w_list[idx],
+            # loop for an output sequence
+            for i in range(olength):
+                if self.num_encs == 1:
+                    att_c, att_w = self.att_list[att_idx](
+                        hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
                     )
-                hs_pad_han = torch.stack(att_c_list, dim=1)
-                hlens_han = [self.num_encs] * len(ys_in_pad)
-                att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
-                    hs_pad_han,
-                    hlens_han,
-                    self.dropout_dec[0](z_list[0]),
-                    att_w_list[self.num_encs],
-                )
-            if i > 0 and (random.random() < self.sampling_probability or mode == "refurbish"):
-                z_out = self.output(z_all[-1])
-                z_out = np.argmax(z_out.detach().cpu(), axis=1)
-                z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
-                ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
-            else:
-                # utt x (zdim + hdim)
-                ey = torch.cat((eys[:, i, :], att_c), dim=1)
-            z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
-            if self.context_residual:
-                z_all.append(
-                    torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
-                )  # utt x (zdim + hdim)
-            else:
-                z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+                else:
+                    for idx in range(self.num_encs):
+                        att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+                            hs_pad[idx],
+                            hlens[idx],
+                            self.dropout_dec[0](z_list[0]),
+                            att_w_list[idx],
+                        )
+                    hs_pad_han = torch.stack(att_c_list, dim=1)
+                    hlens_han = [self.num_encs] * len(ys_in_pad)
+                    att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+                        hs_pad_han,
+                        hlens_han,
+                        self.dropout_dec[0](z_list[0]),
+                        att_w_list[self.num_encs],
+                    )
+                if i > 0 and random.random() < self.sampling_probability:
+                    z_out = self.output(z_all[-1])
+                    z_out = np.argmax(z_out.detach().cpu(), axis=1)
+                    z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
+                    ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
+                else:
+                    # utt x (zdim + hdim)
+                    ey = torch.cat((eys[:, i, :], att_c), dim=1)
+                z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+                if self.context_residual:
+                    z_all.append(
+                        torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+                    )  # utt x (zdim + hdim)
+                else:
+                    z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
 
-        z_all = torch.stack(z_all, dim=1)
-        z_all = self.output(z_all)
-        z_all.masked_fill_(
-            make_pad_mask(ys_in_lens, z_all, 1),
-            0,
-        )
+            z_all = torch.stack(z_all, dim=1)
+            z_all = self.output(z_all)
+            z_all.masked_fill_(
+                make_pad_mask(ys_in_lens, z_all, 1),
+                0,
+            )
 
-        return z_all, ys_in_lens
+        elif mode == "recursive_gradient_masking":
+            ### recursive_gradient_masking ###
+
+            # loop for an output sequence
+            repl_masks = []
+            for i in range(olength):
+                if self.num_encs == 1:
+                    att_c, att_w = self.att_list[att_idx](
+                        hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
+                    )
+                else:
+                    for idx in range(self.num_encs):
+                        att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+                            hs_pad[idx],
+                            hlens[idx],
+                            self.dropout_dec[0](z_list[0]),
+                            att_w_list[idx],
+                        )
+                    hs_pad_han = torch.stack(att_c_list, dim=1)
+                    hlens_han = [self.num_encs] * len(ys_in_pad)
+                    att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+                        hs_pad_han,
+                        hlens_han,
+                        self.dropout_dec[0](z_list[0]),
+                        att_w_list[self.num_encs],
+                    )
+
+                with torch.no_grad():
+                    z_all_temp = z_all[:]
+                    # utt x (zdim + hdim)
+                    ey = self.dropout_emb(self.embed(ys_in_pad[:, i]))
+                    ey = torch.cat((ey, att_c), dim=1)
+
+                    z_list_temp, _ = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+                    if self.context_residual:
+                        z_all_temp.append(
+                            torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+                        )  # utt x (zdim + hdim)
+                    else:
+                        z_all_temp.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+                    z_out = self.output(z_all_temp[-1])
+
+                    bsz, tsz = ys_in_pad.size()
+
+                    pred_dist = torch.softmax(z_out.detach().cpu(), dim=-1) # (B, O)
+
+                    # pick top k(3) confidences
+                    topk_value, topk_idx = torch.topk(pred_dist, 3, axis=-1)
+                    repl_tokens = []
+                    for batch_idx, nomial_idx in enumerate(torch.multinomial(topk_value.float(), 1).view(-1)):
+                        repl_tokens.append(topk_idx[batch_idx, nomial_idx])
+                    repl_tokens = torch.tensor(repl_tokens).view(bsz)
+
+                    unk = torch.tensor([1]*int(bsz)).view(bsz)
+                    pred_prob = pred_dist.view(bsz, -1)[torch.arange(bsz),
+                                                        ys_out_pad[:, i].view(
+                                                            bsz)]  # pseudo label confidence
+
+                    repl_mask = pred_prob < th_beta.cpu()  # replace low confidence token with <unk> token
+                    repl_mask = repl_mask.view(bsz)
+
+                    repl_masks.append(repl_mask)
+                    repl_mask_mask = ys_out_pad[:, i] != ignore_id
+                    repl_mask = repl_mask * repl_mask_mask.cpu()
+
+                    if i != olength - 1:
+                        ys_in_pad[:, i + 1][repl_mask] = to_device(self, unk).view(bsz)[repl_mask]
+                    ys_out_pad[:, i][repl_mask] = to_device(self, repl_tokens).view(bsz)[repl_mask]
+
+                ey = torch.cat((self.dropout_emb(self.embed(ys_in_pad[:, i].clone().detach())), att_c),
+                               dim=1)
+                z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+
+                if self.context_residual:
+                    z_all.append(
+                        torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+                    )  # utt x (zdim + hdim)
+                else:
+                    z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+
+            z_all = torch.stack(z_all, dim=1)
+            z_all = self.output(z_all)
+            z_all.masked_fill_(
+                make_pad_mask(ys_in_lens, z_all, 1),
+                0,
+            )
+
+            repl_masks = torch.stack(repl_masks, dim=1)
+
+        elif mode == "bootstrap":
+            ### Label Refurbishment ###
+
+            # pre-computation of embedding
+            eys = self.dropout_emb(self.embed(ys_in_pad))  # utt x olen x zdim
+
+            # loop for an output sequence
+            for i in range(olength):
+                if self.num_encs == 1:
+                    att_c, att_w = self.att_list[att_idx](
+                        hs_pad[0], hlens[0], self.dropout_dec[0](z_list[0]), att_w
+                    )
+                else:
+                    for idx in range(self.num_encs):
+                        att_c_list[idx], att_w_list[idx] = self.att_list[idx](
+                            hs_pad[idx],
+                            hlens[idx],
+                            self.dropout_dec[0](z_list[0]),
+                            att_w_list[idx],
+                        )
+                    hs_pad_han = torch.stack(att_c_list, dim=1)
+                    hlens_han = [self.num_encs] * len(ys_in_pad)
+                    att_c, att_w_list[self.num_encs] = self.att_list[self.num_encs](
+                        hs_pad_han,
+                        hlens_han,
+                        self.dropout_dec[0](z_list[0]),
+                        att_w_list[self.num_encs],
+                    )
+                if i > 0 and (random.random() < self.sampling_probability or mode == "bootstrap"):
+                    z_out = self.output(z_all[-1])
+                    z_out = np.argmax(z_out.detach().cpu(), axis=1)
+                    z_out = self.dropout_emb(self.embed(to_device(self, z_out)))
+                    ey = torch.cat((z_out, att_c), dim=1)  # utt x (zdim + hdim)
+                else:
+                    # utt x (zdim + hdim)
+                    ey = torch.cat((eys[:, i, :], att_c), dim=1)
+                z_list, c_list = self.rnn_forward(ey, z_list, c_list, z_list, c_list)
+                if self.context_residual:
+                    z_all.append(
+                        torch.cat((self.dropout_dec[-1](z_list[-1]), att_c), dim=-1)
+                    )  # utt x (zdim + hdim)
+                else:
+                    z_all.append(self.dropout_dec[-1](z_list[-1]))  # utt x (zdim)
+
+            z_all = torch.stack(z_all, dim=1)
+            z_all = self.output(z_all)
+            z_all.masked_fill_(
+                make_pad_mask(ys_in_lens, z_all, 1),
+                0,
+            )
+
+        return z_all, ys_in_lens, repl_masks
 
     def init_state(self, x):
         # to support mutiple encoder asr mode, in single encoder mode,

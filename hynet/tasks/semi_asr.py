@@ -220,6 +220,13 @@ class ASRTask(AbsTask):
             default=None,
             help="Specify g2p method if --token_type=phn",
         )
+        parser.add_argument(
+            "--semi_mode",
+            type=str_or_none,
+            choices=[None, "pseudo", "gradient_masking", "recursive_gradient_masking", "bootstrap"],
+            default=None,
+            help="pseudo label refinement mode",
+        )
 
         for class_choices in cls.class_choices_list:
             # Append --<name> and --<name>_conf.
@@ -469,8 +476,10 @@ class ASRTask(AbsTask):
 
         # 0. Init distributed process
         distributed_option = build_dataclass(DistributedOption, args)
-        distributed_option.init()
+        # Setting distributed_option.dist_rank, etc.
+        distributed_option.init_options()
 
+        # NOTE(kamo): Don't use logging before invoking logging.basicConfig()
         if not distributed_option.distributed or distributed_option.dist_rank == 0:
             if not distributed_option.distributed:
                 _rank = ""
@@ -480,25 +489,34 @@ class ASRTask(AbsTask):
                     f"{distributed_option.dist_world_size}"
                 )
 
+            # NOTE(kamo):
+            # logging.basicConfig() is invoked in main_worker() instead of main()
+            # because it can be invoked only once in a process.
+            # FIXME(kamo): Should we use logging.getLogger()?
             logging.basicConfig(
                 level=args.log_level,
                 format=f"[{os.uname()[1].split('.')[0]}{_rank}]"
-                f" %(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s",
+                       f" %(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s",
             )
         else:
             # Suppress logging if RANK != 0
             logging.basicConfig(
                 level="ERROR",
                 format=f"[{os.uname()[1].split('.')[0]}"
-                f":{distributed_option.dist_rank}/{distributed_option.dist_world_size}]"
-                f" %(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s",
+                       f":{distributed_option.dist_rank}/{distributed_option.dist_world_size}]"
+                       f" %(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s",
             )
+        # Invoking torch.distributed.init_process_group
+        distributed_option.init_torch_distributed()
 
         # 1. Set random-seed
         set_all_random_seed(args.seed)
         torch.backends.cudnn.enabled = args.cudnn_enabled
         torch.backends.cudnn.benchmark = args.cudnn_benchmark
         torch.backends.cudnn.deterministic = args.cudnn_deterministic
+        if args.detect_anomaly:
+            logging.info("Invoking torch.autograd.set_detect_anomaly(True)")
+            torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
         # 2. Build model
         model = cls.build_model(args=args)
@@ -510,6 +528,11 @@ class ASRTask(AbsTask):
             dtype=getattr(torch, args.train_dtype),
             device="cuda" if args.ngpu > 0 else "cpu",
         )
+        for t in args.freeze_param:
+            for k, p in model.named_parameters():
+                if k.startswith(t + ".") or k == t:
+                    logging.info(f"Setting {k}.requires_grad = False")
+                    p.requires_grad = False
 
         # 3. Build optimizer
         optimizers = cls.build_optimizers(args, model=model)
@@ -562,27 +585,6 @@ class ASRTask(AbsTask):
                 map_location=f"cuda:{torch.cuda.current_device()}"
                 if args.ngpu > 0
                 else "cpu",
-            )
-
-        # 7. Resume the training state from the previous epoch
-        reporter = Reporter()
-        if args.use_amp:
-            if LooseVersion(torch.__version__) < LooseVersion("1.6.0"):
-                raise RuntimeError(
-                    "Require torch>=1.6.0 for  Automatic Mixed Precision"
-                )
-            scaler = GradScaler()
-        else:
-            scaler = None
-        if args.resume and (output_dir / "checkpoint.pth").exists():
-            cls.resume(
-                checkpoint=output_dir / "checkpoint.pth",
-                model=model,
-                optimizers=optimizers,
-                schedulers=schedulers,
-                reporter=reporter,
-                scaler=scaler,
-                ngpu=args.ngpu,
             )
 
         if args.dry_run:
@@ -720,26 +722,7 @@ class ASRTask(AbsTask):
                 train_pseudo_iter_factory=train_pseudo_iter_factory,
                 valid_iter_factory=valid_iter_factory,
                 plot_attention_iter_factory=plot_attention_iter_factory,
-                reporter=reporter,
-                scaler=scaler,
-                output_dir=output_dir,
-                max_epoch=args.max_epoch,
-                seed=args.seed,
-                patience=args.patience,
-                keep_nbest_models=keep_nbest_models,
-                early_stopping_criterion=args.early_stopping_criterion,
-                best_model_criterion=args.best_model_criterion,
-                val_scheduler_criterion=args.val_scheduler_criterion,
                 trainer_options=trainer_options,
                 distributed_option=distributed_option,
-                find_unused_parameters=args.unused_parameters,
+                mode=args.semi_mode
             )
-
-            if not distributed_option.distributed or distributed_option.dist_rank == 0:
-                # Generated n-best averaged model
-                average_nbest_models(
-                    reporter=reporter,
-                    output_dir=output_dir,
-                    best_model_criterion=args.best_model_criterion,
-                    nbest=args.keep_nbest_models,
-                )

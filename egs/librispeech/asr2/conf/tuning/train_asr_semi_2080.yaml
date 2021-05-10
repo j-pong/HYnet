@@ -1,7 +1,9 @@
+# This configure for RTX 2080ti
+
 batch_type: numel
-batch_bins: 5500000
+batch_bins: 1200000
 accum_grad: 1
-max_epoch: 80
+max_epoch: 3 #FIXME
 patience: 100
 # The initialization method for model parameters
 init: chainer
@@ -30,7 +32,7 @@ decoder_conf:
         atype: location
         adim: 1024
         awin: 5
-        aheads: 2
+        aheads: 1
         aconv_chans: 10
         aconv_filts: 100
 
@@ -45,9 +47,6 @@ optim_conf:
     rho: 0.95
     eps: 1.0e-08
     weight_decay: 0
-# scheduler: warmuplr
-# scheduler_conf:
-#     warmup_steps: 25000
 
 specaug: specaug
 specaug_conf:
@@ -65,3 +64,6 @@ specaug_conf:
     - 40
     num_time_mask: 2
 
+# Label Refurbishment Mode Selection
+# Choices: [pseudo, gradient_masking, recursive_gradient_masking, bootstrap]
+semi_mode: pseudo
