@@ -5,6 +5,7 @@ Fully Unsupervised Learning for Continual Sequence when High Local Correlation
 
 ### 1. Installaion of docker for ssh env
 - Basic of docker installation
+https://colab.research.google.com/drive/1YhIBX9i59RN_9HEMihJX6TnFm9G5a7UL?authuser=1#scrollTo=swQ7g70S9O4J
 
 - Docker for HYnet
 ```bash
