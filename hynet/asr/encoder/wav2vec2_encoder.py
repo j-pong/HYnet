@@ -18,7 +18,7 @@ from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 from espnet2.asr.encoder.abs_encoder import AbsEncoder
 
 
-class FairSeqWav2Vec2Encoder(AbsEncoder):
+class FairSeqWav2VecCtc(AbsEncoder):
     """FairSeq Wav2Vec2 encoder module.
 
     Args:
@@ -64,28 +64,21 @@ class FairSeqWav2Vec2Encoder(AbsEncoder):
         )
         model = models[0]
 
-        if not isinstance(model, Wav2Vec2Model):
-            try:
-                model = model.w2v_encoder.w2v_model
-            except Exception as e:
-                print(
-                    "Error: pretrained models should be within: "
-                    "'Wav2Vec2Model, Wav2VecCTC' classes, etc."
+        from fairseq.models.wav2vec.wav2vec2_asr import Wav2VecCtc
+        if not isinstance(model, Wav2VecCtc):
+            raise Exception(
+                    "Error: pretrained models should be: "
+                    "'Wav2VecCTC' class"
                 )
-                raise e
 
         self.encoders = model
 
         self.pretrained_params = copy.deepcopy(model.state_dict())
 
-        self.normalize_before = normalize_before
-        if self.normalize_before:
-            self.after_norm = LayerNorm(output_size)
-
-        if model.cfg.encoder_embed_dim != output_size:
+        if model.w2v_encoder.proj.out_features != output_size:
             # TODO(xkc09): try LSTM
             self.output_layer = torch.nn.Sequential(
-                torch.nn.Linear(model.cfg.encoder_embed_dim, output_size),
+                torch.nn.Linear(model.w2v_encoder.proj.out_features, output_size),
             )
         else:
             self.output_layer = None
@@ -121,22 +114,21 @@ class FairSeqWav2Vec2Encoder(AbsEncoder):
             logging.info("Start fine-tuning wav2vec parameters!")
 
         with torch.no_grad() if not ft else contextlib.nullcontext():
-            enc_outputs = self.encoders(
+            enc_outputs = self.encoders.w2v_encoder(
                 xs_pad,
                 masks,
+                tbc=False,
                 features_only=True,
             )
 
-        xs_pad = enc_outputs["x"]  # (B,T,C),
+        xs_pad = enc_outputs["encoder_out"]  # (B,T,C),
         masks = enc_outputs["padding_mask"]  # (B, T)
-
-        olens = (~masks).sum(dim=1)
 
         if self.output_layer is not None:
             xs_pad = self.output_layer(xs_pad)
 
-        if self.normalize_before:
-            xs_pad = self.after_norm(xs_pad)
+
+        olens = (~masks).sum(dim=1)
 
         return xs_pad, olens, None
 

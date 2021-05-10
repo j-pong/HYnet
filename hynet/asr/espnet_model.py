@@ -96,9 +96,6 @@ class ESPnetASRModel(AbsESPnetModel):
         else:
             self.error_calculator = None
 
-        print(self.encoder)
-        exit()
-
     def forward(
         self,
         speech: torch.Tensor,

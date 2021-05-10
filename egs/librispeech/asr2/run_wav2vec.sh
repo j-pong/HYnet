@@ -9,7 +9,7 @@ train_set="train_clean_100"
 valid_set="dev"
 test_sets="test_clean test_other"
 
-asr_config=conf/tuning/train_asr_wav2vec.yaml
+asr_config=conf/tuning/train_asr_wav2vec_ctc.yaml
 lm_config=conf/tuning/train_lm_adam.yaml
 inference_config=conf/decode_asr.yaml
 
@@ -24,7 +24,7 @@ inference_config=conf/decode_asr.yaml
     --stage 5 \
     --lang en \
     --ngpu 1 \
-    --inference_nj 16 \
+    --inference_nj 8 \
     --nbpe 5000 \
     --max_wav_duration 30 \
     --asr_config "${asr_config}" \
