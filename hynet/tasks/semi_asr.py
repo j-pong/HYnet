@@ -49,7 +49,7 @@ from espnet2.utils.types import str2bool
 from espnet2.utils.types import str_or_none
 
 from espnet2.tasks.abs_task import *
-from hynet.asr.espnet_model import ESPnetASRModel
+from hynet.asr.espnet_model_semi import ESPnetASRModel
 from hynet.train.trainer import PseudoTrainer as Trainer
 from hynet.nets.semi.rnn_decoder import RNNDecoder
 
