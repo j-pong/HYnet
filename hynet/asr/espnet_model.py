@@ -15,7 +15,6 @@ from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import (
     LabelSmoothingLoss,  # noqa: H301
 )
-from espnet2.asr.ctc import CTC
 from espnet2.asr.decoder.abs_decoder import AbsDecoder
 from espnet2.asr.encoder.abs_encoder import AbsEncoder
 from espnet2.asr.frontend.abs_frontend import AbsFrontend
@@ -24,6 +23,8 @@ from espnet2.asr.specaug.abs_specaug import AbsSpecAug
 from espnet2.layers.abs_normalize import AbsNormalize
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.train.abs_espnet_model import AbsESPnetModel
+
+from hynet.asr.ctc import CTC
 
 if LooseVersion(torch.__version__) >= LooseVersion("1.6.0"):
     from torch.cuda.amp import autocast
@@ -64,8 +65,8 @@ class ESPnetASRModel(AbsESPnetModel):
 
         super().__init__()
         # note that eos is the same as sos (equivalent ID)
-        self.sos = vocab_size - 1
-        self.eos = vocab_size - 1
+        self.sos = 28
+        self.eos = 30
         self.vocab_size = vocab_size
         self.ignore_id = ignore_id
         self.ctc_weight = ctc_weight
@@ -95,6 +96,13 @@ class ESPnetASRModel(AbsESPnetModel):
             )
         else:
             self.error_calculator = None
+        
+        # TODO: add normalization option in configure file
+        # from hynet.asr.encoder.wav2vec2_encoder import FairSeqWav2VecCtc
+        # from espnet2.asr.encoder.wav2vec2_encoder import FairSeqWav2Vec2Encoder
+        # if isinstance(self.encoder, FairSeqWav2VecCtc) or isinstance(self.encoder, FairSeqWav2Vec2Encoder):
+        #     self.wav2vec = True
+        self.wav2vec = False
 
     def forward(
         self,
@@ -123,6 +131,9 @@ class ESPnetASRModel(AbsESPnetModel):
 
         # for data-parallel
         text = text[:, : text_lengths.max()]
+        if self.wav2vec:
+            with torch.no_grad():
+                speech = torch.nn.functional.layer_norm(speech, speech.shape)
 
         # 1. Encoder
         encoder_out, encoder_out_lens = self.encode(speech, speech_lengths)
@@ -282,9 +293,9 @@ class ESPnetASRModel(AbsESPnetModel):
 
         # Calc CER using CTC
         cer_ctc = None
-        if not self.training and self.error_calculator is not None:
-            ys_hat = self.ctc.argmax(encoder_out).data
-            cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
+        # if not self.training and self.error_calculator is not None:
+        ys_hat = self.ctc.argmax(encoder_out).data
+        cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
         return loss_ctc, cer_ctc
 
     def _calc_rnnt_loss(

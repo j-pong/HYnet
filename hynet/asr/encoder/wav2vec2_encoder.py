@@ -118,7 +118,7 @@ class FairSeqWav2VecCtc(AbsEncoder):
                 xs_pad,
                 masks,
                 tbc=False,
-                features_only=True,
+                features_only=False,
             )
 
         xs_pad = enc_outputs["encoder_out"]  # (B,T,C),
@@ -155,3 +155,18 @@ def download_w2v(model_url, dir_path):
             logging.info(f"Wav2Vec model {model_path} already exists.")
 
     return model_path
+
+
+# def FairSeqPreprocess(feats, curr_sample_rate):
+#     if feats.dim() == 2:
+#         feats = feats.mean(-1)
+#
+#     if curr_sample_rate != self.sample_rate:
+#         raise Exception(f"sample rate: {curr_sample_rate}, need {self.sample_rate}")
+#
+#     assert feats.dim() == 1, feats.dim()
+#
+#     if self.normalize:
+#         with torch.no_grad():
+#             feats = F.layer_norm(feats, feats.shape)
+#     return feats

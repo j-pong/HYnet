@@ -12,7 +12,6 @@ import torch
 from typeguard import check_argument_types
 from typeguard import check_return_type
 
-from espnet2.asr.ctc import CTC
 from espnet2.asr.decoder.abs_decoder import AbsDecoder
 from espnet2.asr.decoder.rnn_decoder import RNNDecoder
 from espnet2.asr.decoder.transformer_decoder import (
@@ -60,6 +59,7 @@ from espnet2.utils.types import str_or_none
 
 from hynet.asr.espnet_model import ESPnetASRModel
 from hynet.asr.encoder.wav2vec2_encoder import FairSeqWav2VecCtc
+from hynet.asr.ctc import CTC
 
 frontend_choices = ClassChoices(
     name="frontend",
