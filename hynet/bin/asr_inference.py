@@ -7,6 +7,7 @@ from typing import Optional
 from typing import Sequence
 from typing import Tuple
 from typing import Union
+import math
 
 import numpy as np
 import torch
@@ -65,6 +66,12 @@ class Speech2Text:
         penalty: float = 0.0,
         nbest: int = 1,
         mode: str = "beam_search",
+        lexicon: str = None,
+        kenlm_model: str = None,
+        beam_threshold: float = 25.0,
+        word_score: float = 1.0,
+        unk_weight: float = -math.inf,
+        sil_weight: float = 0.0,
     ):
         assert check_argument_types()
 
@@ -137,6 +144,15 @@ class Speech2Text:
             from hynet.nets.search_methods import W2lViterbiDecoder
             search_method = W2lViterbiDecoder(nbest, token_list)
             # Viterbi object
+            logging.info(f"Viterbi_search: {search_method}")
+            logging.info(f"Decoding device={device}, dtype={dtype}")
+            
+        elif mode == "fairseqlm":
+            from hynet.nets.search_methods import W2lFairseqLMDecoder
+            # args: lexicon, kenlm_model, beam, beam_threshold, lm_weight, word_score, unk_weight, sil_weight
+            search_method = W2lFairseqLMDecoder(nbest, lexicon, kenlm_model, beam_size, beam_threshold,
+                                                lm_weight, word_score, unk_weight, sil_weight, token_list)
+            # FairseqLM object
             logging.info(f"Viterbi_search: {search_method}")
             logging.info(f"Decoding device={device}, dtype={dtype}")
 
@@ -236,7 +252,8 @@ class Speech2Text:
             results = []
             x = self.asr_model.ctc.log_softmax(hs_pad=enc)
             result = self.search_method.generate(x=x)
-            token_int = list(map(int, list(result[0][0]["tokens"])))
+            result = result[0][0]
+            token_int = list(map(int, list(result["tokens"])))
             yseq = [self.sos] + token_int + [self.eos]
 
             # Change integer-ids to tokens
@@ -252,6 +269,38 @@ class Speech2Text:
                 scores=dict(),
                 states=dict(),
                 yseq=torch.tensor(yseq, device=x.device))
+
+            results.append((text, token, token_int, hyp))
+
+        elif self.mode == "fairseqlm":
+            # only ctc model is available currently
+            from espnet2.asr.ctc import CTC
+            results = []
+            x = self.asr_model.ctc.log_softmax(hs_pad=enc)
+            result = self.search_method.generate(x=x)
+            result = result[0][0]
+
+            # resut: {tokens, score, words}
+            token_int = list(map(int, list(result["tokens"])))
+            scores = float(result["score"])
+            text = " ".join(result["words"])
+            yseq = [self.sos] + token_int + [self.eos]
+
+            # Change integer-ids to tokens
+            token = self.converter.ids2tokens(token_int)
+
+            hyp = Hypothesis(
+                score=scores,
+                scores=dict(),
+                states=dict(),
+                yseq=torch.tensor(yseq, device=x.device))
+
+            logging.info(f"total score: {scores:.2f}")
+            logging.info(
+                "best hypo: "
+                + text
+                + "\n"
+            )
 
             results.append((text, token, token_int, hyp))
 
@@ -286,6 +335,12 @@ def inference(
     bpemodel: Optional[str],
     allow_variable_data_keys: bool,
     decoding_mode: Optional[str],
+    lexicon: Optional[str],
+    kenlm_model: Optional[str],
+    beam_threshold: Optional[float],
+    word_score: Optional[float],
+    unk_weight: Optional[float],
+    sil_weight: Optional[float],
 ):
     assert check_argument_types()
     if batch_size > 1:
@@ -326,6 +381,12 @@ def inference(
         penalty=penalty,
         nbest=nbest,
         mode=decoding_mode,
+        lexicon=lexicon,
+        kenlm_model=kenlm_model,
+        beam_threshold=beam_threshold,
+        word_score=word_score,
+        unk_weight=unk_weight,
+        sil_weight=sil_weight,
         )
 
     # 3. Build data-iterator
@@ -477,6 +538,37 @@ def get_parser():
         help="The model path of sentencepiece. "
         "If not given, refers from the training args",
     )
+    
+    group = parser.add_argument_group("Fairseq LM related")
+    group.add_argument(
+        "--lexicon",
+        type=str_or_none,
+        default=None,
+        help="fairseq lexicon file directory",
+    )
+    group.add_argument(
+        "--kenlm_model",
+        type=str_or_none,
+        default=None,
+        help="The model path of fairseq LM"
+    )
+    group.add_argument(
+        "--beam_threshold",
+        type=float,
+        default=25.0,
+        help="beam size threshold")
+    group.add_argument(
+        "--word_score",
+        type=float,
+        default=1.0)
+    group.add_argument(
+        "--unk_weight",
+        type=float,
+        default=-math.inf)
+    group.add_argument(
+        "--sil_weight",
+        type=float,
+        default=0.0)
 
     return parser
 

@@ -1,7 +1,7 @@
 batch_type: numel
-batch_bins: 8000000
+batch_bins: 500000
 accum_grad: 1
-max_epoch: 10
+max_epoch: 30
 patience: none
 # The initialization method for model parameters
 init: xavier_uniform
@@ -12,7 +12,6 @@ best_model_criterion:
 keep_nbest_models: 10
 
 freeze_param: ["decoder",
-    "encoder.encoders.w2v_encoder.w2v_model",
 ]
 
 input_size: 768
@@ -23,6 +22,10 @@ encoder_conf:
     freeze_finetune_updates: 0
     w2v_url: https://dl.fbaipublicfiles.com/fairseq/wav2vec/wav2vec_vox_new.pt
     w2v_dir_path: ./downloads/wav2vec_pretrained_models
+    layerdrop: 0.1
+    activation_dropout: 0.1
+    load_proj: false
+    # TODO: feature_grad_mult, masks
 
 model_conf:
     ctc_weight: 1.0
@@ -31,10 +34,11 @@ model_conf:
 
 optim: adam
 optim_conf:
-    lr: 0.01
+    lr: 0.00003
 scheduler: warmuplr
 scheduler_conf:
     warmup_steps: 20000
+# TODO: apply tri stage
 
 ctc_conf:
     ctc_type: fairctc

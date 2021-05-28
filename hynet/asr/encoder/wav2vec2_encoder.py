@@ -17,6 +17,10 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 from espnet2.asr.encoder.abs_encoder import AbsEncoder
 
+import fairseq
+from fairseq.models.wav2vec.wav2vec2_asr import Wav2VecCtc
+from fairseq.models.wav2vec.wav2vec2 import Wav2Vec2Model
+
 
 class FairSeqWav2VecCtc(AbsEncoder):
     """FairSeq Wav2Vec2 encoder module.
@@ -39,6 +43,9 @@ class FairSeqWav2VecCtc(AbsEncoder):
         output_size: int = 256,
         normalize_before: bool = False,
         freeze_finetune_updates: int = 0,
+        load_proj: bool = True,
+        layerdrop: float = 0.0,
+        activation_dropout: float = 0.0,
     ):
         assert check_argument_types()
         super().__init__()
@@ -64,27 +71,46 @@ class FairSeqWav2VecCtc(AbsEncoder):
         )
         model = models[0]
 
-        from fairseq.models.wav2vec.wav2vec2_asr import Wav2VecCtc
-        if not isinstance(model, Wav2VecCtc):
-            raise Exception(
-                    "Error: pretrained models should be: "
-                    "'Wav2VecCTC' class"
+        if isinstance(model, Wav2VecCtc):
+            self.encoders = model
+
+            self.pretrained_params = copy.deepcopy(model.state_dict())
+
+            if not load_proj or model.w2v_encoder.proj.out_features != output_size:
+                # TODO(xkc09): try LSTM
+                self.output_layer = torch.nn.Sequential(
+                    torch.nn.Linear(model.w2v_encoder.proj.in_features, output_size),
                 )
+            else:
+                self.output_layer = None
 
-        self.encoders = model
+            if not load_proj:
+                self.encoders.w2v_encoder.proj = None
 
-        self.pretrained_params = copy.deepcopy(model.state_dict())
+        elif isinstance(model, Wav2Vec2Model):
+            self.encoders = model
+            in_features = model.final_proj.in_features
+            self.encoders.final_proj = None
+            self.encoders.encoder.layer_drop = layerdrop
+            for layer in self.encoders.encoder.layers:
+                layer.dropout2 = torch.nn.Dropout(layerdrop, inplace=False)
 
-        if model.w2v_encoder.proj.out_features != output_size:
+            self.pretrained_params = copy.deepcopy(model.state_dict())
+
             # TODO(xkc09): try LSTM
             self.output_layer = torch.nn.Sequential(
-                torch.nn.Linear(model.w2v_encoder.proj.out_features, output_size),
+                torch.nn.Linear(in_features, output_size),
             )
+
         else:
-            self.output_layer = None
+            raise Exception(
+                "Error: pretrained models should be: "
+                "'Wav2VecCTC' or 'Wav2Vec2Model' class"
+            )
         
         self.freeze_finetune_updates = freeze_finetune_updates
         self.register_buffer("num_updates", torch.LongTensor([0]))
+        self.load_proj = load_proj
 
     def output_size(self) -> int:
         return self._output_size
@@ -114,15 +140,27 @@ class FairSeqWav2VecCtc(AbsEncoder):
             logging.info("Start fine-tuning wav2vec parameters!")
 
         with torch.no_grad() if not ft else contextlib.nullcontext():
-            enc_outputs = self.encoders.w2v_encoder(
-                xs_pad,
-                masks,
-                tbc=False,
-                features_only=False,
-            )
+            if isinstance(self.encoders, Wav2VecCtc):
+                features_only = False if self.load_proj else True
+                self.encoders.w2v_encoder.apply_mask = self.training
+                enc_outputs = self.encoders.w2v_encoder(
+                    xs_pad,
+                    masks,
+                    tbc=False,
+                    features_only=features_only,
+                )
+                xs_pad = enc_outputs["encoder_out"]  # (B,T,C),
+                masks = enc_outputs["padding_mask"]  # (B, T)
 
-        xs_pad = enc_outputs["encoder_out"]  # (B,T,C),
-        masks = enc_outputs["padding_mask"]  # (B, T)
+            elif isinstance(self.encoders, Wav2Vec2Model):
+                enc_outputs = self.encoders(
+                    xs_pad,
+                    masks,
+                    mask=self.training,
+                    features_only=True,
+                )
+                xs_pad = enc_outputs["x"]  # (B,T,C),
+                masks = enc_outputs["padding_mask"]  # (B, T)
 
         if self.output_layer is not None:
             xs_pad = self.output_layer(xs_pad)

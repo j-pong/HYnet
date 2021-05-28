@@ -65,8 +65,8 @@ class ESPnetASRModel(AbsESPnetModel):
 
         super().__init__()
         # note that eos is the same as sos (equivalent ID)
-        self.sos = 28
-        self.eos = 30
+        self.sos = 2
+        self.eos = 2
         self.vocab_size = vocab_size
         self.ignore_id = ignore_id
         self.ctc_weight = ctc_weight

@@ -55,11 +55,12 @@ class W2lDecoder(object):
         self.nbest = nbest
 
         # criterion-specific init
-        # self.criterion_type = CriterionType.CTC
+        self.criterion_type = CriterionType.CTC
 
         # TODO(dh): what is asg_transitions?
         self.asg_transitions = None
         self.blank = 0
+        self.silence = 4
 
     def generate(self, x, **unused):
         """Generate a batch of inferences."""
@@ -74,8 +75,8 @@ class W2lDecoder(object):
         return torch.LongTensor(list(idxs))
 
 class W2lViterbiDecoder(W2lDecoder):
-    def __init__(self, args, tgt_dict):
-        super().__init__(args, tgt_dict)
+    def __init__(self, nbest, tgt_dict):
+        super().__init__(nbest, tgt_dict)
         self.token_list = tgt_dict
 
     def decode(self, emissions):
@@ -339,15 +340,16 @@ class FairseqLM(LM):
 
 
 class W2lFairseqLMDecoder(W2lDecoder):
-    def __init__(self, args, tgt_dict):
-        super().__init__(args, tgt_dict)
+    def __init__(self, nbest, lexicon, kenlm_model, beam, beam_threshold,
+                                                lm_weight, word_score, unk_weight, sil_weight, tgt_dict):
+        super().__init__(nbest, tgt_dict)
 
-        self.unit_lm = getattr(args, "unit_lm", False)
-
-        self.lexicon = load_words(args.lexicon) if args.lexicon else None
+        self.unit_lm = False
+        self.lexicon = load_words(lexicon)
         self.idx_to_wrd = {}
+        self.token_list = tgt_dict
 
-        checkpoint = torch.load(args.kenlm_model, map_location="cpu")
+        checkpoint = torch.load(kenlm_model, map_location="cpu")
 
         if "cfg" in checkpoint and checkpoint["cfg"] is not None:
             lm_args = checkpoint["cfg"]
@@ -355,7 +357,7 @@ class W2lFairseqLMDecoder(W2lDecoder):
             lm_args = convert_namespace_to_omegaconf(checkpoint["args"])
 
         with open_dict(lm_args.task):
-            lm_args.task.data = osp.dirname(args.kenlm_model)
+            lm_args.task.data = osp.dirname(kenlm_model)
 
         task = tasks.setup_task(lm_args.task)
         model = task.build_model(lm_args.model)
@@ -370,30 +372,25 @@ class W2lFairseqLMDecoder(W2lDecoder):
         if self.lexicon:
             start_state = self.lm.start(False)
             for i, (word, spellings) in enumerate(self.lexicon.items()):
-                if self.unit_lm:
-                    word_idx = i
-                    self.idx_to_wrd[i] = word
-                    score = 0
-                else:
-                    word_idx = self.word_dict.index(word)
-                    _, score = self.lm.score(start_state, word_idx, no_cache=True)
+                word_idx = self.word_dict.index(word)
+                _, score = self.lm.score(start_state, word_idx, no_cache=True)
 
                 for spelling in spellings:
                     spelling_idxs = [tgt_dict.index(token) for token in spelling]
                     assert (
-                        tgt_dict.unk() not in spelling_idxs
+                        "<unk>" not in spelling_idxs
                     ), f"{spelling} {spelling_idxs}"
                     self.trie.insert(spelling_idxs, word_idx, score)
             self.trie.smear(SmearingMode.MAX)
 
             self.decoder_opts = LexiconDecoderOptions(
-                beam_size=args.beam,
-                beam_size_token=int(getattr(args, "beam_size_token", len(tgt_dict))),
-                beam_threshold=args.beam_threshold,
-                lm_weight=args.lm_weight,
-                word_score=args.word_score,
-                unk_score=args.unk_weight,
-                sil_score=args.sil_weight,
+                beam_size=beam,
+                beam_size_token=int(len(tgt_dict)),
+                beam_threshold=beam_threshold,
+                lm_weight=lm_weight,
+                word_score=word_score,
+                unk_score=unk_weight,
+                sil_score=sil_weight,
                 log_add=False,
                 criterion_type=self.criterion_type,
             )
@@ -409,23 +406,8 @@ class W2lFairseqLMDecoder(W2lDecoder):
                 self.unit_lm,
             )
         else:
-            assert args.unit_lm, "lexicon free decoding can only be done with a unit language model"
-            from flashlight.lib.text.decoder import LexiconFreeDecoder, LexiconFreeDecoderOptions
-
-            d = {w: [[w]] for w in tgt_dict.symbols}
-            self.word_dict = create_word_dict(d)
-            self.lm = KenLM(args.kenlm_model, self.word_dict)
-            self.decoder_opts = LexiconFreeDecoderOptions(
-                beam_size=args.beam,
-                beam_size_token=int(getattr(args, "beam_size_token", len(tgt_dict))),
-                beam_threshold=args.beam_threshold,
-                lm_weight=args.lm_weight,
-                sil_score=args.sil_weight,
-                log_add=False,
-                criterion_type=self.criterion_type,
-            )
-            self.decoder = LexiconFreeDecoder(
-                self.decoder_opts, self.lm, self.silence, self.blank, []
+            raise Exception(
+                "Essentially Needs Lexicon"
             )
 
     def decode(self, emissions):
@@ -433,10 +415,7 @@ class W2lFairseqLMDecoder(W2lDecoder):
         hypos = []
 
         def idx_to_word(idx):
-            if self.unit_lm:
-                return self.idx_to_wrd[idx]
-            else:
-                return self.word_dict[idx]
+            return self.word_dict[idx]
 
         def make_hypo(result):
             hypo = {"tokens": self.get_tokens(result.tokens), "score": result.score}
@@ -451,5 +430,7 @@ class W2lFairseqLMDecoder(W2lDecoder):
             nbest_results = results[: self.nbest]
             hypos.append([make_hypo(result) for result in nbest_results])
             self.lm.empty_cache()
+
+            logging.info("decoder input length: " + str(emissions.shape[1]))
 
         return hypos

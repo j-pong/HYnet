@@ -60,6 +60,7 @@ from espnet2.utils.types import str_or_none
 from hynet.asr.espnet_model import ESPnetASRModel
 from hynet.asr.encoder.wav2vec2_encoder import FairSeqWav2VecCtc
 from hynet.asr.ctc import CTC
+from hynet.layers.fair_like_norm import FairNormalize
 
 frontend_choices = ClassChoices(
     name="frontend",
@@ -79,6 +80,7 @@ normalize_choices = ClassChoices(
     classes=dict(
         global_mvn=GlobalMVN,
         utterance_mvn=UtteranceMVN,
+        fair_like_norm=FairNormalize,
     ),
     type_check=AbsNormalize,
     default="utterance_mvn",
