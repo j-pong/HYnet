@@ -1,30 +1,13 @@
 # HYnet
 Fully Unsupervised Learning for Continual Sequence when High Local Correlation
 
-## Installation Guide for SL
+## Installation Guide for SR
 
-### 1. Installaion of docker for ssh env
-- Basic of docker installation
-https://colab.research.google.com/drive/1YhIBX9i59RN_9HEMihJX6TnFm9G5a7UL?authuser=1#scrollTo=swQ7g70S9O4J
+### Essentials
+- CUDA VERSION >= 11.0
 
-- Docker for HYnet
+### 1. Installaion of kaldi for speech
 ```bash
-cd docker
-
-CUDA_VERSION=10 # if cuda version is 10.x
-CUDA_VERSION=11 # if cuda version is 11.x
-
-. cuda_img_name.sh $CUDA_VERSION
-
-make _build
-
-make run
-```
-
-### 2. Installaion of kaldi for speech
-```bash
-ssh jpong@192.168.0.104 -p 32770
-
 cd /path/to/HYnet/tools
 git clone https://github.com/kaldi-asr/kaldi kaldi
 
@@ -40,23 +23,55 @@ make depend -j 28
 make -j 28
 ```
 
-### 3. Installaion of espnet for input pipelines
+### 2. Installaion of espnet for input pipelines
 ```bash
 cd ../../tools
-
 ./meta_installers/install_espnet.sh
 ```
 
-### 4. Installaion of hynet for customizing egs
+### 3. Installaion of hynet for customizing egs
 ```bash
 cd tools
-
 ./meta_installers/install_hynet.sh
 ```
 
-## Make custom example with task
+### 4. Installaion of fairseq
 ```bash
-cp -r tools/espnet/egs2/TEMPLATE/asr1/* egs/TEMPLATE/asr1/
+cd tools
+./meta_installers/install_hynet.sh
+```
+
+## Run examples
+- Wav2vec 2.0 Pretrain
+```bash
+cd HYnet/egs/librispeech/asr_sr
+. prepare_fairseq_data.sh
+. w2v_pretrain.sh
+```
+
+- Wav2vec 2.0 - CTC Finetuning
+```bash
+cd HYnet/egs/librispeech/asr_sr
+. w2v_ctc_finetune.sh
+```
+
+- Wav2vec 2.0 - CTC Inference
+```bash
+cd HYnet/egs/librispeech/asr_sr
+. w2v_ctc_infer.sh
+```
+
+- Wav2vec 2.0 - S2S Finetuning & Inference
+```bash
+cd HYnet/egs/librispeech/asr_sr
+. w2v_s2s_finetune.sh
+```
+
+- Wav2vec 2.0 - S2S Semi-supervised Learning \
+Change "semi_mode" in /path/to/asr_sr/conf/tuning/train_asr_wav2vec_s2s_semi.yaml
+```bash
+cd HYnet/egs/librispeech/asr_sr
+. w2v_s2s_finetune_semi.sh
 ```
 
 ## Bugfix
