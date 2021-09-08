@@ -482,7 +482,6 @@ class ESPnetASRModel(AbsESPnetModel):
 
         # mixup ratio
         # according to bootstrap paper, beta=0.8 worked well for hard bootstrapping
-        # beta = 0.8
         if self.iepoch is not None:
             beta = 0.8
         else:
