@@ -66,7 +66,6 @@ tools/activate_python.sh
 tools/sctk*
 tools/sph2pipe*
 tools/espnet
-tools/fairseq
 tools/flashlight/
 tools/vcpkg/
 tools/arrayfire/
