@@ -1,1 +1,0 @@
-../../../../../tools/espnet/utils/feat_to_shape.sh
