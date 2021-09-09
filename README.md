@@ -1,5 +1,5 @@
 # HYnet
-Fully Unsupervised Learning for Continual Sequence when High Local Correlation
+Conventional / End-to-end / Representation Learning Combined Toolkit
 
 ## Installation Guide for SR
 
