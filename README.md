@@ -61,16 +61,16 @@ cd HYnet/egs/librispeech/asr_sr
 . w2v_ctc_infer.sh
 ```
 
-### Copy pretrained w2v model as /path/to/asr_sh/downloads/wav2vec_pretrained_models/libri960_big.pt
 - Wav2vec 2.0 - S2S Finetuning & Inference
 ```bash
+# Copy pretrained w2v model as /path/to/asr_sh/downloads/wav2vec_pretrained_models/libri960_big.pt
 cd HYnet/egs/librispeech/asr_sr
 . w2v_s2s_finetune.sh
 ```
 
 - Wav2vec 2.0 - S2S Semi-supervised Learning \
-Change "semi_mode" in /path/to/asr_sr/conf/tuning/train_asr_wav2vec_s2s_semi.yaml
 ```bash
+# Change "semi_mode" in /path/to/asr_sr/conf/tuning/train_asr_wav2vec_s2s_semi.yaml
 cd HYnet/egs/librispeech/asr_sr
 . w2v_s2s_finetune_semi.sh
 ```
