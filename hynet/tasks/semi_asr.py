@@ -48,6 +48,7 @@ from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str2bool
 from espnet2.utils.types import str_or_none
 
+from hynet.asr.encoder.wav2vec2_encoder import FairSeqWav2Vec2Encoder
 from espnet2.tasks.abs_task import *
 from hynet.asr.espnet_model_semi import ESPnetASRModel
 from hynet.train.trainer import PseudoTrainer as Trainer
@@ -83,6 +84,7 @@ encoder_choices = ClassChoices(
         transformer=TransformerEncoder,
         vgg_rnn=VGGRNNEncoder,
         rnn=RNNEncoder,
+        wav2vec2=FairSeqWav2Vec2Encoder,
     ),
     type_check=AbsEncoder,
     default="rnn",

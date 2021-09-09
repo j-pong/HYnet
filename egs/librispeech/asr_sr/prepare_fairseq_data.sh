@@ -5,6 +5,8 @@ set -e
 set -u
 set -o pipefail
 
+. ./path.sh
+
 ul_data_path=/DB/LibriSpeech/LibriSpeech/train-960/
 l_data_path=/DB/LibriSpeech/LibriSpeech/train-clean-100/
 test_data_dir=/DB/LibriSpeech/LibriSpeech/dev-other/
@@ -23,3 +25,4 @@ cp -r $save_l_data_dir/dict.ltr.txt $save_test_data_dir/
 python $PWD/../../../tools/fairseq/examples/wav2vec/libri_labels.py $save_l_data_dir/train.tsv --output-dir $save_l_data_dir --output-name $split
 python $PWD/../../../tools/fairseq/examples/wav2vec/libri_labels.py $save_test_data_dir/train.tsv --output-dir $save_test_data_dir --output-name dev_other
 mv $save_test_data_dir/train.tsv $save_test_data_dir/dev_other.tsv
+cp -r $save_test_data_dir/* $save_l_data_dir

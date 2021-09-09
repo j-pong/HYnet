@@ -5,6 +5,8 @@ set -e
 set -u
 set -o pipefail
 
+. ./path.sh
+
 data_dir=$PWD/data/fairseq/train_960/
 ngpu=4
 update_freq=$((128/$ngpu))

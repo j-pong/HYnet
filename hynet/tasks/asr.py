@@ -29,7 +29,6 @@ from espnet2.asr.encoder.abs_encoder import AbsEncoder
 from espnet2.asr.encoder.conformer_encoder import ConformerEncoder
 from espnet2.asr.encoder.rnn_encoder import RNNEncoder
 from espnet2.asr.encoder.transformer_encoder import TransformerEncoder
-from espnet2.asr.encoder.wav2vec2_encoder import FairSeqWav2Vec2Encoder
 from espnet2.asr.encoder.contextual_block_transformer_encoder import (
     ContextualBlockTransformerEncoder,  # noqa: H301
 )
@@ -57,8 +56,8 @@ from espnet2.utils.types import int_or_none
 from espnet2.utils.types import str2bool
 from espnet2.utils.types import str_or_none
 
+from hynet.asr.encoder.wav2vec2_encoder import FairSeqWav2Vec2Encoder
 from hynet.asr.espnet_model import ESPnetASRModel
-from hynet.asr.encoder.wav2vec2_encoder import FairSeqWav2VecCtc
 from hynet.asr.ctc import CTC
 from hynet.layers.fair_like_norm import FairNormalize
 
@@ -104,7 +103,6 @@ encoder_choices = ClassChoices(
         vgg_rnn=VGGRNNEncoder,
         rnn=RNNEncoder,
         wav2vec2=FairSeqWav2Vec2Encoder,
-        wav2vec_ctc=FairSeqWav2VecCtc,
     ),
     type_check=AbsEncoder,
     default="rnn",

@@ -23,15 +23,14 @@ class CTC(torch.nn.Module):
         dropout_rate: float = 0.0,
         ctc_type: str = "builtin",
         reduce: bool = True,
-        ignore_nan_grad: bool = False,
+        ignore_nan_grad: bool = True,
     ):
         assert check_argument_types()
         super().__init__()
         eprojs = encoder_output_sizse
         self.dropout_rate = dropout_rate
+        self.ctc_lo = torch.nn.Linear(eprojs, odim)
         self.ctc_type = ctc_type
-        if self.ctc_type != "fairctc":
-            self.ctc_lo = torch.nn.Linear(eprojs, odim)
         self.ignore_nan_grad = ignore_nan_grad
 
         if self.ctc_type == "builtin":
@@ -40,21 +39,17 @@ class CTC(torch.nn.Module):
             import warpctc_pytorch as warp_ctc
 
             if ignore_nan_grad:
-                raise NotImplementedError(
-                    "ignore_nan_grad option is not supported for warp_ctc"
-                )
+                logging.warning("ignore_nan_grad option is not supported for warp_ctc")
             self.ctc_loss = warp_ctc.CTCLoss(size_average=True, reduce=reduce)
-        elif self.ctc_type == "fairctc":
-            self.ctc_loss = torch.nn.CTCLoss(reduction="sum")
         else:
             raise ValueError(
-                f'ctc_type must be "builtin" or "warpctc" or "fairctc": {self.ctc_type}'
+                f'ctc_type must be "builtin" or "warpctc": {self.ctc_type}'
             )
 
         self.reduce = reduce
 
     def loss_fn(self, th_pred, th_target, th_ilen, th_olen) -> torch.Tensor:
-        if self.ctc_type == "builtin" or self.ctc_type == "fairctc":
+        if self.ctc_type == "builtin":
             th_pred = th_pred.log_softmax(2)
             loss = self.ctc_loss(th_pred, th_target, th_ilen, th_olen)
 
@@ -133,12 +128,8 @@ class CTC(torch.nn.Module):
             ys_pad: batch of padded character id sequence tensor (B, Lmax)
             ys_lens: batch of lengths of character sequence (B)
         """
-        if self.ctc_type == "fairctc":
-            # hs_pad: (B, L, Nvocab)
-            ys_hat = hs_pad
-        else:
-            # hs_pad: (B, L, NProj) -> ys_hat: (B, L, Nvocab)
-            ys_hat = self.ctc_lo(F.dropout(hs_pad, p=self.dropout_rate))
+        # hs_pad: (B, L, NProj) -> ys_hat: (B, L, Nvocab)
+        ys_hat = self.ctc_lo(F.dropout(hs_pad, p=self.dropout_rate))
         # ys_hat: (B, L, D) -> (L, B, D)
         ys_hat = ys_hat.transpose(0, 1)
 
@@ -159,10 +150,7 @@ class CTC(torch.nn.Module):
         Returns:
             torch.Tensor: log softmax applied 3d tensor (B, Tmax, odim)
         """
-        if self.ctc_type == "fairctc":
-            return F.log_softmax(hs_pad, dim=2)
-        else:
-            return F.log_softmax(self.ctc_lo(hs_pad), dim=2)
+        return F.log_softmax(self.ctc_lo(hs_pad), dim=2)
 
     def argmax(self, hs_pad):
         """argmax of frame activations
@@ -172,7 +160,4 @@ class CTC(torch.nn.Module):
         Returns:
             torch.Tensor: argmax applied 2d tensor (B, Tmax)
         """
-        if self.ctc_type == "fairctc":
-            return torch.argmax(hs_pad, dim=2)
-        else:
-            return torch.argmax(self.ctc_lo(hs_pad), dim=2)
+        return torch.argmax(self.ctc_lo(hs_pad), dim=2)

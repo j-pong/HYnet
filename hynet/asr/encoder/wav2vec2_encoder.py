@@ -4,11 +4,16 @@
 """Encoder definition."""
 import contextlib
 import copy
+
 from filelock import FileLock
+
 import logging
 import os
+
 from typing import Optional
 from typing import Tuple
+
+from pathlib import Path
 
 import torch
 from typeguard import check_argument_types
@@ -17,12 +22,8 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 from espnet2.asr.encoder.abs_encoder import AbsEncoder
 
-import fairseq
-from fairseq.models.wav2vec.wav2vec2_asr import Wav2VecCtc
-from fairseq.models.wav2vec.wav2vec2 import Wav2Vec2Model
 
-
-class FairSeqWav2VecCtc(AbsEncoder):
+class FairSeqWav2Vec2Encoder(AbsEncoder):
     """FairSeq Wav2Vec2 encoder module.
 
     Args:
@@ -37,15 +38,20 @@ class FairSeqWav2VecCtc(AbsEncoder):
 
     def __init__(
         self,
-        input_size: int,
         w2v_url: str,
-        w2v_dir_path: str = "./",
-        output_size: int = 256,
-        normalize_before: bool = False,
-        freeze_finetune_updates: int = 0,
-        load_proj: bool = True,
-        layerdrop: float = 0.0,
-        activation_dropout: float = 0.0,
+        w2v_dir_path: str,
+        input_size: int, # not use this argument
+        output_size: int,
+        apply_mask: bool=True,
+        mask_prob: float=0.5,
+        mask_channel_prob: float=0.5,
+        mask_channel_length: int=64,
+        layerdrop: float=0.1,
+        activation_dropout: float=0.1,
+        feature_grad_mult: float=0.0,
+        freeze_finetune_updates: int=0,
+        pretrained_model: bool=True,
+        normalize_before: bool=False,
     ):
         assert check_argument_types()
         super().__init__()
@@ -61,7 +67,10 @@ class FairSeqWav2VecCtc(AbsEncoder):
                 )
                 raise e
 
-        self.w2v_model_path = download_w2v(w2v_url, w2v_dir_path)
+        if pretrained_model:
+            self.w2v_model_path = download_w2v(w2v_url, w2v_dir_path)
+        else:
+            self.w2v_model_path = str(Path(w2v_dir_path) / w2v_url.split("/")[-1])
 
         self._output_size = output_size
 
@@ -71,46 +80,55 @@ class FairSeqWav2VecCtc(AbsEncoder):
         )
         model = models[0]
 
-        if isinstance(model, Wav2VecCtc):
-            self.encoders = model
-
-            self.pretrained_params = copy.deepcopy(model.state_dict())
-
-            if not load_proj or model.w2v_encoder.proj.out_features != output_size:
-                # TODO(xkc09): try LSTM
-                self.output_layer = torch.nn.Sequential(
-                    torch.nn.Linear(model.w2v_encoder.proj.in_features, output_size),
+        if not isinstance(model, Wav2Vec2Model):
+            try:
+                model = model.w2v_encoder.w2v_model
+            except Exception as e:
+                print(
+                    "Error: pretrained models should be within: "
+                    "'Wav2Vec2Model, Wav2VecCTC' classes, etc."
                 )
-            else:
-                self.output_layer = None
+                raise e
+        # Configuration of the model
+        self.pretrained_params = copy.deepcopy(model.state_dict())
+        
+        model.final_proj = None  # we do not use layer that is directly used for contrastive loss
+        
+        model.cfg.mask_prob = mask_prob
+        # model.cfg.mask_selection = mask_selection
+        # model.cfg.mask_other = mask_other
+        # model.cfg.mask_length = mask_length
+        # model.cfg.no_mask_overlap = no_mask_overlap
+        # model.cfg.mask_min_space = mask_min_space
 
-            if not load_proj:
-                self.encoders.w2v_encoder.proj = None
+        model.cfg.mask_channel_prob = mask_channel_prob
+        # model.cfg.mask_channel_selection = mask_channel_selection
+        # model.cfg.mask_channel_other = mask_channel_other
+        model.cfg.mask_channel_length = mask_channel_length
+        # model.cfg.no_mask_channel_overlap = no_mask_channel_overlap
+        # model.cfg.mask_channel_min_space = mask_channel_min_space
 
-        elif isinstance(model, Wav2Vec2Model):
-            self.encoders = model
-            in_features = model.final_proj.in_features
-            self.encoders.final_proj = None
-            self.encoders.encoder.layer_drop = layerdrop
-            for layer in self.encoders.encoder.layers:
-                layer.dropout2 = torch.nn.Dropout(layerdrop, inplace=False)
+        model.cfg.encoder_layerdrop = layerdrop
+        model.cfg.activation_dropout = activation_dropout
+        model.cfg.feature_grad_mult = feature_grad_mult
 
-            self.pretrained_params = copy.deepcopy(model.state_dict())
+        self.encoders = model
+        self.apply_mask = apply_mask
 
+        self.normalize_before = normalize_before
+        if self.normalize_before:
+            self.after_norm = LayerNorm(output_size)
+
+        if model.cfg.encoder_embed_dim != output_size:
             # TODO(xkc09): try LSTM
             self.output_layer = torch.nn.Sequential(
-                torch.nn.Linear(in_features, output_size),
+                torch.nn.Linear(model.cfg.encoder_embed_dim, output_size),
             )
-
         else:
-            raise Exception(
-                "Error: pretrained models should be: "
-                "'Wav2VecCTC' or 'Wav2Vec2Model' class"
-            )
-        
+            self.output_layer = None
+
         self.freeze_finetune_updates = freeze_finetune_updates
         self.register_buffer("num_updates", torch.LongTensor([0]))
-        self.load_proj = load_proj
 
     def output_size(self) -> int:
         return self._output_size
@@ -140,33 +158,25 @@ class FairSeqWav2VecCtc(AbsEncoder):
             logging.info("Start fine-tuning wav2vec parameters!")
 
         with torch.no_grad() if not ft else contextlib.nullcontext():
-            if isinstance(self.encoders, Wav2VecCtc):
-                features_only = False if self.load_proj else True
-                self.encoders.w2v_encoder.apply_mask = self.training
-                enc_outputs = self.encoders.w2v_encoder(
-                    xs_pad,
-                    masks,
-                    tbc=False,
-                    features_only=features_only,
-                )
-                xs_pad = enc_outputs["encoder_out"]  # (B,T,C),
-                masks = enc_outputs["padding_mask"]  # (B, T)
+            enc_outputs = self.encoders(
+                xs_pad,
+                masks,
+                mask=self.training and self.apply_mask,
+                features_only=True,
+            )
 
-            elif isinstance(self.encoders, Wav2Vec2Model):
-                enc_outputs = self.encoders(
-                    xs_pad,
-                    masks,
-                    mask=self.training,
-                    features_only=True,
-                )
-                xs_pad = enc_outputs["x"]  # (B,T,C),
-                masks = enc_outputs["padding_mask"]  # (B, T)
+        xs_pad = enc_outputs["x"]  # (B,T,C),
+        if enc_outputs["padding_mask"] is not None:
+            masks = enc_outputs["padding_mask"]  # (B, T)
+            olens = (~masks).sum(dim=1)  # (B)
+        else:
+            olens = torch.IntTensor([xs_pad.size(1)]).to(xs_pad.device)
 
         if self.output_layer is not None:
             xs_pad = self.output_layer(xs_pad)
 
-
-        olens = (~masks).sum(dim=1)
+        if self.normalize_before:
+            xs_pad = self.after_norm(xs_pad)
 
         return xs_pad, olens, None
 
@@ -193,18 +203,3 @@ def download_w2v(model_url, dir_path):
             logging.info(f"Wav2Vec model {model_path} already exists.")
 
     return model_path
-
-
-# def FairSeqPreprocess(feats, curr_sample_rate):
-#     if feats.dim() == 2:
-#         feats = feats.mean(-1)
-#
-#     if curr_sample_rate != self.sample_rate:
-#         raise Exception(f"sample rate: {curr_sample_rate}, need {self.sample_rate}")
-#
-#     assert feats.dim() == 1, feats.dim()
-#
-#     if self.normalize:
-#         with torch.no_grad():
-#             feats = F.layer_norm(feats, feats.shape)
-#     return feats

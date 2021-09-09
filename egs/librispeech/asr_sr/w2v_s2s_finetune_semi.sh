@@ -5,6 +5,8 @@ set -e
 set -u
 set -o pipefail
 
+. ./path.sh
+
 train_set="train_clean_100"
 pseudo_set="train_860_pseudo"
 valid_set="dev"
@@ -15,6 +17,7 @@ lm_config=conf/tuning/train_lm_adam.yaml
 inference_config=conf/decode_asr.yaml
 
 ./asr_semi.sh \
+    --feats_normalize null \
     --lang en \
     --ngpu 4 \
     --inference_nj 16 \

@@ -5,6 +5,8 @@ set -e
 set -u
 set -o pipefail
 
+. ./path.sh
+
 data_dir=$PWD/data/fairseq/dev_other/
 finetuned_model=$PWD/models/finetuned_w2v/checkpoint_best.pt
 inference_result=$PWD/fairseq_results/finetuned_w2v

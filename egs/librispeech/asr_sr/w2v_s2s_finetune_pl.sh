@@ -5,6 +5,8 @@ set -e
 set -u
 set -o pipefail
 
+. ./path.sh
+
 train_set="train_nl_960"
 valid_set="dev"
 test_sets="test_clean test_other dev_clean dev_other"
