@@ -41,7 +41,7 @@ cd tools
 ### 4. Installaion of fairseq
 ```bash
 cd tools
-./meta_installers/install_hynet.sh
+./meta_installers/install_fairseq.sh
 ```
 
 ## Run examples
