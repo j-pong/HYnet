@@ -90,6 +90,7 @@ pip install pip==19; pip install warpctc-pytorch==0.2.1+torch16.cuda102
 
 matplotlib version error
 - Remove matplotlib at tools/espnet/setup.py that is included in requirements
+- OR sudo apt-get install libfreetype-dev
 
 No CMAKE_CUDA_COMPILER could be found
 ```bash
