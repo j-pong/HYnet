@@ -6,6 +6,9 @@ Conventional / End-to-end / Representation Learning Combined Toolkit
 ### Essentials
 - CUDA VERSION >= 11.0
 
+### 0. Install pre-requisites
+sudo apt-get install zlib1g-dev automake autoconf sox gfortran libtool subversion python2.7
+
 ### 1. Installaion of kaldi for speech
 ```bash
 cd /path/to/HYnet/tools
