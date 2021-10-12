@@ -21,11 +21,6 @@ sudo chmod -R +777 ./ArrayFire-v3.8.0_Linux_x86_64.sh
 # Piz install mkl before excute above lines
 git clone https://github.com/flashlight/flashlight.git && cd flashlight
 mkdir -p build && cd build
-# error "Could NOT find NCCL": https://docs.nvidia.com/deeplearning/nccl/install-guide/index.html
-cmake .. -DCMAKE_BUILD_TYPE=Release -DFL_BACKEND=CUDA \
--DArrayFire_DIR=$PWD/../../arrayfire/share/ArrayFire/cmake/
-make -j$(nproc)
-sudo make install
 
 ## install kenlm
 git clone https://github.com/kpu/kenlm.git
@@ -33,6 +28,12 @@ cd kenlm
 mkdir -p build && cd build
 cmake .. 
 make -j 16
+
+# error "Could NOT find NCCL": https://docs.nvidia.com/deeplearning/nccl/install-guide/index.html
+cmake .. -DCMAKE_BUILD_TYPE=Release -DFL_BACKEND=CUDA \
+-DArrayFire_DIR=$PWD/../../arrayfire/share/ArrayFire/cmake/
+make -j$(nproc)
+sudo make install
 
 ## flashlight binding
 cd ../../../bindings/python
