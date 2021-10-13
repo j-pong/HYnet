@@ -45,10 +45,17 @@ cd tools
 ```
 
 ## Run examples
+for argument usage, check defaults in each files
+
+- Librispeech Data Preparation for fairseq
+```bash
+cd HYnet/egs/librispeech/asr_sr
+. prepare_fairseq_data.sh --ul_data_path /path/to/unlabeled_data --l_data_path /path/to/labeled_data --save_ul_data_dir /path/to/save/unlabeled_data --save_l_data_dir /path/to/save/labeled_data
+```
+
 - Wav2vec 2.0 Pretrain
 ```bash
 cd HYnet/egs/librispeech/asr_sr
-. prepare_fairseq_data.sh
 . w2v_pretrain.sh --data_dir /path/to/unlabeled_data --ngpu number_of_gpus --config_dir /path/to/config/directory --config_name yaml_file_in_config_dir
 ```
 
