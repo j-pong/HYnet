@@ -49,24 +49,26 @@ cd tools
 ```bash
 cd HYnet/egs/librispeech/asr_sr
 . prepare_fairseq_data.sh
-. w2v_pretrain.sh
+. w2v_pretrain.sh --data_dir /path/to/unlabeled_data --ngpu number_of_gpus --config_dir /path/to/config/directory --config_name yaml_file_in_config_dir
 ```
 
 - Wav2vec 2.0 - CTC Finetuning
 ```bash
 cd HYnet/egs/librispeech/asr_sr
-. w2v_ctc_finetune.sh
+. w2v_ctc_finetune.sh --data_dir /path/to/unlabeled_data --ngpu number_of_gpus --config_dir /path/to/config/directory --config_name yaml_file_in_config_dir
 ```
 
 - Wav2vec 2.0 - CTC Inference
 ```bash
+# use get_public_lm.sh for pretrained language models
 cd HYnet/egs/librispeech/asr_sr
-. w2v_ctc_infer.sh
+. w2v_ctc_infer.sh --finetuned_model /path/to/finetuned_model.pt --inference_result /path/to/save/results
 ```
 
 - Wav2vec 2.0 - S2S Finetuning & Inference
 ```bash
 # Copy pretrained w2v model as /path/to/asr_sh/downloads/wav2vec_pretrained_models/libri960_big.pt
+# use get_public_models.sh for pretrained representation models
 cd HYnet/egs/librispeech/asr_sr
 . w2v_s2s_finetune.sh
 ```

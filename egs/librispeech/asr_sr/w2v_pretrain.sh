@@ -8,6 +8,8 @@ set -o pipefail
 data_dir=$PWD/data/fairseq/train_960/
 ngpu=4
 update_freq=$((128/$ngpu))
+config_dir=$PWD/../../../tools/fairseq/examples/wav2vec/config/pretraining
+config_name=wav2vec2_large_librivox
 
 . ./path.sh || exit 1;
 . utils/parse_options.sh || exit 1;
@@ -18,5 +20,5 @@ update_freq=$((128/$ngpu))
 fairseq-hydra-train \
     task.data=$data_dir \
     distributed_training.distributed_world_size=$ngpu +optimization.update_freq='['$update_freq']' \
-    --config-dir $PWD/../../../tools/fairseq/examples/wav2vec/config/pretraining \
-    --config-name wav2vec2_large_librivox
+    --config-dir $config_dir \
+    --config-name $config_name
