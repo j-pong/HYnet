@@ -39,6 +39,10 @@ egs/*/*/mfcc
 egs/*/*/stft
 egs/*/*/tensorboard
 egs/*/*/wav*
+egs/*/*/models
+egs/*/*/language_models
+egs/*/*/inference_results
+egs/*/*/outputs
 
 # tools related
 tools/bin
@@ -70,6 +74,9 @@ tools/flashlight/
 tools/vcpkg/
 tools/arrayfire/
 tools/ArrayFire*
+tools/fairseq/flashlight
+tools/fairseq/arrayfire
+tools/fairseq/ArrayFire*
 
 # gpgkey
 docker/gpgkey

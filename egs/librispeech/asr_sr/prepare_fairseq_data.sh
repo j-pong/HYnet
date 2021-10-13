@@ -5,8 +5,6 @@ set -e
 set -u
 set -o pipefail
 
-. ./path.sh
-
 ul_data_path=/DB/LibriSpeech/LibriSpeech/train-960/
 l_data_path=/DB/LibriSpeech/LibriSpeech/train-clean-100/
 test_data_dir=/DB/LibriSpeech/LibriSpeech/dev-other/
@@ -14,6 +12,9 @@ test_data_dir=/DB/LibriSpeech/LibriSpeech/dev-other/
 save_ul_data_dir=$PWD/data/fairseq/train_960/
 save_l_data_dir=$PWD/data/fairseq/train_clean_100/
 save_test_data_dir=$PWD/data/fairseq/dev_other/
+
+. ./path.sh || exit 1;
+. utils/parse_options.sh || exit 1;
 
 python $PWD/../../../tools/fairseq/examples/wav2vec/wav2vec_manifest.py $ul_data_path --dest $save_ul_data_dir --ext flac --valid 0.01
 python $PWD/../../../tools/fairseq/examples/wav2vec/wav2vec_manifest.py $l_data_path --dest $save_l_data_dir --ext flac --valid 0
