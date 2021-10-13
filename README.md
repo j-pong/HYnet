@@ -54,6 +54,7 @@ cd HYnet/egs/librispeech/asr_sr
 
 - Wav2vec 2.0 - CTC Finetuning
 ```bash
+# use get_public_models.sh for pretrained representation models
 cd HYnet/egs/librispeech/asr_sr
 . w2v_ctc_finetune.sh --data_dir /path/to/unlabeled_data --ngpu number_of_gpus --config_dir /path/to/config/directory --config_name yaml_file_in_config_dir
 ```
