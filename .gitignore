@@ -80,3 +80,6 @@ tools/fairseq/ArrayFire*
 
 # gpgkey
 docker/gpgkey
+
+# Dockerfile
+docker/Dockerfile
