@@ -31,7 +31,7 @@ criterion:
 
 optimization:
   max_update: 10000
-  lr: [0.00002] # 0.00003 for jpong4
+  lr: [0.00003]
   sentence_avg: true
   update_freq: [40]
 

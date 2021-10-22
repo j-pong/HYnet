@@ -30,10 +30,10 @@ criterion:
   zero_infinity: true
 
 optimization:
-  max_update: 10000
-  lr: [0.00002] # 0.00003 for jpong4
+  max_update: 320000
+  lr: [0.00002]
   sentence_avg: true
-  update_freq: [40]
+  update_freq: [6]
 
 optimizer:
   _name: adam
@@ -50,9 +50,9 @@ model:
   w2v_path: ???
   apply_mask: true
   mask_prob: 0.5
-  mask_channel_prob: 0.08
+  mask_channel_prob: 0.16
   mask_channel_length: 64
   layerdrop: 0.1
   activation_dropout: 0.1
   feature_grad_mult: 0.0
-  freeze_finetune_updates: 1200
+  freeze_finetune_updates: 10000
