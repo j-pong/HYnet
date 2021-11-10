@@ -30,10 +30,10 @@ criterion:
   zero_infinity: true
 
 optimization:
-  max_update: 320000
-  lr: [0.00002]
+  max_update: 400000
+  lr: [0.00003]
   sentence_avg: true
-  update_freq: [6]
+  update_freq: [5]
 
 optimizer:
   _name: adam
