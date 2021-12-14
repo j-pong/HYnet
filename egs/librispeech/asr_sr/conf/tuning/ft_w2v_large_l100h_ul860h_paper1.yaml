@@ -27,8 +27,10 @@ distributed_training:
   distributed_world_size: 4
 
 criterion:
-  _name: ctc
+  _name: uda_ctc
   zero_infinity: true
+  proj_uda: false
+  uda_alpha: 1.0
 
 optimization:
   max_update: 160000
@@ -47,7 +49,7 @@ lr_scheduler:
   final_lr_scale: 0.05
 
 model:
-  _name: wav2vec_ctc
+  _name: wav2vec_uda
   w2v_path: ???
   apply_mask: true
   mask_prob: 0.5

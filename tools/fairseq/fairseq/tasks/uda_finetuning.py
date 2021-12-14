@@ -36,6 +36,8 @@ from . import FairseqTask, register_task
 from .. import utils
 from ..logging import metrics
 
+from fairseq.optim.amp_optimizer import AMPOptimizer
+
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +366,7 @@ class UDAFinetuningTask(FairseqTask):
         # upgrade old task
         if isinstance(task_cfg, Namespace):
             if not hasattr(task_cfg, "autoregressive"):
-                task_cfg.autoregressive = not task_cfg.criterion == "ctc"
+                task_cfg.autoregressive = not task_cfg.criterion == "uda_ctc"
 
         if not semi:
             manifest_path = os.path.join(data_path, "{}.tsv".format(split))
