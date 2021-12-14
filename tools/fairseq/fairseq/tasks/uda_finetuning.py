@@ -209,19 +209,6 @@ class UDAFinetuningTask(FairseqTask):
             a :class:`~fairseq.data.FairseqDataset` corresponding to *split*
         """
 
-        # if len(split.split(",")) > 1:
-        #     l_split = split.split(",")[0]
-        #     ul_split = split.split(",")[1]
-        #
-        #     if l_split not in self.datasets:
-        #         raise KeyError("Dataset not loaded: " + l_split)
-        #     elif ul_split not in self.datasets:
-        #         raise KeyError("Dataset not loaded: " + ul_split)
-        #     if not isinstance(self.l_split, FairseqDataset) or not isinstance(self.ul_split, FairseqDataset):
-        #         raise TypeError("Datasets are expected to be of type FairseqDataset")
-        #
-        #     return [self.l_split, self.ul_split]
-
         if split not in self.datasets:
             raise KeyError("Dataset not loaded: " + split)
         if not isinstance(self.datasets[split], FairseqDataset):
