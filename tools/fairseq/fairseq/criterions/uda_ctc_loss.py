@@ -120,7 +120,15 @@ class UdaCtcCriterion(FairseqCriterion):
         self.proj_uda = cfg.proj_uda
 
     def forward(self, model, sample, reduce=True):
+        if "mode" not in sample["net_input"]:
+            sample["net_input"]["mode"] = "labeled"
+
         if sample["net_input"]["mode"] == "labeled":
+            uda_loss = torch.tensor(0)
+            uda_sample_size = 0
+            uda_ntokens = 0
+            uda_nsentences = 0
+            
             net_output = model(**sample["net_input"])
 
             lprobs = model.get_normalized_probs(
@@ -148,7 +156,7 @@ class UdaCtcCriterion(FairseqCriterion):
                 target_lengths = pad_mask.sum(-1)
 
             with torch.backends.cudnn.flags(enabled=False):
-                loss = F.ctc_loss(
+                ctc_loss = F.ctc_loss(
                     lprobs,
                     targets_flat,
                     input_lengths,
@@ -158,44 +166,63 @@ class UdaCtcCriterion(FairseqCriterion):
                     zero_infinity=self.zero_infinity,
                 )
 
-            ntokens = (
+            ctc_ntokens = (
                 sample["ntokens"] if "ntokens" in sample else target_lengths.sum().item()
             )
-            sample_size = sample["target"].size(0) if self.sentence_avg else ntokens
+            ctc_sample_size = sample["target"].size(0) if self.sentence_avg else ntokens
+            ctc_nsentences = sample["id"].numel()
+
+            loss = ctc_loss
+            sample_size = ctc_sample_size
 
         elif sample["net_input"]["mode"] == "unlabeled":
+            ctc_loss = torch.tensor(0)
+            ctc_ntokens = 0
+            ctc_sample_size = 0
+            ctc_nsentences = 0
+            
             model.w2v_encoder.apply_mask = False
             net_output = model(proj=self.proj_uda, **sample["net_input"])
             model.w2v_encoder.apply_mask = True
             ptb_net_output = model(proj=self.proj_uda, **sample["net_input"])
 
-            if net_output is not None and ptb_net_output is not None:
-                lprobs = model.get_normalized_probs(
-                    net_output, log_probs=True
-                ).contiguous()  # (T, B, C) from the encoder
 
-                ptb_lprobs = model.get_normalized_probs(
-                    ptb_net_output, log_probs=True
-                ).contiguous()  # (T, B, C) from the encoder
+            lprobs = model.get_normalized_probs(
+                net_output, log_probs=True
+            ).contiguous()  # (T, B, C) from the encoder
 
-                with torch.backends.cudnn.flags(enabled=False):
-                    loss = F.kl_div(
-                        ptb_lprobs,
-                        lprobs,
-                        reduction="sum",
-                        log_target=True,
-                    )
-            else:
-                loss = torch.tensor([1e-3], requires_grad=True)
+            ptb_lprobs = model.get_normalized_probs(
+                ptb_net_output, log_probs=True
+            ).contiguous()  # (T, B, C) from the encoder
 
-            ntokens = 0
-            sample_size = ntokens
+            with torch.backends.cudnn.flags(enabled=False):
+                uda_loss = F.kl_div(
+                    ptb_lprobs,
+                    lprobs,
+                    reduction="sum",
+                    log_target=True,
+                )
+                uda_loss = self.uda_alpha * uda_loss
+            if net_output["freeze"]:
+                uda_loss = uda_loss*0
+
+            uda_sample_size = len(net_output["encoder_out"])
+            uda_ntokens = uda_sample_size
+            uda_nsentences = sample["id"].numel()
+
+            loss = uda_loss
+            sample_size = uda_sample_size
 
         logging_output = {
-            "loss": utils.item(loss.data),  # * sample['ntokens'],
-            "ntokens": ntokens,
-            "nsentences": sample["id"].numel(),
-            "sample_size": sample_size,
+            "loss": utils.item(loss.data) / sample_size,
+            "ctc_loss": utils.item(ctc_loss.data),  # * sample['ntokens'],
+            "uda_loss": utils.item(uda_loss.data),
+            "ctc_ntokens": ctc_ntokens,
+            "uda_ntokens": uda_ntokens,
+            "ctc_nsentences": ctc_nsentences,
+            "uda_nsentences": uda_nsentences,
+            "ctc_sample_size": ctc_sample_size,
+            "uda_sample_size": uda_sample_size,
         }
 
         if not model.training:
@@ -271,23 +298,44 @@ class UdaCtcCriterion(FairseqCriterion):
     def reduce_metrics(logging_outputs) -> None:
         """Aggregate logging outputs from data parallel training."""
 
-        loss_sum = utils.item(sum(log.get("loss", 0) for log in logging_outputs))
-        ntokens = utils.item(sum(log.get("ntokens", 0) for log in logging_outputs))
-        nsentences = utils.item(
-            sum(log.get("nsentences", 0) for log in logging_outputs)
+        loss = utils.item(sum(log.get("loss", 0) for log in logging_outputs))
+        ctc_loss_sum = utils.item(sum(log.get("ctc_loss", 0) for log in logging_outputs))
+        uda_loss_sum = utils.item(sum(log.get("uda_loss", 0) for log in logging_outputs))
+        ctc_ntokens = utils.item(sum(log.get("ctc_ntokens", 0) for log in logging_outputs))
+        uda_ntokens = utils.item(sum(log.get("uda_ntokens", 0) for log in logging_outputs))
+        ctc_nsentences = utils.item(
+            sum(log.get("ctc_nsentences", 0) for log in logging_outputs)
         )
-        sample_size = utils.item(
-            sum(log.get("sample_size", 0) for log in logging_outputs)
+        uda_nsentences = utils.item(
+            sum(log.get("uda_nsentences", 0) for log in logging_outputs)
+        )
+        ctc_sample_size = utils.item(
+            sum(log.get("ctc_sample_size", 0) for log in logging_outputs)
+        )
+        uda_sample_size = utils.item(
+            sum(log.get("uda_sample_size", 0) for log in logging_outputs)
         )
 
         metrics.log_scalar(
-            "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+            "loss", loss, round=3
         )
-        metrics.log_scalar("ntokens", ntokens)
-        metrics.log_scalar("nsentences", nsentences)
-        if sample_size != ntokens:
+        metrics.log_scalar(
+            "ctc_loss", ctc_loss_sum / ctc_sample_size / math.log(2) if ctc_sample_size != 0 else 0, ctc_sample_size, round=3
+        )
+        metrics.log_scalar(
+            "uda_loss", uda_loss_sum / uda_sample_size / math.log(2) if uda_sample_size != 0 else 0, uda_sample_size, round=3
+        )
+        metrics.log_scalar("ctc_ntokens", ctc_ntokens)
+        metrics.log_scalar("ctc_nsentences", ctc_nsentences)
+        metrics.log_scalar("uda_ntokens", uda_ntokens)
+        metrics.log_scalar("uda_nsentences", uda_nsentences)
+        if ctc_sample_size != ctc_ntokens:
             metrics.log_scalar(
-                "nll_loss", loss_sum / ntokens / math.log(2), ntokens, round=3
+                "ctc_nll_loss", ctc_loss_sum / ctc_ntokens / math.log(2) if ctc_ntokens != 0 else 0, ctc_ntokens, round=3
+            )
+        if uda_sample_size != uda_ntokens:
+            metrics.log_scalar(
+                "uda_nll_loss", uda_loss_sum / uda_ntokens / math.log(2) if uda_ntokens != 0 else 0, uda_ntokens, round=3
             )
 
         c_errors = sum(log.get("c_errors", 0) for log in logging_outputs)

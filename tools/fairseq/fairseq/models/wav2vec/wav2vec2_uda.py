@@ -303,9 +303,6 @@ class Wav2VecUdaEncoder(FairseqEncoder):
                 # BTC -> TBC
                 x = x.transpose(0, 1)
 
-        if ft and mode == "unlabeled" and not proj:
-            return None
-
         x = self.final_dropout(x)
 
         if self.proj and proj:
@@ -318,6 +315,7 @@ class Wav2VecUdaEncoder(FairseqEncoder):
             else None,  # T x B
             "padding_mask": padding_mask,
             "layer_results": res["layer_results"],
+            "freeze": not ft,
         }
 
     def reorder_encoder_out(self, encoder_out, new_order):
