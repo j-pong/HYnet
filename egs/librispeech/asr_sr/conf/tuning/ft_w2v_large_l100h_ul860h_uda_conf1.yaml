@@ -6,6 +6,7 @@ common:
   log_interval: 200
 
 checkpoint:
+  save_dir: /home/Workspace/HYnet/egs/librispeech/asr_sr/outputs/test_uda/checkpoints
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
 
@@ -29,8 +30,8 @@ distributed_training:
 criterion:
   _name: uda_ctc
   zero_infinity: true
-  proj_uda: true
-  uda_alpha: 0.5
+  proj_uda: true # trial 2: false
+  uda_alpha: 0.0 # trial 1: change alpha
 
 optimization:
   max_update: 160000
@@ -59,3 +60,4 @@ model:
   activation_dropout: 0.1
   feature_grad_mult: 0.0
   freeze_finetune_updates: 10000
+  freeze_uda_updates: 20000
