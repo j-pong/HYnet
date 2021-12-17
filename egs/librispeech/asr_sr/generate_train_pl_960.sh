@@ -15,7 +15,7 @@ save_data_dir=data/fairseq/train_960_pl_viterbi
 mkdir -p $save_data_dir
 cp -r $l100_dir/* $save_data_dir
 mv $save_data_dir/train.tsv $save_data_dir/train_org.tsv
-cat $save_data_dir/train_org.tsv | sed 's#"/DB/LibriSpeech/LibriSpeech/train-clean-100"/"#DB/LibriSpeech/LibriSpeech/train-960"#g' > $save_data_dir/train.tsv
+cat $save_data_dir/train_org.tsv | sed 's#train-clean-100#train-960#g' | sed '1 ! s#^#train-clean-100/#' > $save_data_dir/train.tsv
 tail -n +2 $pl860_dir/train.tsv >> $save_data_dir/train.tsv
 cat $pl860_dir/train.wrd >> $save_data_dir/train.wrd
 cat $pl860_dir/train.ltr >> $save_data_dir/train.ltr
