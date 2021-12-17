@@ -203,7 +203,7 @@ class UdaCtcCriterion(FairseqCriterion):
                     log_target=True,
                 )
                 uda_loss = self.uda_alpha * uda_loss
-            if net_output["freeze"]:
+            if net_output["freeze"] or net_output["freeze_uda"]:
                 uda_loss = uda_loss*0
 
             uda_sample_size = len(net_output["encoder_out"])

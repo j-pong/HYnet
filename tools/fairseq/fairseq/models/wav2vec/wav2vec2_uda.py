@@ -117,6 +117,9 @@ class Wav2Vec2AsrConfig(FairseqDataclass):
     freeze_finetune_updates: int = field(
         default=0, metadata={"help": "dont finetune wav2vec for this many updates"}
     )
+    freeze_uda_updates: int = field(
+        default=0, metadata={"help": "dont finetune wav2vec with UDA loss for this many updates"}
+    )
     feature_grad_mult: float = field(
         default=0.0, metadata={"help": "reset feature grad mult in wav2vec 2.0 to this"}
     )
@@ -266,6 +269,7 @@ class Wav2VecUdaEncoder(FairseqEncoder):
 
         self.final_dropout = nn.Dropout(cfg.final_dropout)
         self.freeze_finetune_updates = cfg.freeze_finetune_updates
+        self.freeze_uda_updates = cfg.freeze_uda_updates
         self.num_updates = 0
 
         targ_d = None
@@ -292,6 +296,7 @@ class Wav2VecUdaEncoder(FairseqEncoder):
         }
 
         ft = self.freeze_finetune_updates <= self.num_updates
+        ft_uda = self.freeze_uda_updates <= self.num_updates
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
             res = self.w2v_model.extract_features(**w2v_args)
@@ -316,6 +321,7 @@ class Wav2VecUdaEncoder(FairseqEncoder):
             "padding_mask": padding_mask,
             "layer_results": res["layer_results"],
             "freeze": not ft,
+            "freeze_uda": not ft_uda,
         }
 
     def reorder_encoder_out(self, encoder_out, new_order):
