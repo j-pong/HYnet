@@ -18,7 +18,7 @@ task:
 
 dataset:
   num_workers: 6
-  max_tokens: 960000
+  max_tokens: 840000
   skip_invalid_size_inputs_valid_test: true
   valid_subset: dev_other
   train_subset: train,ultrain
@@ -30,8 +30,8 @@ distributed_training:
 criterion:
   _name: uda_ctc
   zero_infinity: true
-  proj_uda: true # trial 2: false
-  uda_alpha: 0.0 # trial 1: change alpha
+  proj_uda: false # trial 2: false
+  uda_alpha: 0.5 # trial 1: change alpha
 
 optimization:
   max_update: 160000
