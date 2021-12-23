@@ -32,6 +32,7 @@ criterion:
   zero_infinity: true
   proj_uda: false # trial 2: false
   uda_alpha: 0.5 # trial 1: change alpha
+  viterbi_uda: true
 
 optimization:
   max_update: 160000
