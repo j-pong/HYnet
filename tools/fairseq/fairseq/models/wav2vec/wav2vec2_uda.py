@@ -310,7 +310,9 @@ class Wav2VecUdaEncoder(FairseqEncoder):
 
         x = self.final_dropout(x)
 
-        if self.proj and proj:
+        if (mode == "unlabeled" and self.proj and proj) or not ft_uda:
+            x = self.proj(x)
+        elif mode == "labeled" and self.proj:
             x = self.proj(x)
 
         return {

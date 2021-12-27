@@ -71,6 +71,10 @@ class UdaCtcCriterion(FairseqDataclass):
         default=False,
         metadata={"help": "true if not uda KL-Div loss but uda CTC loss"},
     )
+    viterbi_uda: bool = field(
+        default=False,
+        metadata={"help": "true if not uda KL-Div loss but uda CTC loss"},
+    )
 
 @register_criterion("uda_ctc", dataclass=UdaCtcCriterion)
 class UdaCtcCriterion(FairseqCriterion):
@@ -113,11 +117,28 @@ class UdaCtcCriterion(FairseqCriterion):
         else:
             self.w2l_decoder = None
 
+        if cfg.viterbi_uda:
+            from examples.speech_recognition.w2l_decoder import W2lViterbiDecoder
+            dec_args = Namespace()
+            dec_args.nbest = 1
+            dec_args.criterion = "ctc"
+            dec_args.beam = 50
+            dec_args.beam_size_token = min(50, len(task.target_dictionary))
+            dec_args.beam_threshold = min(50, len(task.target_dictionary))
+            dec_args.word_score = -1
+            dec_args.unk_weight = -math.inf
+            dec_args.sil_weight = 0
+            dec_args.labels = "ltr"
+
+            self.viterbi_decoder = W2lViterbiDecoder(dec_args, task.target_dictionary)
+        else:
+            self.viterbi_decoder = None
+
         self.zero_infinity = cfg.zero_infinity
         self.sentence_avg = cfg.sentence_avg
 
         self.uda_alpha = cfg.uda_alpha
-        self.proj_uda = cfg.proj_uda
+        self.proj_uda = True if self.viterbi_decoder is not None else cfg.proj_uda
 
     def forward(self, model, sample, reduce=True):
         if "mode" not in sample["net_input"]:
@@ -175,33 +196,72 @@ class UdaCtcCriterion(FairseqCriterion):
             loss = ctc_loss
             sample_size = ctc_sample_size
 
+        # uda consistency training for unlabeled dataset
         elif sample["net_input"]["mode"] == "unlabeled":
+            # set logging output elements to default 0
             ctc_loss = torch.tensor(0)
             ctc_ntokens = 0
             ctc_sample_size = 0
             ctc_nsentences = 0
-            
-            model.w2v_encoder.apply_mask = False
-            net_output = model(proj=self.proj_uda, **sample["net_input"])
+
+            # forward original input with no gradient path
+            with torch.no_grad():
+                model.w2v_encoder.apply_mask = False
+                net_output = model(proj=self.proj_uda, **sample["net_input"])
+
+            # forward perturbed input
             model.w2v_encoder.apply_mask = True
             ptb_net_output = model(proj=self.proj_uda, **sample["net_input"])
 
-
+            # get log softmax probability
             lprobs = model.get_normalized_probs(
                 net_output, log_probs=True
             ).contiguous()  # (T, B, C) from the encoder
-
             ptb_lprobs = model.get_normalized_probs(
                 ptb_net_output, log_probs=True
             ).contiguous()  # (T, B, C) from the encoder
 
+            # if viterbi_uda argument is true, then targets for consistency training are set to
+            # decoded outputs (pseudo-label) through viterbi decoding algorithm
+            if self.viterbi_decoder:
+                device = lprobs.device
+                lprobs_t = lprobs.transpose(0, 1).float().contiguous().cpu()
+                decoded_batch = []
+
+                for lp in lprobs_t:
+                    lp = lp.unsqueeze(0)
+                    decoded = self.viterbi_decoder.decode(lp)
+                    decoded = decoded[0][0]
+                    decoded_batch.append(decoded["tokens"])
+                decoded_flat = torch.cat(decoded_batch).to(device)
+
+            # use KL-divergence for consistency regularization in hidden space,
+            # or CTC for consistency regularization target space
             with torch.backends.cudnn.flags(enabled=False):
-                uda_loss = F.kl_div(
-                    ptb_lprobs,
-                    lprobs,
-                    reduction="sum",
-                    log_target=True,
-                )
+                if not self.viterbi_decoder:
+                    uda_loss = F.kl_div(
+                        ptb_lprobs,
+                        lprobs,
+                        reduction="sum",
+                        log_target=True,
+                    )
+                else:
+                    if "src_lengths" in sample["net_input"]:
+                        input_lengths = sample["net_input"]["src_lengths"]
+                    else:
+                        input_lengths = ptb_lprobs.new_full(
+                            (ptb_lprobs.size(1),), ptb_lprobs.size(0), dtype=torch.long
+                        )
+                    target_lengths = torch.tensor([len(decoded_batch[i]) for i in range(len(decoded_batch))]).to(device)
+                    uda_loss = F.ctc_loss(
+                        ptb_lprobs,
+                        decoded_flat,
+                        input_lengths,
+                        target_lengths,
+                        blank=self.blank_idx,
+                        reduction="sum",
+                        zero_infinity=self.zero_infinity,
+                    )
                 uda_loss = self.uda_alpha * uda_loss
             if net_output["freeze"] or net_output["freeze_uda"]:
                 uda_loss = uda_loss*0
