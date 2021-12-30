@@ -249,19 +249,22 @@ class UdaCtcCriterion(FairseqCriterion):
                     
                     self.off_model.w2v_encoder.apply_mask = False
                     net_output = self.off_model(proj=self.proj_uda, **sample["net_input"])
+                    # get log softmax probability
+                    lprobs = self.off_model.get_normalized_probs(
+                        net_output, log_probs=True
+                    ).contiguous()  # (T, B, C) from the encoder
             else:
                 with torch.no_grad():
                     model.w2v_encoder.apply_mask = False
                     net_output = model(proj=self.proj_uda, **sample["net_input"])
+                    # get log softmax probability
+                    lprobs = model.get_normalized_probs(
+                        net_output, log_probs=True
+                    ).contiguous()  # (T, B, C) from the encoder
 
             # forward perturbed input
             model.w2v_encoder.apply_mask = True
             ptb_net_output = model(proj=self.proj_uda, **sample["net_input"])
-
-            # get log softmax probability
-            lprobs = model.get_normalized_probs(
-                net_output, log_probs=True
-            ).contiguous()  # (T, B, C) from the encoder
             ptb_lprobs = model.get_normalized_probs(
                 ptb_net_output, log_probs=True
             ).contiguous()  # (T, B, C) from the encoder
@@ -308,7 +311,7 @@ class UdaCtcCriterion(FairseqCriterion):
                         zero_infinity=self.zero_infinity,
                     )
                 uda_loss = self.uda_alpha * uda_loss
-            if net_output["freeze"] or net_output["freeze_uda"]:
+            if ptb_net_output["freeze"] or ptb_net_output["freeze_uda"]:
                 uda_loss = uda_loss*0
 
             uda_sample_size = len(net_output["encoder_out"])
