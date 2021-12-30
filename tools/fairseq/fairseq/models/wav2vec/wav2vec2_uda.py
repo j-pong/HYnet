@@ -214,6 +214,8 @@ class Wav2VecUDA(BaseFairseqModel):
 class Wav2VecUdaEncoder(FairseqEncoder):
     def __init__(self, cfg: Wav2Vec2AsrConfig, output_size=None):
         self.apply_mask = cfg.apply_mask
+        self.cfg = cfg
+        self.output_size = output_size
 
         arg_overrides = {
             "dropout": cfg.dropout,

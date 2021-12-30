@@ -33,10 +33,12 @@ criterion:
   proj_uda: false # trial 2: false
   uda_alpha: 0.5 # trial 1: change alpha
   viterbi_uda: true
+  apply_mpl: true
+  mpl_alpha: 0.1
 
 optimization:
   max_update: 160000
-  lr: [0.00002]
+  lr: [0.00003]
   sentence_avg: true
   update_freq: [6]
 
