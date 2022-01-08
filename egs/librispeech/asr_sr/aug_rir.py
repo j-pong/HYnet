@@ -11,13 +11,15 @@ import gzip
 start = time.time() 
 math.factorial(100000) 
 
+
+if not os.path.isdir("/DB/LibriSpeech/LibriSpeech/RIR"):
+    print("Download RIR file")
+    print("RIR is in ASML03.. ^^*")
+    exit()
+    
 # make "aug_ultrain.tsv" in train_aug_ul860 folder
 if not os.path.isdir("./data/fairseq/train_aug_ul860"):
     os.makedirs("./data/fairseq/train_aug_ul860")
-
-if not os.path.isdir("./data/RIR"):
-    print("Download RIR file")
-    exit()
 
 with open("./data/fairseq/train_l100_ul860/ultrain.tsv" , "r") as f:
     root_dir = f.readline().strip()
@@ -26,7 +28,7 @@ with open("./data/fairseq/train_l100_ul860/ultrain.tsv" , "r") as f:
     with open("./data/fairseq/train_aug_ul860/aug_ultrain.tsv", 'w') as aug_f: 
         aug_f.write(save_root_dir+'\n')
 
-        with open("./data/RIR/RIRlist.txt", 'r') as aug:      
+        with open("/DB/LibriSpeech/LibriSpeech/RIR/RIRlist.txt", 'r') as aug:      
             lines=aug.read().splitlines()
             aug_wavs={} 
 
@@ -44,7 +46,7 @@ with open("./data/fairseq/train_l100_ul860/ultrain.tsv" , "r") as f:
             wav, curr_sample_rate = sf.read(path_or_fp, dtype="float32")             
         
             rir_path=lines[rand_number]
-            y_rir, _ = librosa.load("./data/RIR" + rir_path.lstrip('.'), sr=16000)
+            y_rir, _ = librosa.load("/DB/LibriSpeech/LibriSpeech/RIR" + rir_path.lstrip('.'), sr=16000)
 
             aug_wav = np.convolve(wav, y_rir)
             
