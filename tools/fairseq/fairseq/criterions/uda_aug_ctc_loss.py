@@ -75,19 +75,8 @@ class UdaCtcCriterion(FairseqDataclass):
         default=False,
         metadata={"help": "true if not uda KL-Div loss but uda CTC loss"},
     )
-    apply_mpl: bool = field(
-        default=False,
-        metadata={"help": "true for applying momentum pseudo-labeling"},
-    )
-    mpl_alpha: float = field(
-        default=0.0,
-        metadata={
-            "help": "loss weight for uda consistency loss"
-        },
-    )
 
-
-@register_criterion("uda_ctc", dataclass=UdaCtcCriterion)
+@register_criterion("uda_aug_ctc", dataclass=UdaCtcCriterion)
 class UdaCtcCriterion(FairseqCriterion):
     def __init__(self, cfg: UdaCtcCriterion, task: FairseqTask):
         super().__init__(task)
@@ -150,10 +139,6 @@ class UdaCtcCriterion(FairseqCriterion):
 
         self.uda_alpha = cfg.uda_alpha
         self.proj_uda = True if self.viterbi_decoder is not None else cfg.proj_uda
-        self.apply_mpl = cfg.apply_mpl
-        self.off_model = None
-        self.on_model_tmp = None
-        self.mpl_alpha = cfg.mpl_alpha
 
     def forward(self, model, sample, reduce=True):
         if "mode" not in sample["net_input"]:
@@ -164,7 +149,7 @@ class UdaCtcCriterion(FairseqCriterion):
             uda_sample_size = 0
             uda_ntokens = 0
             uda_nsentences = 0
-
+            
             net_output = model(**sample["net_input"])
 
             lprobs = model.get_normalized_probs(
@@ -220,51 +205,60 @@ class UdaCtcCriterion(FairseqCriterion):
             ctc_nsentences = 0
 
             # forward original input with no gradient path
-            if self.apply_mpl:
-                # Momentum Pseudo-labeling
-                import copy
-                import os
-                from fairseq.models.wav2vec.wav2vec2_uda import Wav2VecUDA, Wav2VecUdaEncoder
-                if self.on_model_tmp is None:
-                    pt_name = "temp" + str(sample["net_input"]["source"].device) + ".pt"
-                    torch.save(model.state_dict(), pt_name)
-                    off_w2v_encoder = Wav2VecUdaEncoder(model.w2v_encoder.cfg, model.w2v_encoder.output_size)
-                    self.on_model_tmp = Wav2VecUDA(model.cfg, off_w2v_encoder).to(torch.device("cuda"))
-                    self.on_model_tmp = self.on_model_tmp.half()
-                    self.on_model_tmp.load_state_dict(torch.load(pt_name))
-                    os.remove(pt_name)
-                    self.on_model_tmp.eval()
-                if self.off_model is None:
-                    self.off_model = self.on_model_tmp
-                self.off_model.eval()
+            with torch.no_grad():
+                net_output = model(**sample["net_input"])
 
-                updated_flag = False
-                with torch.no_grad():
-                    for off_p, on_p_tmp, on_p in zip(self.off_model.parameters(), self.on_model_tmp.parameters(), model.parameters()):
-                        updated = on_p_tmp != on_p
-                        if True in updated:
-                            off_p.copy_(self.mpl_alpha * off_p.data + (1 - self.mpl_alpha) * on_p.data)
-                    if updated_flag:
-                        self.on_model_tmp = None
-                    
-                    self.off_model.w2v_encoder.apply_mask = False
-                    net_output = self.off_model(proj=self.proj_uda, **sample["net_input"])
-                    # get log softmax probability
-                    lprobs = self.off_model.get_normalized_probs(
-                        net_output, log_probs=True
-                    ).contiguous()  # (T, B, C) from the encoder
+            ## wav-level mixup
+            wav_mix = True         
+            raw_wavs = sample["net_input"]['source']
+            device = net_output['encoder_out'].device
+            
+            if wav_mix:                   
+                # Using another wav to wav-level mixup
+                target_weight = torch.eye(len(raw_wavs), dtype=torch.float16, requires_grad=False).to(device) * 0.5
+                other_weight = torch.tensor([[0.5,] * len(raw_wavs)] * len(raw_wavs), dtype=torch.float16, requires_grad=False).to(device)
+                
+                mixup_weight = target_weight + other_weight
+
+                aug_wavs = torch.matmul(mixup_weight.T, raw_wavs)
+                sample["net_input"]['source'] = aug_wavs
             else:
-                with torch.no_grad():
-                    model.w2v_encoder.apply_mask = False
-                    net_output = model(proj=self.proj_uda, **sample["net_input"])
-                    # get log softmax probability
-                    lprobs = model.get_normalized_probs(
-                        net_output, log_probs=True
-                    ).contiguous()  # (T, B, C) from the encoder
+                # RIR augmentation
+                import random
+                import librosa
+                import numpy as np
+                with open("./RIRlist.txt", 'r') as f:    
+                    lines=f.read().splitlines()
+                    aug_wavs=[]
+                    aug_wavs_=[]
+                    for idx in range(len(raw_wavs)):
+                        rand_number = random.randrange(0,60000)
 
+                        rir_path=lines[rand_number]
+                        y_rir, _ = librosa.load("./RIR" + rir_path.lstrip('.'), sr=16000)
+                        y_rir_16 = y_rir.astype(np.float16)
+
+                        raw_wav = raw_wavs[idx].cpu().numpy()
+                        # too slow
+                        aug_wav = np.convolve(raw_wav, y_rir_16)
+                        aug_wavs.append(torch.from_numpy(aug_wav))
+                        aug_wavs_.append(aug_wav)
+            
+            if False:
+                # to save wav file
+                from scipy.io.wavfile import write
+                import numpy as np
+                aug_wav = aug_wavs[0].cpu().numpy()
+                scaled = np.int16(aug_wav/np.max(np.abs(aug_wav))* 32767)
+                write('./aug_wav.wav', 16000, scaled)
+            
             # forward perturbed input
-            model.w2v_encoder.apply_mask = True
-            ptb_net_output = model(proj=self.proj_uda, **sample["net_input"])
+            ptb_net_output = model(**sample["net_input"])
+       
+            # get log softmax probability
+            lprobs = model.get_normalized_probs(
+                net_output, log_probs=True
+            ).contiguous()  # (T, B, C) from the encoder
             ptb_lprobs = model.get_normalized_probs(
                 ptb_net_output, log_probs=True
             ).contiguous()  # (T, B, C) from the encoder
@@ -274,17 +268,14 @@ class UdaCtcCriterion(FairseqCriterion):
             if self.viterbi_decoder:
                 device = lprobs.device
                 lprobs_t = lprobs.transpose(0, 1).float().contiguous().cpu()
-                decoded_batch = []
-
-                for lp in lprobs_t:
-                    lp = lp.unsqueeze(0)
-                    decoded = self.viterbi_decoder.decode(lp)
-                    decoded = decoded[0][0]
-                    decoded_batch.append(decoded["tokens"])
+                               
+                decoded = self.viterbi_decoder.decode(lprobs_t)
+                decoded_batch = [ decoded[idx][0]['tokens'] for idx in range(len(lprobs_t)) ]
                 decoded_flat = torch.cat(decoded_batch).to(device)
-
+                
+                
             # use KL-divergence for consistency regularization in hidden space,
-            # or CTC for consistency regularization in target space
+            # or CTC for consistency regularization target space
             with torch.backends.cudnn.flags(enabled=False):
                 if not self.viterbi_decoder:
                     uda_loss = F.kl_div(
@@ -311,7 +302,7 @@ class UdaCtcCriterion(FairseqCriterion):
                         zero_infinity=self.zero_infinity,
                     )
                 uda_loss = self.uda_alpha * uda_loss
-            if ptb_net_output["freeze"] or ptb_net_output["freeze_uda"]:
+            if net_output["freeze"] or net_output["freeze_uda"]:
                 uda_loss = uda_loss*0
 
             uda_sample_size = len(net_output["encoder_out"])
