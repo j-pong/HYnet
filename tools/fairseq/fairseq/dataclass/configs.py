@@ -447,6 +447,10 @@ class DatasetConfig(FairseqDataclass):
         default="train",
         metadata={"help": "data subset to use for training (e.g. train, valid, test)"},
     )
+    aug_train_subset: str = field(
+        default="aug_train",
+        metadata={"help": "aug_data subset to use for training (e.g. train, valid, test)"},
+    )
     valid_subset: str = field(
         default="valid",
         metadata={

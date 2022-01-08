@@ -26,6 +26,8 @@ from fairseq.nan_detector import NanDetector
 from fairseq.optim import lr_scheduler
 from omegaconf import OmegaConf
 
+import copy
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +51,7 @@ class Trainer(object):
 
         self.cfg = cfg
         self.task = task
+        self.aug_task = copy.deepcopy(task)
 
         # catalog shared parameters
         shared_params = _catalog_shared_params(model)
@@ -612,8 +615,38 @@ class Trainer(object):
             data_buffer_size=self.cfg.dataset.data_buffer_size,
             disable_iterator_cache=disable_iterator_cache,
         )
+        if load_dataset:
+            logger.info("loading aug train data for epoch {}".format(epoch))
+            self.aug_task.load_dataset(
+                self.cfg.dataset.aug_train_subset,
+                epoch=epoch,
+                combine=combine,
+                data_selector=data_selector,
+                tpu=self.tpu,
+            )
+        aug_batch_iterator = self.aug_task.get_batch_iterator(
+            dataset=self.aug_task.dataset(self.cfg.dataset.aug_train_subset),
+            max_tokens=self.cfg.dataset.max_tokens,
+            max_sentences=self.cfg.dataset.batch_size,
+            max_positions=utils.resolve_max_positions(
+                self.aug_task.max_positions(),
+                self.model.max_positions(),
+                self.cfg.dataset.max_tokens,
+            ),
+            ignore_invalid_inputs=True,
+            required_batch_size_multiple=self.cfg.dataset.required_batch_size_multiple,
+            seed=self.cfg.common.seed,
+            num_shards=self.data_parallel_world_size if shard_batch_itr else 1,
+            shard_id=self.data_parallel_rank if shard_batch_itr else 0,
+            num_workers=self.cfg.dataset.num_workers,
+            epoch=epoch,
+            data_buffer_size=self.cfg.dataset.data_buffer_size,
+            disable_iterator_cache=disable_iterator_cache,
+        )
+
         self.reset_dummy_batch(batch_iterator.first_batch)
-        return batch_iterator
+        self.reset_dummy_batch(aug_batch_iterator.first_batch)
+        return batch_iterator, aug_batch_iterator
 
     def get_valid_iterator(
         self,
@@ -672,7 +705,7 @@ class Trainer(object):
         self._dummy_batch = batch
 
     @metrics.aggregate("train")
-    def train_step(self, samples, raise_oom=False):
+    def train_step(self, samples, aug_samples, raise_oom=False):
         """Do forward, backward and parameter update."""
         self._set_seed()
         self.model.train()
@@ -683,9 +716,12 @@ class Trainer(object):
 
         # forward and backward pass
         logging_outputs, sample_size, ooms = [], 0, 0
-        for i, sample in enumerate(samples):  # delayed update loop
-            sample, is_dummy_batch = self._prepare_sample(sample)
+        for i, sample_ in enumerate(zip(samples, aug_samples)):  # delayed update loop
+            sample = sample_[0]
+            aug_sample = sample_[1]
 
+            sample, is_dummy_batch = self._prepare_sample(sample)
+            aug_sample, _ = self._prepare_sample(aug_sample)
             def maybe_no_sync():
                 """
                 Whenever *samples* contains more than one mini-batch, we
@@ -706,6 +742,7 @@ class Trainer(object):
                     # forward and backward
                     loss, sample_size_i, logging_output = self.task.train_step(
                         sample=sample,
+                        aug_sample=aug_sample,
                         model=self.model,
                         criterion=self.criterion,
                         optimizer=self.optimizer,

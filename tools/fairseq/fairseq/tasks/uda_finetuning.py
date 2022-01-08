@@ -353,13 +353,22 @@ class UDAFinetuningTask(FairseqTask):
 
     def load_dataset(self, split: str, task_cfg: FairseqDataclass = None, **kwargs):
         split_temp = split.split(",")
-        if len(split_temp) > 1:
+        if len(split_temp) == 1:
+            semi = False
+            aug = False
+            split = split_temp[0]
+        elif len(split_temp) == 2 and  ('ultrain' in split_temp):
             semi = True
+            aug = False
             l_split = split_temp[0]
             ul_split = split_temp[1]
-        else:
-            semi = False
-            split = split_temp[0]
+        elif len(split_temp) == 2 and  ('aug_ultrain' in split_temp):
+            semi = True
+            aug = True
+            l_split = split_temp[0]
+            aug_ul_split = split_temp[1]
+
+
         data_path = self.cfg.data
         task_cfg = task_cfg or self.cfg
 
@@ -368,7 +377,7 @@ class UDAFinetuningTask(FairseqTask):
             if not hasattr(task_cfg, "autoregressive"):
                 task_cfg.autoregressive = not task_cfg.criterion == "uda_ctc"
 
-        if not semi:
+        if not semi and not aug:
             manifest_path = os.path.join(data_path, "{}.tsv".format(split))
 
             self.datasets[split] = FileAudioDataset(
@@ -413,7 +422,7 @@ class UDAFinetuningTask(FairseqTask):
                     add_to_input=task_cfg.get("autoregressive", False),
                 )
 
-        elif semi:
+        elif semi and not aug:
             l_manifest_path = os.path.join(data_path, "{}.tsv".format(l_split))
             ul_manifest_path = os.path.join(data_path, "{}.tsv".format(ul_split))
 
@@ -481,6 +490,81 @@ class UDAFinetuningTask(FairseqTask):
                 ModalityDatasetItem(
                     "unlabeled",
                     self.ul_split,
+                    None,
+                    None,
+                    None,
+                ),
+            ]
+            self.datasets[split] = MultiModalityDataset(mdsets)
+        
+        elif semi and aug:
+            l_manifest_path = os.path.join(data_path, "{}.tsv".format(l_split))
+            aug_ul_manifest_path = os.path.join(data_path, "{}.tsv".format(aug_ul_split))
+
+            self.l_split = FileAudioDataset(
+                manifest_path=l_manifest_path,
+                sample_rate=task_cfg.get("sample_rate", self.cfg.sample_rate),
+                max_sample_size=self.cfg.max_sample_size,
+                min_sample_size=self.cfg.min_sample_size,
+                pad=task_cfg.labels is not None or task_cfg.enable_padding,
+                normalize=task_cfg.normalize,
+                num_buckets=self.cfg.num_batch_buckets or int(self.cfg.tpu),
+                compute_mask_indices=(self.cfg.precompute_mask_indices or self.cfg.tpu),
+                **self._get_mask_precompute_kwargs(task_cfg),
+            )
+            self.aug_ul_split = FileAudioDataset(
+                manifest_path=aug_ul_manifest_path,
+                sample_rate=task_cfg.get("sample_rate", self.cfg.sample_rate),
+                max_sample_size=self.cfg.max_sample_size,
+                min_sample_size=self.cfg.min_sample_size,
+                pad=task_cfg.labels is not None or task_cfg.enable_padding,
+                normalize=task_cfg.normalize,
+                num_buckets=self.cfg.num_batch_buckets or int(self.cfg.tpu),
+                compute_mask_indices=(self.cfg.precompute_mask_indices or self.cfg.tpu),
+                **self._get_mask_precompute_kwargs(task_cfg),
+            )
+
+            if self.cfg.tpu and task_cfg["mask_channel_prob"] == 0.0:
+                logger.info(
+                    "Pretraining on TPUs may suffer convergence "
+                    "issues when training with `mask_channel_prob` value of "
+                    "0. You may want to set this to a low value close to 0."
+                )
+
+            if task_cfg.labels:
+                label_path = os.path.join(data_path, f"{l_split}.{task_cfg.labels}")
+                skipped_indices = getattr(self.l_split, "skipped_indices", set())
+                with open(label_path, "r") as f:
+                    labels = [line for i, line in enumerate(f) if i not in skipped_indices]
+
+                assert len(labels) == len(self.l_split), (
+                    f"labels length ({len(labels)}) and dataset length "
+                    f"({len(self.l_split)}) do not match"
+                )
+
+                process_label = LabelEncoder(self.target_dictionary)
+
+                self.l_split = AddTargetDataset(
+                    self.l_split,
+                    labels,
+                    pad=self.target_dictionary.pad(),
+                    eos=self.target_dictionary.eos(),
+                    batch_targets=True,
+                    process_label=process_label,
+                    add_to_input=task_cfg.get("autoregressive", False),
+                )
+
+            mdsets = [
+                ModalityDatasetItem(
+                    "labeled",
+                    self.l_split,
+                    None,
+                    None,
+                    None,
+                ),
+                ModalityDatasetItem(
+                    "aug_unlabeled",
+                    self.aug_ul_split,
                     None,
                     None,
                     None,

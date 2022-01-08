@@ -253,18 +253,18 @@ def load_checkpoint(cfg: CheckpointConfig, trainer, **passthrough_args):
     if extra_state is not None and not reset_dataloader:
         # restore iterator from checkpoint
         itr_state = extra_state["train_iterator"]
-        epoch_itr = trainer.get_train_iterator(
+        epoch_itr, aug_epoch_itr = trainer.get_train_iterator(
             epoch=itr_state["epoch"], load_dataset=True, **passthrough_args
         )
         epoch_itr.load_state_dict(itr_state)
     else:
-        epoch_itr = trainer.get_train_iterator(
+        epoch_itr, aug_epoch_itr = trainer.get_train_iterator(
             epoch=1, load_dataset=True, **passthrough_args
         )
 
     trainer.lr_step(epoch_itr.epoch)
 
-    return extra_state, epoch_itr
+    return extra_state, epoch_itr, aug_epoch_itr
 
 
 def load_checkpoint_to_cpu(path, arg_overrides=None, load_on_all_ranks=False):
