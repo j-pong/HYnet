@@ -155,7 +155,7 @@ class UdaCtcCriterion(FairseqCriterion):
         self.on_model_tmp = None
         self.mpl_alpha = cfg.mpl_alpha
 
-    def forward(self, model, sample, reduce=True):
+    def forward(self, model, sample, aug_sample, reduce=True):
         if "mode" not in sample["net_input"]:
             sample["net_input"]["mode"] = "labeled"
 
@@ -213,6 +213,8 @@ class UdaCtcCriterion(FairseqCriterion):
 
         # uda consistency training for unlabeled dataset
         elif sample["net_input"]["mode"] == "unlabeled":
+            assert not False in (aug_sample['id'] == sample['id'])
+
             # set logging output elements to default 0
             ctc_loss = torch.tensor(0)
             ctc_ntokens = 0
@@ -264,7 +266,7 @@ class UdaCtcCriterion(FairseqCriterion):
 
             # forward perturbed input
             model.w2v_encoder.apply_mask = True
-            ptb_net_output = model(proj=self.proj_uda, **sample["net_input"])
+            ptb_net_output = model(proj=self.proj_uda, **aug_sample["net_input"])
             ptb_lprobs = model.get_normalized_probs(
                 ptb_net_output, log_probs=True
             ).contiguous()  # (T, B, C) from the encoder

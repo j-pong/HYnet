@@ -185,14 +185,7 @@ def main(cfg: FairseqConfig) -> None:
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
         
-        epoch_itr = trainer.get_train_iterator(
-            epoch_itr.next_epoch_idx,
-            # sharded data: get train iterator for next epoch
-            load_dataset=task.has_sharded_data("train"),
-            # don't cache epoch iterators for sharded datasets
-            disable_iterator_cache=task.has_sharded_data("train"),
-        )
-        aug_epoch_itr = trainer.get_train_iterator(
+        epoch_itr, aug_epoch_itr = trainer.get_train_iterator(
             epoch_itr.next_epoch_idx,
             # sharded data: get train iterator for next epoch
             load_dataset=task.has_sharded_data("train"),
