@@ -31,7 +31,7 @@ criterion:
   _name: uda_ctc
   zero_infinity: true
   proj_uda: false # trial 2: false
-  uda_alpha: 0.5 # trial 1: change alpha
+  uda_alpha: 1 # trial 1: change alpha
   viterbi_uda: true
   apply_mpl: false
   mpl_alpha: 0.1
