@@ -13,7 +13,9 @@ word_score=-1
 
 . ./path.sh || exit 1;
 . utils/parse_options.sh || exit 1;
-
+#$PWD/../../../tools/fairseq/flashlight/build/kenlm/build/bin/4-gram.bin
 python $PWD/../../../tools/fairseq/examples/speech_recognition/infer.py $data_dir --task audio_pretraining \
---nbest 1 --path $finetuned_model --gen-subset $subset --results-path inference_result --w2l-decoder viterbi \
- --word-score $word_score --sil-weight 0 --criterion ctc --labels ltr --max-tokens 4000000 --post-process letter
+--nbest 1 --path $finetuned_model --gen-subset $subset --results-path inference_result --w2l-decoder kenlm \
+--lm-model $PWD/../../../tools/fairseq/flashlight/build/kenlm/build/bin/4-gram.bin --lm-weight 2.15 \
+--word-score -0.52 --sil-weight 0 --criterion ctc --labels ltr \
+--max-tokens 4000000 --post-process letter --lexicon $PWD/datas/librispeech_lexicon.lst --beam 1500

@@ -41,7 +41,9 @@ egs/*/*/tensorboard
 egs/*/*/wav*
 egs/*/*/models
 egs/*/*/language_models
+egs/*/*/inference_result
 egs/*/*/inference_results
+egs/*/*/decoding_results
 egs/*/*/outputs
 
 # tools related

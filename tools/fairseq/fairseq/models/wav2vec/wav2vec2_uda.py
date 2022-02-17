@@ -207,8 +207,8 @@ class Wav2VecUDA(BaseFairseqModel):
         else:
             return utils.softmax(logits.float(), dim=-1)
 
-    def forward(self, proj=True, **kwargs):
-        x = self.w2v_encoder(proj=proj, **kwargs)
+    def forward(self, proj=True, mode="labeled", **kwargs):
+        x = self.w2v_encoder(proj=proj, mode="labeled", **kwargs)
         return x
 
 class Wav2VecUdaEncoder(FairseqEncoder):

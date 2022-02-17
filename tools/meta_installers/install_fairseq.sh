@@ -1,25 +1,26 @@
 # Dependencies
-sudo apt install libfftw3-dev libopenmpi-dev
-sudo apt install build-essential cmake
-sudo apt install libboost-system-dev libboost-thread-dev libboost-program-options-dev libboost-test-dev libeigen3-dev
-sudo apt install zlib1g-dev libbz2-dev liblzma-dev
-sudo apt install pkg-config
+#sudo apt install libfftw3-dev libopenmpi-dev
+#sudo apt install build-essential cmake
+#sudo apt install libboost-system-dev libboost-thread-dev libboost-program-options-dev libboost-test-dev libeigen3-dev
+#sudo apt install zlib1g-dev libbz2-dev liblzma-dev
+#sudo apt install pkg-config
 
 # activate venv
 source venv/bin/activate
 
 # build fairseq
 cd fairseq
-pip3 install --editable ./
+#pip3 install --editable ./
 
 # Install arrayfire
-wget https://arrayfire.s3.amazonaws.com/3.8.0/ArrayFire-v3.8.0_Linux_x86_64.sh
-sudo chmod -R +777 ./ArrayFire-v3.8.0_Linux_x86_64.sh
-./ArrayFire-v3.8.0_Linux_x86_64.sh
+#wget https://arrayfire.s3.amazonaws.com/3.8.0/ArrayFire-v3.8.0_Linux_x86_64.sh
+#sudo chmod -R +777 ./ArrayFire-v3.8.0_Linux_x86_64.sh
+#./ArrayFire-v3.8.0_Linux_x86_64.sh
 
 # Install flashlight
 # Piz install mkl before excute above lines
-git clone https://github.com/flashlight/flashlight.git && cd flashlight
+#git clone https://github.com/flashlight/flashlight.git && cd flashlight
+cd flashlight
 mkdir -p build && cd build
 
 ## install kenlm
