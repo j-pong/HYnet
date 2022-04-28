@@ -18,6 +18,7 @@ class AddTargetDataset(BaseWrapperDataset):
         batch_targets,
         process_label=None,
         add_to_input=False,
+        aug_labels=None,
     ):
         super().__init__(dataset)
         self.labels = labels
@@ -26,6 +27,7 @@ class AddTargetDataset(BaseWrapperDataset):
         self.eos = eos
         self.process_label = process_label
         self.add_to_input = add_to_input
+        self.aug_labels = aug_labels
 
     def get_label(self, index):
         return (
@@ -33,10 +35,17 @@ class AddTargetDataset(BaseWrapperDataset):
             if self.process_label is None
             else self.process_label(self.labels[index])
         )
-
+    def get_aug_label(self, index):
+        return (
+            self.aug_labels[index]
+        )        
     def __getitem__(self, index):
         item = self.dataset[index]
         item["label"] = self.get_label(index)
+        if self.aug_labels:
+            item["aug_label"] = self.get_aug_label(index)
+        else:
+            item["aug_label"] = None
         return item
 
     def size(self, index):
@@ -50,6 +59,7 @@ class AddTargetDataset(BaseWrapperDataset):
             return collated
         indices = set(collated["id"].tolist())
         target = [s["label"] for s in samples if s["id"] in indices]
+        aug_target = [s["aug_label"] for s in samples if s["id"] in indices]
 
         if self.batch_targets:
             collated["target_lengths"] = torch.LongTensor([len(t) for t in target])
@@ -59,7 +69,7 @@ class AddTargetDataset(BaseWrapperDataset):
             collated["ntokens"] = sum([len(t) for t in target])
 
         collated["target"] = target
-
+        collated["aug_target"] = aug_target
         if self.add_to_input:
             eos = target.new_full((target.size(0), 1), self.eos)
             collated["target"] = torch.cat([target, eos], dim=-1).long()

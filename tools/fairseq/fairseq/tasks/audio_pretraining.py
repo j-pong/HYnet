@@ -235,27 +235,53 @@ class AudioPretrainingTask(FairseqTask):
 
         if task_cfg.labels:
             label_path = os.path.join(data_path, f"{split}.{task_cfg.labels}")
-            skipped_indices = getattr(self.datasets[split], "skipped_indices", set())
-            with open(label_path, "r") as f:
-                labels = [line for i, line in enumerate(f) if i not in skipped_indices]
+            aug_label_path = os.path.join(data_path, f"aug_{split}.{task_cfg.labels}")
+            if not os.path.exists(aug_label_path):
+                skipped_indices = getattr(self.datasets[split], "skipped_indices", set())
+                with open(label_path, "r") as f:
+                    labels = [line for i, line in enumerate(f) if i not in skipped_indices]
 
-            assert len(labels) == len(self.datasets[split]), (
-                f"labels length ({len(labels)}) and dataset length "
-                f"({len(self.datasets[split])}) do not match"
-            )
+                assert len(labels) == len(self.datasets[split]), (
+                    f"labels length ({len(labels)}) and dataset length "
+                    f"({len(self.datasets[split])}) do not match"
+                )
 
-            process_label = LabelEncoder(self.target_dictionary)
+                process_label = LabelEncoder(self.target_dictionary)
 
-            self.datasets[split] = AddTargetDataset(
-                self.datasets[split],
-                labels,
-                pad=self.target_dictionary.pad(),
-                eos=self.target_dictionary.eos(),
-                batch_targets=True,
-                process_label=process_label,
-                add_to_input=task_cfg.get("autoregressive", False),
-            )
+                self.datasets[split] = AddTargetDataset(
+                    self.datasets[split],
+                    labels,
+                    pad=self.target_dictionary.pad(),
+                    eos=self.target_dictionary.eos(),
+                    batch_targets=True,
+                    process_label=process_label,
+                    add_to_input=task_cfg.get("autoregressive", False),
+                )
+            else:
+                skipped_indices = getattr(self.datasets[split], "skipped_indices", set())
+                with open(label_path, "r") as f:
+                    labels = [line for i, line in enumerate(f) if i not in skipped_indices]
+                with open(aug_label_path, "r") as f:
+                    aug_labels = [ 0 if not line.find("rvb0") else 1 for i, line in enumerate(f)]
 
+                assert len(labels) == len(self.datasets[split]), (
+                    f"labels length ({len(labels)}) and dataset length "
+                    f"({len(self.datasets[split])}) do not match"
+                )
+
+                process_label = LabelEncoder(self.target_dictionary)
+
+                self.datasets[split] = AddTargetDataset(
+                    self.datasets[split],
+                    labels,
+                    pad=self.target_dictionary.pad(),
+                    eos=self.target_dictionary.eos(),
+                    batch_targets=True,
+                    process_label=process_label,
+                    add_to_input=task_cfg.get("autoregressive", False),
+                    aug_labels=aug_labels,
+                )
+                a = []
     @property
     def source_dictionary(self):
         return None

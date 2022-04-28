@@ -372,6 +372,8 @@ class Wav2VecEncoder(FairseqEncoder):
 
         if output_size is not None:
             targ_d = output_size
+            # for aug-expand
+            targ_d = targ_d * 2
         elif getattr(cfg, "decoder_embed_dim", d) != d:
             targ_d = cfg.decoder_embed_dim
 
