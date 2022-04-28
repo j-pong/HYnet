@@ -127,7 +127,7 @@ class CtcCriterion(FairseqCriterion):
             sample["target"] != self.eos_idx
         )
 
-        if sample["aug_target"]:
+        if model.training:
             aug_target = torch.tensor(sample["aug_target"], device=sample["target"].device)
             sample["target"] = sample["target"] * 2 + aug_target.view(sample["target"].size(0), -1)
         else:
@@ -150,7 +150,7 @@ class CtcCriterion(FairseqCriterion):
                 zero_infinity=self.zero_infinity,
             )
         
-        if sample["aug_target"]:
+        if model.training:
             sample["target"] = sample["target"] - aug_target.view(sample["target"].size(0), -1)
             sample["target"] = sample["target"] // 2 
         else:
