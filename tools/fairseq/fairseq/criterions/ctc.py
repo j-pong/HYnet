@@ -127,11 +127,13 @@ class CtcCriterion(FairseqCriterion):
             sample["target"] != self.eos_idx
         )
 
+        flag = (sample["target"] > 4 )
+        flag_ = (sample["target"] <= 4 )
         if model.training:
             aug_target = torch.tensor(sample["aug_target"], device=sample["target"].device)
-            sample["target"] = sample["target"] * 2 + aug_target.view(sample["target"].size(0), -1)
+            sample["target"] = sample["target"] * flag * 2 + sample["target"] * flag_  + flag * aug_target.view(sample["target"].size(0), -1)
         else:
-            sample["target"] = sample["target"] * 2 
+            sample["target"] = sample["target"] * flag * 2 + sample["target"] * flag_
         targets_flat = sample["target"].masked_select(pad_mask)
                 
         if "target_lengths" in sample:
@@ -151,10 +153,10 @@ class CtcCriterion(FairseqCriterion):
             )
         
         if model.training:
-            sample["target"] = sample["target"] - aug_target.view(sample["target"].size(0), -1)
-            sample["target"] = sample["target"] // 2 
+            sample["target"] = sample["target"] - flag * aug_target.view(sample["target"].size(0), -1)
+            sample["target"] = sample["target"] * flag // 2  + sample["target"] * flag_
         else:
-            sample["target"] = sample["target"] // 2 
+            sample["target"] = sample["target"] * flag // 2  + sample["target"] * flag_ 
         
         ntokens = (
             sample["ntokens"] if "ntokens" in sample else target_lengths.sum().item()
