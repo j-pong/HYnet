@@ -187,11 +187,11 @@ class CtcCriterion(FairseqCriterion):
                     input_lengths,
                 ):
                     axis_1 = lp[:, 0]
-                    axis_1 = axis_1.unsqueeze(1)
+                    axis_1 = axis_1.unsqueeze(1) 
 
-                    lp = lp[:, 1::2] + lp[:, 2::2]
+                    lp = (lp[:, 1::2] + lp[:, 2::2]) / 2
                     lp = torch.cat((axis_1, lp), 1)
-                    
+
                     lp = lp[:inp_l].unsqueeze(0)
 
                     decoded = None
