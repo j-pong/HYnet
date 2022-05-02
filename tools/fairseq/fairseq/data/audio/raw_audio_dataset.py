@@ -272,24 +272,39 @@ class FileAudioDataset(RawAudioDataset):
         skipped = 0
         self.fnames = []
         sizes = []
+        aug_label = []
         self.skipped_indices = set()
 
         with open(manifest_path, "r") as f:
             self.root_dir = f.readline().strip()
             for i, line in enumerate(f):
                 items = line.strip().split("\t")
-                assert len(items) == 2, line
-                sz = int(items[1])
-                if min_sample_size is not None and sz < min_sample_size:
-                    skipped += 1
-                    self.skipped_indices.add(i)
-                    continue
-                self.fnames.append(items[0])
-                sizes.append(sz)
+                if len(items) == 2:
+                    assert len(items) == 2, line
+                    sz = int(items[1])
+                    if min_sample_size is not None and sz < min_sample_size:
+                        skipped += 1
+                        self.skipped_indices.add(i)
+                        continue
+                    self.fnames.append(items[0])
+                    sizes.append(sz)
+
+                elif len(items) == 3:
+                    # for augment-target 
+                    assert len(items) == 3, line
+                    sz = int(items[1])
+                    if min_sample_size is not None and sz < min_sample_size:
+                        skipped += 1
+                        self.skipped_indices.add(i)
+                        continue
+                    self.fnames.append(items[0])
+                    sizes.append(sz)
+                    aug_label.append(items[2])
+
         logger.info(f"loaded {len(self.fnames)}, skipped {skipped} samples")
 
         self.sizes = np.array(sizes, dtype=np.int64)
-
+        self.aug_label = np.array(aug_label)
         try:
             import pyarrow
 

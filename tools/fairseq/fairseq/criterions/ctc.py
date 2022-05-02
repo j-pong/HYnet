@@ -127,13 +127,11 @@ class CtcCriterion(FairseqCriterion):
             sample["target"] != self.eos_idx
         )
 
-        flag = (sample["target"] > 4 )
-        flag_ = (sample["target"] <= 4 )
         if model.training:
             aug_target = torch.tensor(sample["aug_target"], device=sample["target"].device)
-            sample["target"] = sample["target"] * flag * 2 + sample["target"] * flag_  + flag * aug_target.view(sample["target"].size(0), -1)
+            sample["target"] = sample["target"]  * 2 - aug_target.view(sample["target"].size(0), -1)
         else:
-            sample["target"] = sample["target"] * flag * 2 + sample["target"] * flag_
+            sample["target"] = sample["target"]  * 2 
         targets_flat = sample["target"].masked_select(pad_mask)
                 
         if "target_lengths" in sample:
@@ -153,10 +151,10 @@ class CtcCriterion(FairseqCriterion):
             )
         
         if model.training:
-            sample["target"] = sample["target"] - flag * aug_target.view(sample["target"].size(0), -1)
-            sample["target"] = sample["target"] * flag // 2  + sample["target"] * flag_
+            sample["target"] = sample["target"] +  aug_target.view(sample["target"].size(0), -1)
+            sample["target"] = sample["target"]  // 2
         else:
-            sample["target"] = sample["target"] * flag // 2  + sample["target"] * flag_ 
+            sample["target"] = sample["target"]  // 2 
         
         ntokens = (
             sample["ntokens"] if "ntokens" in sample else target_lengths.sum().item()
@@ -188,7 +186,12 @@ class CtcCriterion(FairseqCriterion):
                     else sample["target"],
                     input_lengths,
                 ):
-                    lp = lp[:, ::2] + lp[:, 1::2]
+                    axis_1 = lp[:, 0]
+                    axis_1 = axis_1.unsqueeze(1)
+
+                    lp = lp[:, 1::2] + lp[:, 2::2]
+                    lp = torch.cat((axis_1, lp), 1)
+                    
                     lp = lp[:inp_l].unsqueeze(0)
 
                     decoded = None
