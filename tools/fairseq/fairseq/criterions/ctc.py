@@ -127,11 +127,12 @@ class CtcCriterion(FairseqCriterion):
             sample["target"] != self.eos_idx
         )
         targets_flat = sample["target"].masked_select(pad_mask)
-        if "target_lengths" in sample:
-            target_lengths = sample["target_lengths"]
-        else:
-            target_lengths = pad_mask.sum(-1)
-
+        # if "target_lengths" in sample:
+        #     target_lengths = sample["target_lengths"]
+        # else:
+        #     target_lengths = pad_mask.sum(-1)
+        target_lengths = pad_mask.sum(-1)
+        
         with torch.backends.cudnn.flags(enabled=False):
             loss = F.ctc_loss(
                 lprobs,
