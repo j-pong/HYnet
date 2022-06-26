@@ -20,8 +20,8 @@ math.factorial(100000)
 
 def add_args(parser):
     parser.add_argument("--rir_dir", default="/DB/LibriSpeech/LibriSpeech/RIR")
-    parser.add_argument("--train_clean_100", default="/home/juseok/workspace/HYnet/egs/librispeech/asr_sr/data/fairseq/train_clean_100")
-    parser.add_argument("--train_aug_100", default="/home/juseok/workspace/HYnet/egs/librispeech/asr_sr/data/fairseq/train_aug100_half")
+    parser.add_argument("--train_clean_100", default="./data/fairseq/train_clean_100")
+    parser.add_argument("--train_aug_100", default="./data/fairseq/train_aug100_half")
     parser.add_argument("--train_aug_DB", default="/DB/LibriSpeech/LibriSpeech/train_aug100_half")
     parser.add_argument("--aug_ratio", type=int, default=50, help="5, 10, 25, 50 100")
     return parser
