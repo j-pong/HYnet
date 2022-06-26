@@ -35,3 +35,7 @@ python mk_augment_data/aug_100h_rir_ratio.py --train_aug_100 ./data/fairseq/trai
 ```
 
 
+## 3. fine-tuning
+```bash
+./w2v_ctc_finetune.sh --config_dir $PWD/conf/tuning --config_name ft_w2v_large_960h_asml3 --pretrained_model $PWD/models/public_fairseq_models/960h_pretrained_no_finetuned/libri960_big.pt --data_dir $PWD/data/fairseq/NST1_aug_quarter_ft_l100_pl860_viterbi/
+```
