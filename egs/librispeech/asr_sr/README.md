@@ -2,13 +2,11 @@
 Conventional / End-to-end / Representation Learning Combined Toolkit
 
 ## Make Augment dataset
-### Code in mk_augment_data
+### 
 ```bash
 # simple rir augmentation using np.convolve
 # If you want to augment using kaldi-based augmentation using musan-dataset, contact JS
 python mk_augment_data/aug_100h_rir_ratio.py --train_aug_100 ./data/fairseq/train_aug100_half --train_aug_DB /DB/LibriSpeech/LibriSpeech/train_aug100_half --aug_ratio 50   
-
-# 
 ```
 
 ### Essentials
