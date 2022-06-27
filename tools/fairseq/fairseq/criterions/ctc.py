@@ -126,18 +126,9 @@ class CtcCriterion(FairseqCriterion):
         pad_mask = (sample["target"] != self.pad_idx) & (
             sample["target"] != self.eos_idx
         )
-
-        if model.training:
-            aug_target = torch.tensor(sample["aug_target"], device=sample["target"].device)
-            sample["target"] = sample["target"]  * 2 - aug_target.view(sample["target"].size(0), -1)
-        else:
-            sample["target"] = sample["target"]  * 2 
         targets_flat = sample["target"].masked_select(pad_mask)
                 
-        if "target_lengths" in sample:
-            target_lengths = sample["target_lengths"]
-        else:
-            target_lengths = pad_mask.sum(-1)
+        target_lengths = pad_mask.sum(-1)
 
         with torch.backends.cudnn.flags(enabled=False):
             loss = F.ctc_loss(
@@ -149,12 +140,6 @@ class CtcCriterion(FairseqCriterion):
                 reduction="sum",
                 zero_infinity=self.zero_infinity,
             )
-        
-        if model.training:
-            sample["target"] = sample["target"] +  aug_target.view(sample["target"].size(0), -1)
-            sample["target"] = sample["target"]  // 2
-        else:
-            sample["target"] = sample["target"]  // 2 
         
         ntokens = (
             sample["ntokens"] if "ntokens" in sample else target_lengths.sum().item()
@@ -186,16 +171,6 @@ class CtcCriterion(FairseqCriterion):
                     else sample["target"],
                     input_lengths,
                 ):
-                    blank_tok = lp.argmax(dim=-1)
-                    flag = (blank_tok != 0)
-                    flag = flag.unsqueeze(0)
-
-                    axis_1 = lp[:, 0]
-                    axis_1 = axis_1.unsqueeze(1) 
-
-                    lp = (lp[:, 1::2] + lp[:, 2::2])
-                    # lp = torch.cat((axis_1, lp), 1)
-
                     lp = lp[:inp_l].unsqueeze(0)
 
                     decoded = None
