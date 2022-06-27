@@ -192,9 +192,7 @@ class CtcCriterion(FairseqCriterion):
                     targ_units = self.task.target_dictionary.string(targ)
                     targ_units_arr = targ.tolist()
                     
-                    toks_ = lp.argmax(dim=-1) + 1
-                    toks_ = toks_ * flag
-                    toks = toks_.unique_consecutive()
+                    toks = lp.argmax(dim=-1).unique_consecutive()
                     pred_units_arr = toks[toks != self.blank_idx].tolist()
 
                     c_err += editdistance.eval(pred_units_arr, targ_units_arr)
