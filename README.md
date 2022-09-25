@@ -4,11 +4,12 @@ Conventional / End-to-end / Representation Learning Combined Toolkit
 ## Installation Guide for SR
 
 ### Essentials
-- CUDA VERSION >= 11.0
+- CUDA VERSION == 11.0
+- docker image = nvidia/cuda:11.0.3-cudnn8-devel-ubuntu20.04
 
 ### 0. Install pre-requisites
 ```bash
-sudo apt-get install zlib1g-dev automake autoconf sox gfortran libtool subversion python2.7
+sudo apt-get install zlib1g-dev automake autoconf sox gfortran libtool subversion python2.7 unzip wget python3 git
 ```
 
 ### 1. Installaion of kaldi for speech
@@ -30,13 +31,13 @@ make -j 28
 
 ### 2. Installaion of espnet for input pipelines
 ```bash
-cd ../../tools
+cd /path/to/HYnet/tools
 ./meta_installers/install_espnet.sh
 ```
 
 ### 3. Installaion of hynet for customizing egs
 ```bash
-cd tools
+cd /path/to/HYnet/tools
 ./meta_installers/install_hynet.sh
 ```
 
@@ -45,6 +46,11 @@ cd tools
 cd tools
 ./meta_installers/install_fairseq.sh
 ```
+
+### 5. Install pre-requisite modules
+cd /path/to/HYnet/egs/librispeech/asr_sr
+. ./path.sh
+pip install editdistance
 
 ## Run examples
 for argument usage, check defaults in each files
