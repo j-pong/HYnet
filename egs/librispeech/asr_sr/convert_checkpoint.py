@@ -1,14 +1,9 @@
 from fairseq import checkpoint_utils, utils
 
-state = checkpoint_utils.load_checkpoint_to_cpu("/home/Workspace/HYnet/egs/librispeech/asr_sr/models/SR_checkpoint_save.pt")
+state = checkpoint_utils.load_checkpoint_to_cpu("/home/Workspace/HYnet/egs/librispeech/asr_sr/models/SR_checkpoint.pt")
 sm = state['cfg']['model']
 st = state['cfg']['task']
 sc = state['cfg']['criterion']
-
-print(sm)
-print(st)
-print(sc)
-exit()
 
 state_org = checkpoint_utils.load_checkpoint_to_cpu("/home/Workspace/HYnet/egs/librispeech/asr_sr/models/checkpoint_best.pt")
 sm_org = state_org['cfg']['model']

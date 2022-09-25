@@ -20,6 +20,7 @@ sudo chmod -R +777 ./ArrayFire-v3.8.0_Linux_x86_64.sh
 # Install flashlight
 # Piz install mkl before excute above lines
 git clone https://github.com/flashlight/flashlight.git && cd flashlight
+git reset --hard 03c51129f320eed7ff0d416f7e8291a029439039
 mkdir -p build && cd build
 
 ## install kenlm

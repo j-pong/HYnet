@@ -48,9 +48,11 @@ cd tools
 ```
 
 ### 5. Install pre-requisite modules
+```bash
 cd /path/to/HYnet/egs/librispeech/asr_sr
 . ./path.sh
 pip install editdistance
+```
 
 ## Run examples
 for argument usage, check defaults in each files
