@@ -54,6 +54,29 @@ cd /path/to/HYnet/egs/librispeech/asr_sr
 pip install editdistance
 ```
 
+## Bugfix
+
+ctc_segmentation/ctc_segmentation_dyn.pyx error
+- Remove ctc_segmentation at tools/espnet/setup.py that is included in requirements
+
+ctc install error with pip version
+```bash
+pip install pip==19; pip install warpctc-pytorch==0.2.1+torch16.cuda102
+```
+
+matplotlib version error
+- Remove matplotlib at tools/espnet/setup.py that is included in requirements
+- OR sudo apt-get install libfreetype-dev
+
+No CMAKE_CUDA_COMPILER could be found
+```bash
+export PATH=/usr/local/cuda-11.0/bin${PATH:+:${PATH}}
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+```
+
+Could NOT find NCCL
+- https://docs.nvidia.com/deeplearning/nccl/install-guide/index.html
+
 ## Run examples
 for argument usage, check defaults in each files
 
@@ -98,25 +121,22 @@ cd HYnet/egs/librispeech/asr_sr
 . w2v_s2s_finetune_semi.sh
 ```
 
-## Bugfix
+## Generate pseudo-labels
+for argument usage, check defaults in each files
 
-ctc_segmentation/ctc_segmentation_dyn.pyx error
-- Remove ctc_segmentation at tools/espnet/setup.py that is included in requirements
-
-ctc install error with pip version
+- Audio data need to be in /path/to/audios
 ```bash
-pip install pip==19; pip install warpctc-pytorch==0.2.1+torch16.cuda102
+cd HYnet/egs/librispeech/asr_sr
+. generate_pseudo_data.sh --audio_data_dir /path/to/audios --audio_extension ext(e.g., flac) \ 
+--data_dir /audio_data/will/be/generated/here --pl_data_dir /pl_data/will/be/generated/here --finetuned_model /path/to/model.pt
 ```
 
-matplotlib version error
-- Remove matplotlib at tools/espnet/setup.py that is included in requirements
-- OR sudo apt-get install libfreetype-dev
+## Generate duration files
+for argument usage, check defaults in each files
 
-No CMAKE_CUDA_COMPILER could be found
+- Audio & label data need to be in /path/to/audios in LibriSpeech data format
 ```bash
-export PATH=/usr/local/cuda-11.0/bin${PATH:+:${PATH}}
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+cd HYnet/egs/librispeech/asr_sr
+. generation_duration.sh --audio_data_dir /path/to/audios --audio_extension ext(e.g., flac) \ 
+--data_dir /manifest_data/will/be/generated/here --finetuned_model /path/to/model.pt
 ```
-
-Could NOT find NCCL
-- https://docs.nvidia.com/deeplearning/nccl/install-guide/index.html
