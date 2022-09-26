@@ -122,7 +122,7 @@ cd HYnet/egs/librispeech/asr_sr
 ```
 
 ## Generate pseudo-labels
-for argument usage, check defaults in each files
+for argument usage, check defaults in each files \
 make sure dict.ltr.txt is in /path/to/asr_sr/datas
 
 - Audio data need to be in /path/to/audios
@@ -133,7 +133,7 @@ cd HYnet/egs/librispeech/asr_sr
 ```
 
 ## Generate duration files
-for argument usage, check defaults in each files
+for argument usage, check defaults in each files \
 make sure dict.ltr.txt is in /path/to/asr_sr/datas
 
 - Audio & label data need to be in /path/to/audios in LibriSpeech data format
