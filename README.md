@@ -71,7 +71,7 @@ matplotlib version error
 
 No CMAKE_CUDA_COMPILER could be found
 ```bash
-export PATH=/usr/local/cuda-11.0/bin${PATH:+:${PATH}}
+export PATH=/usr/local/cuda-11.3/bin${PATH:+:${PATH}}
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 ```
 

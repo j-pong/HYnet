@@ -77,7 +77,7 @@ tools/ArrayFire*
 tools/fairseq/flashlight
 tools/fairseq/arrayfire
 tools/fairseq/ArrayFire*
-tools/installers
+tools/installers/install*
 
 # gpgkey
 docker/gpgkey
