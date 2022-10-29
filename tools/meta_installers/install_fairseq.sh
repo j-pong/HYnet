@@ -9,7 +9,7 @@ sudo apt install pkg-config
 source venv/bin/activate
 
 # build fairseq
-cd fairseq
+https://github.com/facebookresearch/fairseq.git
 pip3 install --editable ./
 
 # Install arrayfire

@@ -11,7 +11,7 @@ cp -r espnet/tools/* ./
 . ./setup_anaconda.sh venv base 3.8
 
 # We needs just pyotrch if needs more dependency then install like this
-make TH_VERSION=1.7.1 CHAINER_VERSION=6.0.0 pytorch.done
+make TH_VERSION=1.12.1 CHAINER_VERSION=6.0.0 CUDA_VERSION=11.3 pytorch.done
 
 # The espent editable import to HYnet
 . ./activate_python.sh && cd espnet/tools && python3 -m pip install -e "..[recipe]"
