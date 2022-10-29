@@ -81,6 +81,3 @@ tools/installers
 
 # gpgkey
 docker/gpgkey
-
-# Dockerfile
-docker/Dockerfile
