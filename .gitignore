@@ -79,6 +79,7 @@ tools/fairseq/arrayfire
 tools/fairseq/ArrayFire*
 tools/installers/install*
 tools/Miniconda3-latest-Linux-x86_64.sh
+tools/build
 
 # gpgkey
 docker/gpgkey
