@@ -29,4 +29,5 @@ inference_config=conf/decode_asr.yaml
     --test_sets "${test_sets}" \
     --bpe_train_text "data/${train_set}/text" "$@" \
     --lm_train_text "data/${train_set}/text" \
+    --feats_normalize "" \
     --local_data_opts "--stage 2 --stop_stage 3"
