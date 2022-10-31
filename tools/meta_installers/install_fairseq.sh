@@ -9,6 +9,7 @@ sudo apt install pkg-config
 source venv/bin/activate
 
 # build fairseq
+rm -rf fairseq
 git clone https://github.com/facebookresearch/fairseq.git; cd fairseq
 pip3 install --editable ./
 cd ../
