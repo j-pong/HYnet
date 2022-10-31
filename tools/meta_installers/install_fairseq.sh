@@ -21,6 +21,9 @@ sudo chmod -R +777 ./ArrayFire-v3.8.0_Linux_x86_64.sh
 
 # Install flashlight
 # Piz install mkl before excute above lines
+rm -rf flashlight
+export PATH=/usr/local/cuda-11.1/bin${PATH:+:${PATH}}
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 git clone https://github.com/flashlight/flashlight.git && cd flashlight
 git reset --hard 03c51129f320eed7ff0d416f7e8291a029439039
 mkdir -p build && cd build
@@ -39,7 +42,7 @@ make -j$(nproc)
 sudo make install
 
 ## flashlight binding
-cd ../../../flashlight/bindings/python
+cd ../../../../flashlight/bindings/python
 python3 setup.py install
 
 # install tensorboardX

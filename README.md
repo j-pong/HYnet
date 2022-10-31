@@ -4,10 +4,10 @@ Conventional / End-to-end / Representation Learning Combined Toolkit
 ## Installation Guide for SR
 
 ### Essentials
-- CUDA VERSION == 10.2
-- docker image = nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04
-- PyTorch VERSION == 1.8.1
-- Python VERSION == 3.8.5
+- CUDA VERSION == 11.1
+- docker image = nvidia/cuda:11.1.1-cudnn8-devel-ubuntu20.04
+- PyTorch VERSION == 1.10.1
+- Python VERSION == 3.8.13
 
 ### 0. Install pre-requisites
 ```bash
@@ -72,7 +72,7 @@ matplotlib version error
 
 No CMAKE_CUDA_COMPILER could be found
 ```bash
-export PATH=/usr/local/cuda-11.3/bin${PATH:+:${PATH}}
+export PATH=/usr/local/cuda-11.1/bin${PATH:+:${PATH}}
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 ```
 
