@@ -23,11 +23,12 @@ model_conf:
     report_cer: False
     report_wer: False
 
+input_size: 768
 encoder: wav2vec2
 encoder_conf:
-    output_size: 256
+    output_size: 768
     w2v_url: https://dl.fbaipublicfiles.com/fairseq/wav2vec/wav2vec_small.pt
-    w2v_dir_path: ./w2v_pt_model/
+    w2v_dir_path: ./models/
     normalize_before: False
     freeze_finetune_updates: 0
 
@@ -50,16 +51,18 @@ scheduler: warmuplr
 scheduler_conf:
     warmup_steps: 25000
 
-frontend: s3prl
-frontend_conf:
-    frontend_conf:
-        upstream: wav2vec2
-    download_dir: ./models/
+frontend: None
 
-preencoder: linear
-preencoder_conf:
-    input_size: 256
-    output_size: 256
+# frontend: s3prl
+# frontend_conf:
+#     frontend_conf:
+#         upstream: wav2vec2
+#     download_dir: ./models/
+
+# preencoder: linear
+# preencoder_conf:
+#     input_size: 256
+#     output_size: 256
 
 # specaug: specaug
 # specaug_conf:
