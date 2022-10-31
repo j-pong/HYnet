@@ -9,7 +9,7 @@ train_set="train_960"
 valid_set="dev"
 test_sets="test_clean test_other dev_clean dev_other"
 
-asr_config=conf/tuning/transducer/train_conformer-rnn_transducer.yaml
+asr_config=conf/tuning/transducer/train_w2v-rnn_transducer.yaml
 lm_config=conf/tuning/train_lm_transformer2.yaml
 inference_config=conf/decode_asr.yaml
 

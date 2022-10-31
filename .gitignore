@@ -74,12 +74,14 @@ tools/flashlight/
 tools/vcpkg/
 tools/arrayfire/
 tools/ArrayFire*
+tools/fairseq
 tools/fairseq/flashlight
 tools/fairseq/arrayfire
 tools/fairseq/ArrayFire*
 tools/installers/install*
 tools/Miniconda3-latest-Linux-x86_64.sh
 tools/build
+tools/s3prl
 
 # gpgkey
 docker/gpgkey

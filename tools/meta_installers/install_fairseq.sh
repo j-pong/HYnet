@@ -8,6 +8,13 @@ sudo apt install pkg-config
 # activate venv
 source venv/bin/activate
 
+# install s3prl
+rm -rf s3prl
+git clone https://github.com/s3prl/s3prl.git
+cd s3prl
+pip install -e .
+cd ../
+
 # build fairseq
 rm -rf fairseq
 git clone https://github.com/facebookresearch/fairseq.git; cd fairseq
