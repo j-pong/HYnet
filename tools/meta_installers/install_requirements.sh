@@ -16,3 +16,6 @@ cd ../../
 cd espnet/tools
 . ./setup_cuda_env.sh /usr/local/cuda
 ./installers/install_warp-transducer.sh
+
+# install tensorboard
+pip install tensorboard
