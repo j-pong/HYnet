@@ -38,5 +38,8 @@ make -j$(nproc)
 sudo make install
 
 ## flashlight binding
-cd ../../../bindings/python
+cd ../../../flashlight/bindings/python
 python3 setup.py install
+
+# install tensorboardX
+pip install tensorboardX

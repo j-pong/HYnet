@@ -17,3 +17,14 @@ make TH_VERSION=1.12.1 CHAINER_VERSION=6.0.0 CUDA_VERSION=11.3 pytorch.done
 . ./activate_python.sh && cd espnet/tools && python3 -m pip install -e "..[recipe]"
 
 touch espnet.done
+
+# install sentencepiece
+cd ../../
+git clone https://github.com/google/sentencepiece.git
+cd sentencepiece
+mkdir build
+cd build
+cmake ..
+make -j $(nproc)
+sudo make install
+sudo ldconfig -v
