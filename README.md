@@ -4,9 +4,10 @@ Conventional / End-to-end / Representation Learning Combined Toolkit
 ## Installation Guide for SR
 
 ### Essentials
-- CUDA VERSION == 11.3
-- docker image = nvidia/cuda:11.3.0-cudnn8-devel-ubuntu20.04
-- PyTorch VERSION >= 1.12.1
+- CUDA VERSION == 10.2
+- docker image = nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04
+- PyTorch VERSION == 1.8.1
+- Python VERSION == 3.8.5
 
 ### 0. Install pre-requisites
 ```bash
