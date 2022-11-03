@@ -10,7 +10,7 @@ DOCKER=docker
 
 # Docker configuration
 ARG_IMAGE_NAME?=hynet2/cuda:base
-ARG_CONTAINER_NAME?=jpong
+ARG_CONTAINER_NAME?=seas2nada
 # ARG_CONTAINER_HOSTNAME?=$(shell echo $(ARG_CONTAINER_NAME) | tr a-z A-Z)
 ARG_CONTAINER_HOSTNAME?=$(ARG_CONTAINER_NAME)
 
@@ -19,8 +19,8 @@ ARG_PUID?=$(shell id -u)
 ARG_PGID?=$(shell id -g)
 
 # Container network preference
-ARG_PORT_SSH?=32770
-ARG_PORT_TENSORBOARD?=9207
+ARG_PORT_SSH?=32771
+ARG_PORT_TENSORBOARD?=9208
 
 # Container mount point
 ARG_WORKSPACE_HOST?=$(realpath ../..)
