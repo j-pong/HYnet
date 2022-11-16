@@ -20,11 +20,9 @@ keep_nbest_models: 10
 
 model_conf:
     ctc_weight: 0.3
-    report_cer: False
-    report_wer: False
 
 freeze_param: [
-    "encoder.encoders.feature_extractor",
+    "encoder.encoders.mask_emb", "encoder.encoders.feature_extractor",
     "encoder.encoders.post_extract_proj", "encoder.encoders.quantizer",
     "encoder.encoders.project_q"]
 
@@ -50,7 +48,7 @@ joint_net_conf:
 
 optim: adam
 optim_conf:
-    lr: 0.0015
+    lr: 0.0001
     weight_decay: 0.000001
 scheduler: warmuplr
 scheduler_conf:

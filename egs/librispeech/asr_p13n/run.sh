@@ -11,14 +11,15 @@ test_sets="test_clean test_other dev_clean dev_other"
 
 asr_config=conf/tuning/transducer/train_w2v-rnn_transducer.yaml
 lm_config=conf/tuning/train_lm_transformer2.yaml
-inference_config=conf/decode_asr.yaml
+inference_config=conf/decode_asr_rnnt.yaml
+ngpu=4
 
 . ./path.sh
 
 ./asr.sh \
     --use_lm false \
     --lang en \
-    --ngpu 4 \
+    --ngpu $ngpu \
     --nbpe 5000 \
     --max_wav_duration 30 \
     --speed_perturb_factors "0.9 1.0 1.1" \
@@ -30,4 +31,5 @@ inference_config=conf/decode_asr.yaml
     --bpe_train_text "data/${train_set}/text" "$@" \
     --lm_train_text "data/${train_set}/text" \
     --feats_normalize "" \
-    --local_data_opts "--stage 2 --stop_stage 3"
+    --local_data_opts "--stage 2 --stop_stage 3" \
+    --inference_asr_model "valid.loss.ave.pth"
