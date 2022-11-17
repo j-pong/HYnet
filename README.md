@@ -79,6 +79,11 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PA
 Could NOT find NCCL
 - https://docs.nvidia.com/deeplearning/nccl/install-guide/index.html
 
+sclite: command not found
+```bash
+export PATH=/path/to/kaldi/tools/sctk/bin:$PATH
+```
+
 ## Run examples
 for argument usage, check defaults in each files
 
